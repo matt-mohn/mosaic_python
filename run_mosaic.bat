@@ -42,7 +42,7 @@ echo (First launch downloads and installs dependencies -- this takes 2-3 minutes
 echo Subsequent launches are instant.
 echo.
 
-uv run python -m mosaic.gui.app
+uv run --link-mode copy python -m mosaic.gui.app
 
 if %errorlevel% neq 0 (
     echo.
