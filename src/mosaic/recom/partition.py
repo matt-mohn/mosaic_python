@@ -1,7 +1,6 @@
 """Initial partition generation."""
 
 import logging
-import time
 import numpy as np
 import networkx as nx
 from typing import Callable
@@ -76,7 +75,6 @@ def _try_partition(
             on_progress(district + 1, num_districts)
 
         log.info(f"Creating district {district + 1}/{num_districts}...")
-        district_start = time.perf_counter()
 
         # Build subgraph of remaining nodes
         subgraph = graph.subgraph(remaining_nodes).copy()
@@ -103,12 +101,8 @@ def _try_partition(
             tolerance,
             max_attempts=10000,
             one_sided=not is_last_cut,  # Both sides must be valid on final cut
+            timeout=_DISTRICT_TIMEOUT,
         )
-
-        elapsed = time.perf_counter() - district_start
-        if elapsed > _DISTRICT_TIMEOUT:
-            log.warning(f"District {district + 1} took {elapsed:.1f}s (>{_DISTRICT_TIMEOUT}s)")
-            return None
 
         if subset is None:
             log.warning(f"Could not find balanced cut for district {district + 1}")
