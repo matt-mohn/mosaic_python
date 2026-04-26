@@ -1,5 +1,6 @@
 """Spanning tree operations for ReCom algorithm using igraph."""
 
+import time
 import numpy as np
 import igraph as ig
 from typing import Optional, Tuple
@@ -215,13 +216,17 @@ def find_balanced_cut(
     tolerance: float,
     max_attempts: int = 1000,
     one_sided: bool = False,
+    timeout: float | None = None,
 ) -> list | None:
     """NetworkX version — kept for compatibility."""
     total_pop = sum(populations[n] for n in graph.nodes())
     min_pop = target_pop * (1 - tolerance)
     max_pop = target_pop * (1 + tolerance)
+    start_time = time.perf_counter() if timeout else None
 
     for attempt in range(max_attempts):
+        if start_time and (time.perf_counter() - start_time) > timeout:
+            return None
         tree = random_spanning_tree(graph)
         candidates = [n for n, d in tree.degree() if d > 1]
         if not candidates:
