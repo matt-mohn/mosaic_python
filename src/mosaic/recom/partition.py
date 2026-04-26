@@ -1,6 +1,7 @@
 """Initial partition generation."""
 
 import logging
+import time
 import numpy as np
 import networkx as nx
 from typing import Callable
@@ -8,6 +9,10 @@ from typing import Callable
 from mosaic.recom.tree import find_balanced_cut
 
 log = logging.getLogger("mosaic")
+
+# Per-district timeout before restarting partition (seconds)
+_DISTRICT_TIMEOUT = 5.0
+_MAX_RESTARTS = 10
 
 
 def create_initial_partition(
@@ -35,6 +40,30 @@ def create_initial_partition(
     if seed is not None:
         np.random.seed(seed)
 
+    for restart in range(_MAX_RESTARTS):
+        result = _try_partition(
+            graph, populations, num_districts, tolerance, on_progress
+        )
+        if result is not None:
+            return result
+        log.warning(f"Partition attempt {restart + 1} timed out, restarting...")
+
+    raise RuntimeError(
+        f"Could not create partition after {_MAX_RESTARTS} attempts. "
+        f"Try relaxing the population tolerance."
+    )
+
+
+def _try_partition(
+    graph: nx.Graph,
+    populations: np.ndarray,
+    num_districts: int,
+    tolerance: float,
+    on_progress: Callable[[int, int], None] | None,
+) -> np.ndarray | None:
+    """
+    Attempt to create a partition. Returns None if any district times out.
+    """
     n = graph.number_of_nodes()
     total_pop = populations.sum()
     ideal_pop = total_pop / num_districts
@@ -47,6 +76,7 @@ def create_initial_partition(
             on_progress(district + 1, num_districts)
 
         log.info(f"Creating district {district + 1}/{num_districts}...")
+        district_start = time.perf_counter()
 
         # Build subgraph of remaining nodes
         subgraph = graph.subgraph(remaining_nodes).copy()
@@ -58,26 +88,33 @@ def create_initial_partition(
             log.warning(f"Subgraph disconnected, using largest component ({len(largest)} of {len(remaining_nodes)} nodes)")
             subgraph = graph.subgraph(largest).copy()
 
-        remaining_pop = sum(populations[n] for n in remaining_nodes)
+        remaining_pop = sum(populations[node] for node in remaining_nodes)
         log.info(f"  Remaining: {len(remaining_nodes)} nodes, {remaining_pop:,} pop")
 
-        # Find a balanced cut (one_sided=True for initial partition)
+        # Find a balanced cut.
+        # For the last iteration (creating district num_districts-2), use one_sided=False
+        # so that BOTH the carved district AND the remaining district (num_districts-1)
+        # are guaranteed to be within population tolerance.
+        is_last_cut = (district == num_districts - 2)
         subset = find_balanced_cut(
             subgraph,
             populations,
             ideal_pop,
             tolerance,
             max_attempts=10000,
-            one_sided=True,  # Only carved-off district needs to be within tolerance
+            one_sided=not is_last_cut,  # Both sides must be valid on final cut
         )
 
-        if subset is None:
-            raise RuntimeError(
-                f"Could not find balanced partition for district {district + 1}. "
-                f"Try relaxing the population tolerance."
-            )
+        elapsed = time.perf_counter() - district_start
+        if elapsed > _DISTRICT_TIMEOUT:
+            log.warning(f"District {district + 1} took {elapsed:.1f}s (>{_DISTRICT_TIMEOUT}s)")
+            return None
 
-        subset_pop = sum(populations[n] for n in subset)
+        if subset is None:
+            log.warning(f"Could not find balanced cut for district {district + 1}")
+            return None
+
+        subset_pop = sum(populations[node] for node in subset)
         deviation = (subset_pop - ideal_pop) / ideal_pop * 100
         log.info(f"  District {district + 1}: {len(subset)} nodes, {subset_pop:,} pop ({deviation:+.2f}%)")
 
