@@ -14,15 +14,13 @@ Mosaic is a redistricting toolkit using recombination (ReCom) algorithms with si
 
 **Option 1: Run the launcher (no Python required)**
 
-```bash
-# Windows
-run_mosaic.bat
+1. **Download the project**: Click the green **Code** button at the top of this page, then select **Download ZIP**
+2. **Extract the ZIP**: Right-click the downloaded file and choose "Extract All"
+3. **Run the launcher**:
+   - **Windows**: Double-click `run_mosaic.bat`
+   - **Mac/Linux**: Open a terminal in the folder and run `chmod +x run_mosaic.sh && ./run_mosaic.sh`
 
-# Mac/Linux
-chmod +x run_mosaic.sh && ./run_mosaic.sh
-```
-
-The launcher auto-installs dependencies on first run.
+The launcher auto-installs dependencies on first run (requires internet).
 
 **Option 2: Install with pip**
 
