@@ -40,6 +40,10 @@ mosaic
 
 The `shapefiles/` folder includes North Carolina precinct data as a ready-to-use starting point.
 
+## Background
+
+This is a Python port of [Mosaic for R](https://github.com/matt-mohn/Mosaic). Some features are implemented differently or still in progress.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE)
