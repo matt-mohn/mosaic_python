@@ -1025,61 +1025,99 @@ class MosaicApp:
     def _build_help_popup(self):
         with dpg.window(
             label="Help", tag="popup_help",
-            show=False, width=540, height=480,
-            pos=[(_VP_W - 540) // 2, (_VP_H - 480) // 2],
+            show=False, width=580, height=680,
+            pos=[(_VP_W - 580) // 2, (_VP_H - 680) // 2],
         ):
             with dpg.child_window(height=-40, border=False):
+                dpg.add_text(
+                    "This is a MosaicPy demo from Matt Mohn (@mattmxhn)",
+                    color=(255, 200, 60),
+                )
+                dpg.add_spacer(height=6)
+
                 dpg.add_text("Overview", color=(200, 200, 100))
                 dpg.add_separator()
                 dpg.add_text(
-                    "Lorem ipsum dolor sit amet, consectetur adipiscing elit, "
-                    "sed do eiusmod tempor incididunt ut labore et dolore magna "
-                    "aliqua. Ut enim ad minim veniam, quis nostrud exercitation.",
-                    wrap=500,
+                    "Mosaic uses simulated annealing and recombination to produce "
+                    "a mass of different redistricting plans that can meet certain "
+                    "criteria. Simulated annealing is an algorithmic technique that "
+                    "'cools' over time. At the start, Mosaic runs wildly across the "
+                    "map, making tons of edits - not all of which are improvements. "
+                    "As the temperature falls, Mosaic becomes more picky - a process "
+                    "that creates a more optimal map. The other part of Mosaic "
+                    "(recombination) is how Mosaic makes changes. Mosaic combines "
+                    "random pairs of touching districts hundreds of times a second, "
+                    "then divides them in a new way. This 'recombination' approach "
+                    "means that the entire map can be replaced or reconfigured in "
+                    "only a few increments of a second.",
+                    wrap=540,
                 )
                 dpg.add_spacer(height=8)
 
-                dpg.add_text("Loading a Shapefile", color=(200, 200, 100))
+                dpg.add_text("Shapefiles", color=(200, 200, 100))
                 dpg.add_separator()
                 dpg.add_text(
-                    "Lorem ipsum dolor sit amet, consectetur adipiscing elit. "
-                    "Duis aute irure dolor in reprehenderit in voluptate velit "
-                    "esse cillum dolore eu fugiat nulla pariatur. Excepteur sint "
-                    "occaecat cupidatat non proident.",
-                    wrap=500,
+                    "Mosaic needs a shapefile (.shp) with precinct or voting district "
+                    "polygons. Your shapefile should include a population column, and "
+                    "optionally a county column (for county splits scoring) and "
+                    "Democratic/Republican vote columns (for partisan metrics). You "
+                    "can download precinct shapefiles from the U.S. Census TIGER/Line "
+                    "repository and join election data from Dave's Redistricting App. "
+                    "Mosaic runs faster on generalized (simplified) shapefiles.",
+                    wrap=540,
                 )
                 dpg.add_spacer(height=8)
 
-                dpg.add_text("Score Configuration", color=(200, 200, 100))
+                dpg.add_text("Configuration", color=(200, 200, 100))
                 dpg.add_separator()
                 dpg.add_text(
-                    "Lorem ipsum dolor sit amet, consectetur adipiscing elit. "
-                    "Sed ut perspiciatis unde omnis iste natus error sit voluptatem "
-                    "accusantium doloremque laudantium, totam rem aperiam eaque "
-                    "ipsa quae ab illo inventore veritatis.",
-                    wrap=500,
+                    "Annealing settings are in Configuration > Annealing Settings. "
+                    "Population deviation tolerance is in Configuration > Population. "
+                    "Partisan metric settings are in Configuration > Partisanship Settings.",
+                    wrap=540,
                 )
                 dpg.add_spacer(height=8)
 
-                dpg.add_text("Running the Optimizer", color=(200, 200, 100))
+                dpg.add_text("Scores", color=(200, 200, 100))
                 dpg.add_separator()
                 dpg.add_text(
-                    "Lorem ipsum dolor sit amet, consectetur adipiscing elit. "
-                    "Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut "
-                    "odit aut fugit, sed quia consequuntur magni dolores eos qui "
-                    "ratione voluptatem sequi nesciunt.",
-                    wrap=500,
+                    "Scores are set on the left side before annealing begins. To "
+                    "follow a specific score, check its panel in the Panels menu.",
+                    wrap=540,
+                )
+                dpg.add_text(
+                    "  - Cut Edges: Fewer cut edges = more compact districts\n"
+                    "  - County Splits: Penalizes unnecessary county splits\n"
+                    "  - Polsby-Popper: Geometric compactness (circle = 1.0)\n"
+                    "  - Mean-Median: Partisan asymmetry (0 = balanced)\n"
+                    "  - Efficiency Gap: Wasted votes (0 = no advantage)\n"
+                    "  - Competitiveness: Lower = more competitive districts\n"
+                    "  - Expected Dem Seats: Probabilistic seat count",
+                    wrap=540, color=(180, 180, 180),
                 )
                 dpg.add_spacer(height=8)
 
-                dpg.add_text("Exporting Results", color=(200, 200, 100))
+                dpg.add_text("Basic Usage", color=(200, 200, 100))
                 dpg.add_separator()
                 dpg.add_text(
-                    "Lorem ipsum dolor sit amet, consectetur adipiscing elit. "
-                    "Neque porro quisquam est, qui dolorem ipsum quia dolor sit "
-                    "amet, consectetur, adipisci velit, sed quia non numquam eius "
-                    "modi tempora incidunt ut labore et dolore magnam aliquam.",
-                    wrap=500,
+                    "1. Browse for a shapefile and click Load/Import\n"
+                    "2. Map your columns in the picker (population, county, votes)\n"
+                    "3. Set districts, iterations, and enable desired scores\n"
+                    "4. Click Start to begin optimization\n"
+                    "5. Use Pause, Reset, or Revert to Best as needed\n"
+                    "6. Save Assignments exports your district map as CSV",
+                    wrap=540,
+                )
+                dpg.add_spacer(height=8)
+
+                dpg.add_text("Exporting", color=(200, 200, 100))
+                dpg.add_separator()
+                dpg.add_text(
+                    "Save Assignments exports a CSV mapping each precinct to its "
+                    "district. This file can be joined back to your shapefile in "
+                    "GIS software or uploaded to Dave's Redistricting App using "
+                    "their 'Color Map from File' feature.",
+                    wrap=540,
                 )
             dpg.add_button(
                 label="Close",
