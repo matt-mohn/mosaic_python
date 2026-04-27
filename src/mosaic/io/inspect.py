@@ -71,6 +71,18 @@ def inspect_shapefile(path: str | Path) -> ShapefileInspection:
         for c in cols:
             s = gdf[c]
             is_num = pd.api.types.is_numeric_dtype(s)
+
+            # If dtype is non-numeric but every non-null value parses as a number, coerce.
+            if not is_num:
+                non_null = s.dropna()
+                if len(non_null) > 0:
+                    converted = pd.to_numeric(non_null, errors="coerce")
+                    if converted.notna().all():
+                        gdf[c] = pd.to_numeric(s, errors="coerce")
+                        s = gdf[c]
+                        is_num = True
+                        log.info(f"Column '{c}': coerced string-numeric values to numeric")
+
             col_info[c] = ColumnInfo(
                 name=c,
                 dtype=str(s.dtype),

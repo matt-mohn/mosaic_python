@@ -203,7 +203,7 @@ class MapView:
         dem = self._dem_votes.astype(np.float64)
         gop = self._gop_votes.astype(np.float64)
         total = dem + gop
-        shares = np.where(total > 0, dem / total, 0.5)
+        shares = np.divide(dem, total, out=np.full(len(dem), 0.5), where=total > 0)
         shares_clamped = np.clip(shares, 0.0, 1.0)
         idx = np.searchsorted(_PARTISAN_BREAKS, shares_clamped, side="right") - 1
         idx = np.clip(idx, 0, len(_PARTISAN_RGBA) - 1)
@@ -224,7 +224,7 @@ class MapView:
                             weights=self._gop_votes.astype(np.float64),
                             minlength=n_districts)
         total_d = dem_d + gop_d
-        shares_d = np.where(total_d > 0, dem_d / total_d, 0.5)
+        shares_d = np.divide(dem_d, total_d, out=np.full(len(dem_d), 0.5), where=total_d > 0)
         idx_d = np.searchsorted(_PARTISAN_BREAKS, np.clip(shares_d, 0.0, 1.0),
                                 side="right") - 1
         idx_d = np.clip(idx_d, 0, len(_PARTISAN_RGBA) - 1)

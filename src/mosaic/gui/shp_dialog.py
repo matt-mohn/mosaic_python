@@ -9,7 +9,6 @@ an optional County column, and any number of DEM/GOP election pairs.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Callable, Optional
 
 import dearpygui.dearpygui as dpg
@@ -128,7 +127,7 @@ class ShapefileDialog:
             )
             dpg.add_spacer(height=4)
             with dpg.child_window(
-                tag="shp_elections_scroll", height=148, border=True,
+                tag="shp_elections_scroll", height=90, border=True,
             ):
                 dpg.add_text(
                     "No elections added.",
@@ -181,7 +180,7 @@ class ShapefileDialog:
         dpg.configure_item("shp_add_election_btn", enabled=True)
 
         # ── Header ────────────────────────────────────────────────────────────
-        dpg.set_value(self._file_text, f"File: {Path(inspection.path).name}")
+        dpg.set_value(self._file_text, f"File: {inspection.path}")
 
         if inspection.load_error:
             dpg.set_value(self._status_text,
