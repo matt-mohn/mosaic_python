@@ -47,8 +47,8 @@ def _build_score_breakdown(ps, cfg) -> dict:
              ((ps.efficiency_gap - cfg.target_efficiency_gap) * 100) ** 2)
     if cfg.weight_dem_seats:
         _add("Dem Seats",      cfg.weight_dem_seats *
-             (ps.dem_seats - cfg.target_dem_seats) ** 2)
-    _add("Competitiveness", cfg.weight_competitiveness * ps.competitiveness)
+             (ps.dem_seats - cfg.target_dem_seats) ** 2 * 100)
+    _add("Competitiveness", cfg.weight_competitiveness * ps.competitiveness * 100)
     return result
 
 
