@@ -5,20 +5,19 @@ Metrics
 -------
 Mean-Median Difference  (MM)  -- exponent 2
 Efficiency Gap          (EG)  -- exponent 2
-  Static:     vote-weighted EG at current election environment
-  Robust 2.0: weighted average across 9 uniform-swing scenarios, with
-              per-district Gaussian noise (sigma derived from k) integrated
-              out analytically. Closed-form, deterministic, no sampling.
-              Swings = -8%..+8% in 2% steps, weights ~ N(mu=0, sigma~3%)
+  Static:  vote-weighted EG at current election environment
+  Robust:  single closed-form call with sigma_combined = sqrt(sigma_swing^2 + sigma_district^2)
+           Integrates out both partisan-environment uncertainty (sigma_swing = _EG_SWING_SIGMA)
+           and per-district electoral noise (sigma_district derived from win_prob_at_55)
+           in one shot. Mathematically exact under Gaussian swing assumption.
 Expected Dem Seats      (DS)  -- exponent 2
 Competitiveness         (CP)  -- exponent 1  (no target)
 
 EG is vote-weighted: (total_wasted_dem - total_wasted_rep) / total_votes.
-Total votes per district are held fixed in robust swing scenarios.
 
 Logistic calibration: P(D wins | share=0.55) == win_prob_at_55
   k = log(p / (1-p)) / 0.05         (used by DS, CP)
-  sigma = 0.05 / Phi^-1(p)          (used by Robust EG 2.0)
+  sigma = 0.05 / Phi^-1(p)          (used by Robust EG)
 
 Both calibrations use the same k parameter, so adjusting win_prob_at_55
 coherently updates uncertainty across all metrics.
@@ -29,11 +28,9 @@ from __future__ import annotations
 import numpy as np
 from scipy.special import ndtr, ndtri
 
-# Robust EG: uniform-swing scenarios with normal-distribution weights (sigma ~3%)
-_ROBUST_SWINGS  = np.array([-0.08, -0.06, -0.04, -0.02, 0.00,
-                              0.02,  0.04,  0.06,  0.08], dtype=np.float64)
-_ROBUST_WEIGHTS = np.array([ 0.007,  0.037,  0.108,  0.218,  0.272,
-                              0.218,  0.108,  0.037,  0.007], dtype=np.float64)
+# Robust EG: sigma of the partisan-environment uncertainty (swing distribution).
+# Combined with per-district noise from win_prob_at_55 via sqrt(s_swing^2 + s_district^2).
+_EG_SWING_SIGMA: float = 0.03
 
 
 def election_k(win_prob_at_55: float) -> float:
@@ -143,29 +140,22 @@ def score_efficiency_gap(
 ) -> tuple[float, float]:
     """
     Returns:
-        raw     -- EG value (Robust 2.0 weighted average when robust=True,
-                   single-environment static EG when robust=False)
+        raw     -- EG value (robust when robust=True, static when robust=False)
         penalty -- ((raw - target) * 100)^2  (scaled to pp for weight comparability)
 
-    Robust 2.0 (default): weighted average of vote-weighted EG across 9 uniform-swing
-      scenarios, with per-district Gaussian noise integrated out analytically.
-      District vote totals are held fixed; only the partisan split shifts.
-      Per-district noise sigma is derived from win_prob_at_55 (k) via:
-          sigma = 0.05 / Phi^-1(k)
+    Robust (default): integrates out both partisan-environment uncertainty
+      (sigma_swing = _EG_SWING_SIGMA = 3pp) and per-district electoral noise
+      (sigma_district from win_prob_at_55) in one closed-form call:
+          sigma_combined = sqrt(sigma_swing^2 + sigma_district^2)
+      Mathematically exact under Gaussian swing assumption. Deterministic, no sampling.
     Static: vote-weighted EG at the current partisan split, no noise.
-
-    win_prob_at_55: same parameter as elsewhere in this module. Default 0.9
-      gives sigma ~3.9pp. Ignored when robust=False.
     """
     shares, total_d = district_dem_shares(assignment, dem_votes, gop_votes, n_districts)
 
     if robust:
-        sigma = k_to_sigma(win_prob_at_55)
-        eg_sum = 0.0
-        for swing, w in zip(_ROBUST_SWINGS, _ROBUST_WEIGHTS):
-            swung = np.clip(shares + swing, 0.0, 1.0)
-            eg_sum += _eg_votes_robust(swung, total_d, sigma) * w
-        raw = eg_sum
+        sigma_d    = k_to_sigma(win_prob_at_55)
+        sigma_comb = float(np.sqrt(_EG_SWING_SIGMA ** 2 + sigma_d ** 2))
+        raw = _eg_votes_robust(shares, total_d, sigma_comb)
     else:
         raw = _eg_votes(shares, total_d)
 

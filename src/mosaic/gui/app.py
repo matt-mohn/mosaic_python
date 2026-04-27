@@ -99,9 +99,11 @@ _CONTRIB_METRICS = [
 
 # ── Layout constants ──────────────────────────────────────────────────────────
 _VP_W         = 1340
-_VP_H         = 1120
+_VP_H         = 880
 _LEFT_W       = 440    # fixed left-column width
-_STATUS_H     = 190    # bottom status panel height
+_TOP_H        = 640    # fixed top section height (left + right columns)
+_SCORE_H      = 250    # pinned bottom score panel height
+_SCORE_COL_W  = (_VP_W - 40) // 3   # ~433px per score column
 _MAP_H        = 390    # map panel height (child_window)
 _MAP_DW       = _VP_W - _LEFT_W - 32   # texture pixel width  (~868)
 _MAP_DH       = _MAP_H - 22            # texture pixel height (~368)
@@ -301,7 +303,7 @@ class MosaicApp:
                             map_render_interval=d),
                     )
 
-            with dpg.child_window(height=-_STATUS_H, border=False,
+            with dpg.child_window(height=_TOP_H, border=False,
                                   no_scrollbar=True):
                 with dpg.group(horizontal=True):
 
@@ -326,221 +328,78 @@ class MosaicApp:
                         dpg.add_spacer(height=8)
                         dpg.add_text("Run Parameters", color=(200, 200, 100))
                         dpg.add_separator()
-                        self._num_districts = dpg.add_input_int(
-                            label="Districts",
-                            default_value=5, min_value=2, max_value=500,
-                            width=120,
-                        )
-                        self._iterations = dpg.add_input_int(
-                            label="Iterations",
-                            default_value=2500, min_value=1,
-                            max_value=1_000_000, width=120,
-                        )
-
-                        dpg.add_spacer(height=8)
-                        dpg.add_text("Score", color=(200, 200, 100))
-                        dpg.add_separator()
-
-                        # Cut Edges
+                        _inp_w = (_LEFT_W - 24) // 2
                         with dpg.group(horizontal=True):
-                            self._cut_enabled = dpg.add_checkbox(
-                                default_value=True,
-                                callback=self._on_cut_toggle,
-                            )
-                            self._cut_lbl = dpg.add_text(
-                                "Cut Edges", color=(90, 220, 90),
-                            )
-                        with dpg.group(tag="cut_edge_controls"):
-                            self._w_cut_edges = dpg.add_slider_int(
-                                label="Weight",
-                                default_value=1, min_value=0, max_value=100,
-                                width=_LEFT_W - 100,
-                            )
-
-                        dpg.add_spacer(height=4)
-
-                        # County Splits + Bias
-                        with dpg.group(horizontal=True):
-                            self._cs_enabled = dpg.add_checkbox(
-                                default_value=False,
-                                callback=self._on_cs_toggle,
-                            )
-                            self._cs_lbl = dpg.add_text(
-                                "County Splits and Bias", color=(110, 110, 110),
-                            )
-                        with dpg.group(tag="cs_controls", show=False):
-                            self._w_county_splits = dpg.add_slider_int(
-                                label="Weight",
-                                default_value=1, min_value=0, max_value=100,
-                                width=_LEFT_W - 100,
-                            )
-                            dpg.add_spacer(height=3)
-                            self._county_bias_enabled = dpg.add_checkbox(
-                                label="County-Edge Bias",
-                                default_value=False,
-                                callback=self._on_county_bias_toggle,
-                            )
-                            with dpg.group(tag="county_bias_controls", show=False):
-                                self._county_bias = dpg.add_slider_int(
-                                    label="Multiplier",
-                                    default_value=5, min_value=1, max_value=20,
-                                    width=_LEFT_W - 120,
+                            with dpg.group():
+                                dpg.add_text("Districts",
+                                             color=(170, 170, 170))
+                                self._num_districts = dpg.add_input_int(
+                                    label="##dist",
+                                    default_value=5, min_value=2, max_value=500,
+                                    width=_inp_w, step=0,
                                 )
-                                dpg.add_text(
-                                    "  cross-county edges less likely cut",
-                                    color=(150, 150, 150),
+                            with dpg.group():
+                                dpg.add_text("Iterations",
+                                             color=(170, 170, 170))
+                                self._iterations = dpg.add_input_int(
+                                    label="##iter",
+                                    default_value=2500, min_value=1,
+                                    max_value=1_000_000,
+                                    width=_inp_w, step=0,
                                 )
-
-                        dpg.add_spacer(height=4)
-
-                        # Polsby-Popper
-                        with dpg.group(horizontal=True):
-                            self._pp_enabled = dpg.add_checkbox(
-                                default_value=False,
-                                callback=self._on_pp_toggle,
-                            )
-                            self._pp_lbl = dpg.add_text(
-                                "Polsby-Popper", color=(180, 180, 180),
-                            )
-                        with dpg.group(tag="pp_controls", show=False):
-                            self._w_polsby_popper = dpg.add_slider_int(
-                                label="Weight",
-                                default_value=1, min_value=0, max_value=100,
-                                width=_LEFT_W - 100,
-                            )
-
-                        dpg.add_spacer(height=4)
-
-                        # Mean-Median Difference
-                        with dpg.group(horizontal=True):
-                            self._mm_enabled = dpg.add_checkbox(
-                                default_value=False, enabled=False,
-                                callback=self._on_mm_toggle,
-                            )
-                            self._mm_lbl = dpg.add_text(
-                                "Mean-Median Difference",
-                                color=(90, 90, 90),
-                            )
-                        with dpg.group(tag="mm_controls", show=False):
-                            self._w_mean_median = dpg.add_slider_int(
-                                label="Weight",
-                                default_value=1, min_value=0, max_value=100,
-                                width=_LEFT_W - 100,
-                            )
-                            self._target_mean_median = dpg.add_slider_float(
-                                label="Target MM",
-                                default_value=0.0, min_value=-0.15, max_value=0.15,
-                                format="%.3f", width=_LEFT_W - 100,
-                            )
-                            dpg.add_text(
-                                "  - = D advantage  |  + = R advantage",
-                                color=(110, 110, 110),
-                            )
-
-                        dpg.add_spacer(height=4)
-
-                        # Efficiency Gap
-                        with dpg.group(horizontal=True):
-                            self._eg_enabled = dpg.add_checkbox(
-                                default_value=False, enabled=False,
-                                callback=self._on_eg_toggle,
-                            )
-                            self._eg_lbl = dpg.add_text(
-                                "Efficiency Gap",
-                                color=(90, 90, 90),
-                            )
-                        with dpg.group(tag="eg_controls", show=False):
-                            self._w_efficiency_gap = dpg.add_slider_int(
-                                label="Weight",
-                                default_value=1, min_value=0, max_value=100,
-                                width=_LEFT_W - 100,
-                            )
-                            self._target_efficiency_gap = dpg.add_slider_float(
-                                label="Target EG",
-                                default_value=0.0, min_value=-0.35, max_value=0.35,
-                                format="%.3f", width=_LEFT_W - 100,
-                            )
-                            dpg.add_text(
-                                "  - = D bias  |  + = R bias",
-                                color=(110, 110, 110),
-                            )
-
-                        dpg.add_spacer(height=4)
-
-                        # Competitiveness
-                        with dpg.group(horizontal=True):
-                            self._comp_enabled = dpg.add_checkbox(
-                                default_value=False, enabled=False,
-                                callback=self._on_comp_toggle,
-                            )
-                            self._comp_lbl = dpg.add_text(
-                                "Competitiveness",
-                                color=(90, 90, 90),
-                            )
-                        with dpg.group(tag="comp_controls", show=False):
-                            self._w_competitiveness = dpg.add_slider_int(
-                                label="Weight",
-                                default_value=1, min_value=0, max_value=100,
-                                width=_LEFT_W - 100,
-                            )
-
-                        dpg.add_spacer(height=4)
-
-                        # Expected Dem Seats
-                        with dpg.group(horizontal=True):
-                            self._seats_enabled = dpg.add_checkbox(
-                                default_value=False, enabled=False,
-                                callback=self._on_seats_toggle,
-                            )
-                            self._seats_lbl = dpg.add_text(
-                                "Expected Dem Seats",
-                                color=(90, 90, 90),
-                            )
-                        with dpg.group(tag="seats_controls", show=False):
-                            self._w_dem_seats = dpg.add_slider_int(
-                                label="Weight",
-                                default_value=1, min_value=0, max_value=100,
-                                width=_LEFT_W - 100,
-                            )
-                            self._target_dem_seats = dpg.add_slider_int(
-                                label="Target Seats",
-                                default_value=7, min_value=1, max_value=14,
-                                width=_LEFT_W - 100,
-                            )
 
                         dpg.add_spacer(height=8)
                         dpg.add_text("Controls", color=(200, 200, 100))
                         dpg.add_separator()
+                        _btn_w = (_LEFT_W - 30) // 2
                         with dpg.group(horizontal=True):
-                            with dpg.group():
-                                with dpg.group(horizontal=True):
-                                    self._run_btn = dpg.add_button(
-                                        label="Start", callback=self._on_run, width=90,
-                                    )
-                                    self._pause_btn = dpg.add_button(
-                                        label="Pause", callback=self._on_pause,
-                                        width=90, enabled=False,
-                                    )
-                                self._reset_btn = dpg.add_button(
-                                    label="Reset", callback=self._on_reset, width=188,
-                                )
-                                self._revert_btn = dpg.add_button(
-                                    label="Revert to Best",
-                                    callback=self._on_revert_to_best,
-                                    width=188, enabled=False,
-                                )
-                            dpg.add_spacer(width=6)
-                            with dpg.group():
-                                self._export_btn = dpg.add_button(
-                                    label="Save Assignments",
-                                    callback=self._on_export,
-                                    width=190, enabled=False,
-                                )
-                                self._metrics_btn = dpg.add_button(
-                                    label="Save Metrics",
-                                    callback=self._on_export_metrics,
-                                    width=190, enabled=False,
-                                )
+                            self._run_btn = dpg.add_button(
+                                label="Start", callback=self._on_run,
+                                width=_btn_w,
+                            )
+                            self._pause_btn = dpg.add_button(
+                                label="Pause", callback=self._on_pause,
+                                width=_btn_w, enabled=False,
+                            )
+                        with dpg.group(horizontal=True):
+                            self._reset_btn = dpg.add_button(
+                                label="Reset", callback=self._on_reset,
+                                width=_btn_w,
+                            )
+                            self._revert_btn = dpg.add_button(
+                                label="Revert to Best",
+                                callback=self._on_revert_to_best,
+                                width=_btn_w, enabled=False,
+                            )
+                        with dpg.group(horizontal=True):
+                            self._export_btn = dpg.add_button(
+                                label="Save Assignments",
+                                callback=self._on_export,
+                                width=_btn_w, enabled=False,
+                            )
+                            self._metrics_btn = dpg.add_button(
+                                label="Save Metrics",
+                                callback=self._on_export_metrics,
+                                width=_btn_w, enabled=False,
+                            )
+
+                        dpg.add_spacer(height=8)
+                        dpg.add_text("Status", color=(200, 200, 100))
+                        dpg.add_separator()
+                        self._status_txt = dpg.add_text("Status: Idle")
+                        self._iter_txt   = dpg.add_text("Iteration: 0 / 0")
+                        self._timer_txt  = dpg.add_text(
+                            "Time: 0:00  |  0 iter/sec")
+                        self._progress   = dpg.add_progress_bar(
+                            default_value=0.0, width=_LEFT_W - 30,
+                        )
+                        dpg.add_spacer(height=4)
+                        self._score_txt = dpg.add_text("Score: --")
+                        self._best_txt  = dpg.add_text(
+                            "Best:  --   (iteration --)")
+                        self._temp_txt  = dpg.add_text("Temperature: --")
+                        self._acc_txt   = dpg.add_text("Entropy: --")
+                        self._succ_txt  = dpg.add_text("Accepted steps: --")
 
                     # ── Right column (map + plots) ────────────────────────────
                     with dpg.child_window(width=-1, border=False):
@@ -609,24 +468,180 @@ class MosaicApp:
                                             [], [], label="Entropy",
                                             tag="acc_series")
 
-            # ── Status panel (bottom) ─────────────────────────────────────────
-            with dpg.child_window(height=_STATUS_H, border=True):
+            # ── Score panel (bottom) ──────────────────────────────────────────
+            with dpg.child_window(height=-1, border=True):
                 with dpg.group(horizontal=True):
-                    with dpg.group(width=_LEFT_W - 10):
-                        self._status_txt = dpg.add_text("Status: Idle")
-                        self._iter_txt   = dpg.add_text("Iteration: 0 / 0")
-                        self._timer_txt  = dpg.add_text(
-                            "Time: 0:00  |  0 iter/sec")
-                        self._progress   = dpg.add_progress_bar(
-                            default_value=0.0, width=_LEFT_W - 30,
-                        )
-                    with dpg.group():
-                        self._score_txt = dpg.add_text("Score: --")
-                        self._best_txt  = dpg.add_text(
-                            "Best:  --   (iteration --)")
-                        self._temp_txt  = dpg.add_text("Temperature: --")
-                        self._acc_txt   = dpg.add_text("Entropy: --")
-                        self._succ_txt  = dpg.add_text("Accepted steps: --")
+
+                    # Col 1: structural metrics
+                    with dpg.child_window(width=_SCORE_COL_W, height=-1,
+                                          border=False):
+                        # Cut Edges
+                        with dpg.group(horizontal=True):
+                            self._cut_enabled = dpg.add_checkbox(
+                                default_value=True,
+                                callback=self._on_cut_toggle,
+                            )
+                            self._cut_lbl = dpg.add_text(
+                                "Cut Edges", color=(90, 220, 90),
+                            )
+                        with dpg.group(tag="cut_edge_controls"):
+                            self._w_cut_edges = dpg.add_slider_int(
+                                label="Weight",
+                                default_value=1, min_value=0, max_value=100,
+                                width=_SCORE_COL_W - 100,
+                            )
+
+                        dpg.add_spacer(height=4)
+
+                        # County Splits + Bias
+                        with dpg.group(horizontal=True):
+                            self._cs_enabled = dpg.add_checkbox(
+                                default_value=False,
+                                callback=self._on_cs_toggle,
+                            )
+                            self._cs_lbl = dpg.add_text(
+                                "County Splits and Bias", color=(110, 110, 110),
+                            )
+                        with dpg.group(tag="cs_controls", show=False):
+                            self._w_county_splits = dpg.add_slider_int(
+                                label="Weight",
+                                default_value=1, min_value=0, max_value=100,
+                                width=_SCORE_COL_W - 100,
+                            )
+                            dpg.add_spacer(height=3)
+                            self._county_bias_enabled = dpg.add_checkbox(
+                                label="County-Edge Bias",
+                                default_value=False,
+                                callback=self._on_county_bias_toggle,
+                            )
+                            with dpg.group(tag="county_bias_controls", show=False):
+                                self._county_bias = dpg.add_slider_int(
+                                    label="Multiplier",
+                                    default_value=5, min_value=1, max_value=20,
+                                    width=_SCORE_COL_W - 120,
+                                )
+                                dpg.add_text(
+                                    "  cross-county edges less likely cut",
+                                    color=(150, 150, 150),
+                                )
+
+                    # Col 2: shape + partisan bias
+                    with dpg.child_window(width=_SCORE_COL_W, height=-1,
+                                          border=False):
+                        # Polsby-Popper
+                        with dpg.group(horizontal=True):
+                            self._pp_enabled = dpg.add_checkbox(
+                                default_value=False,
+                                callback=self._on_pp_toggle,
+                            )
+                            self._pp_lbl = dpg.add_text(
+                                "Polsby-Popper", color=(180, 180, 180),
+                            )
+                        with dpg.group(tag="pp_controls", show=False):
+                            self._w_polsby_popper = dpg.add_slider_int(
+                                label="Weight",
+                                default_value=1, min_value=0, max_value=100,
+                                width=_SCORE_COL_W - 100,
+                            )
+
+                        dpg.add_spacer(height=4)
+
+                        # Mean-Median Difference
+                        with dpg.group(horizontal=True):
+                            self._mm_enabled = dpg.add_checkbox(
+                                default_value=False, enabled=False,
+                                callback=self._on_mm_toggle,
+                            )
+                            self._mm_lbl = dpg.add_text(
+                                "Mean-Median Difference",
+                                color=(90, 90, 90),
+                            )
+                        with dpg.group(tag="mm_controls", show=False):
+                            self._w_mean_median = dpg.add_slider_int(
+                                label="Weight",
+                                default_value=1, min_value=0, max_value=100,
+                                width=_SCORE_COL_W - 100,
+                            )
+                            self._target_mean_median = dpg.add_slider_float(
+                                label="Target MM",
+                                default_value=0.0, min_value=-0.15, max_value=0.15,
+                                format="%.3f", width=_SCORE_COL_W - 100,
+                            )
+                            dpg.add_text(
+                                "  - = D advantage  |  + = R advantage",
+                                color=(110, 110, 110),
+                            )
+
+                        dpg.add_spacer(height=4)
+
+                        # Efficiency Gap
+                        with dpg.group(horizontal=True):
+                            self._eg_enabled = dpg.add_checkbox(
+                                default_value=False, enabled=False,
+                                callback=self._on_eg_toggle,
+                            )
+                            self._eg_lbl = dpg.add_text(
+                                "Efficiency Gap",
+                                color=(90, 90, 90),
+                            )
+                        with dpg.group(tag="eg_controls", show=False):
+                            self._w_efficiency_gap = dpg.add_slider_int(
+                                label="Weight",
+                                default_value=1, min_value=0, max_value=100,
+                                width=_SCORE_COL_W - 100,
+                            )
+                            self._target_efficiency_gap = dpg.add_slider_float(
+                                label="Target EG",
+                                default_value=0.0, min_value=-0.35, max_value=0.35,
+                                format="%.3f", width=_SCORE_COL_W - 100,
+                            )
+                            dpg.add_text(
+                                "  - = D bias  |  + = R bias",
+                                color=(110, 110, 110),
+                            )
+
+                    # Col 3: outcome metrics
+                    with dpg.child_window(width=-1, height=-1, border=False):
+                        # Competitiveness
+                        with dpg.group(horizontal=True):
+                            self._comp_enabled = dpg.add_checkbox(
+                                default_value=False, enabled=False,
+                                callback=self._on_comp_toggle,
+                            )
+                            self._comp_lbl = dpg.add_text(
+                                "Competitiveness",
+                                color=(90, 90, 90),
+                            )
+                        with dpg.group(tag="comp_controls", show=False):
+                            self._w_competitiveness = dpg.add_slider_int(
+                                label="Weight",
+                                default_value=1, min_value=0, max_value=100,
+                                width=_SCORE_COL_W - 100,
+                            )
+
+                        dpg.add_spacer(height=4)
+
+                        # Expected Dem Seats
+                        with dpg.group(horizontal=True):
+                            self._seats_enabled = dpg.add_checkbox(
+                                default_value=False, enabled=False,
+                                callback=self._on_seats_toggle,
+                            )
+                            self._seats_lbl = dpg.add_text(
+                                "Expected Dem Seats",
+                                color=(90, 90, 90),
+                            )
+                        with dpg.group(tag="seats_controls", show=False):
+                            self._w_dem_seats = dpg.add_slider_int(
+                                label="Weight",
+                                default_value=1, min_value=0, max_value=100,
+                                width=_SCORE_COL_W - 100,
+                            )
+                            self._target_dem_seats = dpg.add_slider_int(
+                                label="Target Seats",
+                                default_value=7, min_value=1, max_value=14,
+                                width=_SCORE_COL_W - 100,
+                            )
 
         dpg.set_primary_window("main_window", True)
         dpg.setup_dearpygui()
@@ -1495,26 +1510,15 @@ class MosaicApp:
     # ── Shapefile info label ──────────────────────────────────────────────────
 
     def _update_shp_info_label(self) -> None:
-        """Refresh the 'No shapefile loaded' label after a successful load."""
+        """Refresh the shapefile status line after a successful load."""
         if self.runner is None or self._loaded_config is None:
             return
         cfg  = self._loaded_config
         insp = self.runner._pending_inspection
         if insp is None:
             return
-        n   = insp.n_precincts
-        pop = int(self.runner.populations.sum()) if self.runner.populations is not None else 0
-        parts = [
-            f"{n:,} precincts  |  pop: {pop:,}",
-            f"Pop: {cfg.pop_col}  |  ID: {cfg.id_col}",
-        ]
-        if cfg.county_col:
-            info = insp.column_info.get(cfg.county_col)
-            n_cty = info.n_unique if info else "?"
-            parts.append(f"County: {cfg.county_col} ({n_cty})")
-        if cfg.elections:
-            parts.append(f"{len(cfg.elections)} election(s) loaded")
-        dpg.set_value(self._shp_info, "\n".join(parts))
+        stem = Path(insp.path).stem
+        dpg.set_value(self._shp_info, f"Loaded: {stem}")
         dpg.configure_item(self._shp_info, color=(150, 200, 150))
 
         # Enable/disable county-dependent controls based on what was loaded
