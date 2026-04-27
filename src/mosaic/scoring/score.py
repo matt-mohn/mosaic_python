@@ -104,35 +104,36 @@ def score_plan(
                     and assignment is not None and n_districts is not None)
 
     if has_election:
+        mm_raw, mm_penalty = score_mean_median(
+            assignment, dem_votes, gop_votes, n_districts,
+            target=config.target_mean_median,
+        )
         if config.weight_mean_median:
-            mm_raw, mm_penalty = score_mean_median(
-                assignment, dem_votes, gop_votes, n_districts,
-                target=config.target_mean_median,
-            )
             total += config.weight_mean_median * mm_penalty
 
+        eg_raw, eg_penalty = score_efficiency_gap(
+            assignment, dem_votes, gop_votes, n_districts,
+            target=config.target_efficiency_gap,
+            robust=config.use_robust_eg,
+            win_prob_at_55=config.election_win_prob_at_55,
+        )
         if config.weight_efficiency_gap:
-            eg_raw, eg_penalty = score_efficiency_gap(
-                assignment, dem_votes, gop_votes, n_districts,
-                target=config.target_efficiency_gap,
-                robust=config.use_robust_eg,
-            )
             total += config.weight_efficiency_gap * eg_penalty
 
+        seats_raw, seats_penalty = score_dem_seats(
+            assignment, dem_votes, gop_votes, n_districts,
+            target=config.target_dem_seats,
+            win_prob_at_55=config.election_win_prob_at_55,
+        )
         if config.weight_dem_seats:
-            seats_raw, seats_penalty = score_dem_seats(
-                assignment, dem_votes, gop_votes, n_districts,
-                target=config.target_dem_seats,
-                win_prob_at_55=config.election_win_prob_at_55,
-            )
-            total += config.weight_dem_seats * seats_penalty
+            total += config.weight_dem_seats * seats_penalty * 100
 
+        comp_raw = score_competitiveness(
+            assignment, dem_votes, gop_votes, n_districts,
+            win_prob_at_55=config.election_win_prob_at_55,
+        )
         if config.weight_competitiveness:
-            comp_raw = score_competitiveness(
-                assignment, dem_votes, gop_votes, n_districts,
-                win_prob_at_55=config.election_win_prob_at_55,
-            )
-            total += config.weight_competitiveness * comp_raw
+            total += config.weight_competitiveness * comp_raw * 100
 
     return PlanScore(
         total=total,

@@ -1,17 +1,27 @@
-"""Initial partition generation."""
+"""Initial partition generation via sequential balanced bisection."""
 
 import logging
 import numpy as np
 import networkx as nx
+import igraph as ig
 from typing import Callable
 
-from mosaic.recom.tree import find_balanced_cut
+from mosaic.recom.tree import find_balanced_cut_ig
 
 log = logging.getLogger("mosaic")
 
-# Per-district timeout before restarting partition (seconds)
 _DISTRICT_TIMEOUT = 5.0
 _MAX_RESTARTS = 10
+
+
+def _nx_subgraph_to_ig(graph: nx.Graph, nodes: set) -> ig.Graph:
+    """Build an igraph subgraph from a NetworkX graph restricted to given nodes."""
+    node_list = sorted(nodes)
+    idx = {n: i for i, n in enumerate(node_list)}
+    edges = [(idx[u], idx[v]) for u, v in graph.subgraph(nodes).edges()]
+    g = ig.Graph(n=len(node_list), edges=edges)
+    g.vs["name"] = node_list
+    return g
 
 
 def create_initial_partition(
@@ -23,7 +33,8 @@ def create_initial_partition(
     on_progress: Callable[[int, int], None] | None = None,
 ) -> np.ndarray:
     """
-    Create an initial district assignment using recursive bipartition.
+    Create an initial district assignment by sequentially carving one district
+    at a time from the remaining precinct graph.
 
     Args:
         graph: Precinct adjacency graph. Nodes should be 0..N-1.
@@ -61,7 +72,12 @@ def _try_partition(
     on_progress: Callable[[int, int], None] | None,
 ) -> np.ndarray | None:
     """
-    Attempt to create a partition. Returns None if any district times out.
+    Attempt a sequential partition. Returns None if any cut times out.
+
+    Carves districts 0..N-2 one at a time using one_sided=True cuts, so only
+    the carved district needs to be within tolerance. The very last cut uses
+    one_sided=False to ensure both remaining districts are valid (prevents the
+    last district from drifting out of tolerance and never recovering in annealing).
     """
     n = graph.number_of_nodes()
     total_pop = populations.sum()
@@ -71,54 +87,36 @@ def _try_partition(
     remaining_nodes = set(graph.nodes())
 
     for district in range(num_districts - 1):
-        if on_progress:
-            on_progress(district + 1, num_districts)
-
-        log.info(f"Creating district {district + 1}/{num_districts}...")
-
-        # Build subgraph of remaining nodes
-        subgraph = graph.subgraph(remaining_nodes).copy()
-
-        if not nx.is_connected(subgraph):
-            # If disconnected, work with largest component
-            components = list(nx.connected_components(subgraph))
-            largest = max(components, key=len)
-            log.warning(f"Subgraph disconnected, using largest component ({len(largest)} of {len(remaining_nodes)} nodes)")
-            subgraph = graph.subgraph(largest).copy()
-
-        remaining_pop = sum(populations[node] for node in remaining_nodes)
-        log.info(f"  Remaining: {len(remaining_nodes)} nodes, {remaining_pop:,} pop")
-
-        # Find a balanced cut.
-        # For the last iteration (creating district num_districts-2), use one_sided=False
-        # so that BOTH the carved district AND the remaining district (num_districts-1)
-        # are guaranteed to be within population tolerance.
+        # The second-to-last cut must constrain both remaining districts.
         is_last_cut = (district == num_districts - 2)
-        subset = find_balanced_cut(
-            subgraph,
+
+        ig_sub = _nx_subgraph_to_ig(graph, remaining_nodes)
+
+        carved = find_balanced_cut_ig(
+            ig_sub,
             populations,
             ideal_pop,
             tolerance,
             max_attempts=10000,
-            one_sided=not is_last_cut,  # Both sides must be valid on final cut
+            one_sided=not is_last_cut,
             timeout=_DISTRICT_TIMEOUT,
         )
 
-        if subset is None:
-            log.warning(f"Could not find balanced cut for district {district + 1}")
+        if carved is None:
+            log.warning(
+                f"District {district + 1}/{num_districts} timed out "
+                f"({len(remaining_nodes)} nodes remaining)"
+            )
             return None
 
-        subset_pop = sum(populations[node] for node in subset)
-        deviation = (subset_pop - ideal_pop) / ideal_pop * 100
-        log.info(f"  District {district + 1}: {len(subset)} nodes, {subset_pop:,} pop ({deviation:+.2f}%)")
-
-        # Assign nodes to this district
-        for node in subset:
+        for node in carved:
             assignment[node] = district
+        remaining_nodes -= set(carved)
 
-        remaining_nodes -= set(subset)
+        if on_progress:
+            on_progress(district + 1, num_districts)
 
-    # Assign remaining nodes to last district
+    # Assign all remaining nodes to the last district
     for node in remaining_nodes:
         assignment[node] = num_districts - 1
 

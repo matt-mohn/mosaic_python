@@ -72,6 +72,7 @@ class AlgorithmRunner:
         self.graph_ctx: Optional[GraphContext] = None
         self.populations: Optional[np.ndarray] = None
         self.county_array: Optional[np.ndarray] = None
+        self.county_pops: Optional[np.ndarray] = None
         self.pp_data: Optional[PPData] = None
         self.election_arrays: list[tuple[np.ndarray, np.ndarray]] = []
         self.id_col_name: str = "precinct_id"
@@ -125,24 +126,43 @@ class AlgorithmRunner:
             self.id_col_name = config.id_col
 
             # Population
-            self.populations = gdf[config.pop_col].values.astype(np.int64)
+            pop_series = gdf[config.pop_col]
+            if pop_series.isna().any():
+                n_null = int(pop_series.isna().sum())
+                log.warning(f"Population column '{config.pop_col}' has {n_null} null value(s) — converted to 0")
+                pop_series = pop_series.fillna(0)
+            self.populations = pop_series.values.astype(np.int64)
 
             # County array
             if config.county_col and config.county_col in gdf.columns:
                 vals = gdf[config.county_col].values
                 _, ids = np.unique(vals, return_inverse=True)
                 self.county_array = ids.astype(np.int32)
-                log.info(f"County col '{config.county_col}': "
-                         f"{int(ids.max()) + 1} unique counties")
+                n_counties = int(ids.max()) + 1
+                self.county_pops = np.bincount(
+                    self.county_array,
+                    weights=self.populations.astype(np.float64),
+                    minlength=n_counties,
+                )
+                log.info(f"County col '{config.county_col}': {n_counties} unique counties")
             else:
                 self.county_array = None
+                self.county_pops = None
 
             # Election arrays
             self.election_arrays = []
             for dem_col, gop_col in config.elections:
                 if dem_col in gdf.columns and gop_col in gdf.columns:
-                    dem = gdf[dem_col].values.astype(np.int64)
-                    gop = gdf[gop_col].values.astype(np.int64)
+                    dem_s = gdf[dem_col]
+                    gop_s = gdf[gop_col]
+                    for col_name, s in ((dem_col, dem_s), (gop_col, gop_s)):
+                        if s.isna().any():
+                            n_null = int(s.isna().sum())
+                            log.warning(f"Election column '{col_name}' has {n_null} null value(s) — converted to 0")
+                    dem_s = dem_s.fillna(0)
+                    gop_s = gop_s.fillna(0)
+                    dem = dem_s.values.astype(np.int64)
+                    gop = gop_s.values.astype(np.int64)
                     self.election_arrays.append((dem, gop))
                     log.info(f"Election: {dem_col}/{gop_col} — "
                              f"D:{dem.sum():,}  R:{gop.sum():,}")

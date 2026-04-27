@@ -25,6 +25,7 @@ def find_balanced_cut_ig(
     one_sided: bool = False,
     county_array: Optional[np.ndarray] = None,
     county_bias: float = 1.0,
+    timeout: float | None = None,
 ) -> list | None:
     """Find a balanced bipartition of the graph using random spanning trees."""
     if "name" in graph.vs.attributes():
@@ -41,6 +42,8 @@ def find_balanced_cut_ig(
     m = graph.ecount()
     subtree_pops = np.empty(n, dtype=np.float64)
 
+    start_time = time.perf_counter() if timeout else None
+
     # Fetch the subgraph edge list once — reused every attempt to build the
     # MST adjacency list without creating a new igraph Graph object per attempt.
     edge_list = graph.get_edgelist()  # list of (u, v) indexed by edge id
@@ -54,6 +57,8 @@ def find_balanced_cut_ig(
                              county_array[node_ids[ev_arr]])
 
     for _ in range(max_attempts):
+        if start_time and (time.perf_counter() - start_time) > timeout:
+            return None
         weights = np.random.random(m)
         if cross_county_mask is not None:
             weights[cross_county_mask] *= county_bias

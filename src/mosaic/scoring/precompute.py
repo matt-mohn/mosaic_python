@@ -6,6 +6,7 @@ county-column detection. Called once at shapefile load time.
 from __future__ import annotations
 
 import logging
+import warnings
 from dataclasses import dataclass
 from typing import Optional
 
@@ -70,8 +71,10 @@ def precompute_pp_data(gdf: gpd.GeoDataFrame, graph: nx.Graph) -> Optional[PPDat
     try:
         n = len(gdf)
         geoms = gdf.geometry
-        areas = geoms.area.values.astype(np.float64)
-        perimeters = geoms.length.values.astype(np.float64)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*geographic CRS.*", category=UserWarning)
+            areas = geoms.area.values.astype(np.float64)
+            perimeters = geoms.length.values.astype(np.float64)
 
         edges = list(graph.edges())
         m = len(edges)

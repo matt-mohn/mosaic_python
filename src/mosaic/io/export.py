@@ -81,8 +81,8 @@ def save_metrics(
         gop_d = np.bincount(assignment, weights=gop_votes.astype(np.float64),
                             minlength=n_dist)
         total_d = dem_d + gop_d
-        dem_pct = np.where(total_d > 0, dem_d / total_d * 100.0, 50.0)
-        rep_pct = np.where(total_d > 0, gop_d / total_d * 100.0, 50.0)
+        dem_pct = np.divide(dem_d, total_d, out=np.full(len(total_d), 0.5), where=total_d > 0) * 100.0
+        rep_pct = np.divide(gop_d, total_d, out=np.full(len(total_d), 0.5), where=total_d > 0) * 100.0
         rows["dem_votes"] = dem_d.astype(int).tolist()
         rows["rep_votes"] = gop_d.astype(int).tolist()
         rows["dem_pct"] = [round(v, 2) for v in dem_pct]

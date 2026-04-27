@@ -33,6 +33,7 @@ dependencies = [
     "dearpygui>=1.10",
     "igraph>=1.0",
     "Pillow>=10.0",
+    "scipy>=1.10",
 ]
 
 [project.optional-dependencies]

@@ -134,6 +134,10 @@ class MosaicApp:
         # Score Contributor panel tracking
         self._last_contrib_iter: int = -1
 
+        # Track what data the current shapefile has
+        self._has_elections: bool = False
+        self._has_county: bool = False
+
         # Local history buffers — incremental delta copy, self-compacting
         self._buf_score     = _SeriesBuffer()
         self._buf_acc       = _SeriesBuffer()
@@ -310,16 +314,9 @@ class MosaicApp:
 
                         dpg.add_text("Load Shapefile", color=(200, 200, 100))
                         dpg.add_separator()
-                        with dpg.group(horizontal=True):
-                            self._file_path = dpg.add_input_text(
-                                label="", width=280,
-                                hint="Path to .shp file",
-                            )
-                            dpg.add_button(label="...", callback=self._on_browse,
-                                           width=28)
                         dpg.add_button(
-                            label="Load/Import Shapefile from File",
-                            callback=self._on_load,
+                            label="Import Shapefile from File",
+                            callback=self._on_import_shapefile,
                             width=_LEFT_W - 20,
                         )
                         self._shp_info = dpg.add_text(
@@ -403,7 +400,7 @@ class MosaicApp:
                                 callback=self._on_pp_toggle,
                             )
                             self._pp_lbl = dpg.add_text(
-                                "Polsby-Popper", color=(110, 110, 110),
+                                "Polsby-Popper", color=(180, 180, 180),
                             )
                         with dpg.group(tag="pp_controls", show=False):
                             self._w_polsby_popper = dpg.add_slider_int(
@@ -839,6 +836,10 @@ class MosaicApp:
                             dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="cs_clean_x")
                             with dpg.plot_axis(dpg.mvYAxis, label="Count", tag="cs_clean_y"):
                                 dpg.add_line_series([], [], label="Single-County", tag="cs_clean_series")
+                dpg.add_text(
+                    "", tag="cs_max_clean_note",
+                    color=(140, 170, 140),
+                )
             dpg.add_text(
                 "Apply a score to use this panel.",
                 tag="cs_inactive_lbl", show=False, color=(150, 150, 150),
@@ -914,7 +915,7 @@ class MosaicApp:
                     with dpg.plot_axis(dpg.mvYAxis, label="Mean-Median", tag="mm_y"):
                         dpg.add_line_series([], [], label="MM", tag="mm_series")
             dpg.add_text(
-                "Apply a score to use this panel.",
+                "Load election data to use this panel.",
                 tag="mm_inactive_lbl", show=False, color=(150, 150, 150),
             )
 
@@ -932,7 +933,7 @@ class MosaicApp:
                     with dpg.plot_axis(dpg.mvYAxis, label="Efficiency Gap", tag="eg_y"):
                         dpg.add_line_series([], [], label="EG", tag="eg_series")
             dpg.add_text(
-                "Apply a score to use this panel.",
+                "Load election data to use this panel.",
                 tag="eg_inactive_lbl", show=False, color=(150, 150, 150),
             )
 
@@ -950,7 +951,7 @@ class MosaicApp:
                     with dpg.plot_axis(dpg.mvYAxis, label="Expected D Seats", tag="seats_y"):
                         dpg.add_line_series([], [], label="D Seats", tag="seats_series")
             dpg.add_text(
-                "Apply a score to use this panel.",
+                "Load election data to use this panel.",
                 tag="seats_inactive_lbl", show=False, color=(150, 150, 150),
             )
 
@@ -968,7 +969,7 @@ class MosaicApp:
                     with dpg.plot_axis(dpg.mvYAxis, label="Competitive Districts", tag="comp_y"):
                         dpg.add_line_series([], [], label="Competitive", tag="comp_series")
             dpg.add_text(
-                "Apply a score to use this panel.",
+                "Load election data to use this panel.",
                 tag="comp_inactive_lbl", show=False, color=(150, 150, 150),
             )
 
@@ -1100,7 +1101,7 @@ class MosaicApp:
                 dpg.add_text("Basic Usage", color=(200, 200, 100))
                 dpg.add_separator()
                 dpg.add_text(
-                    "1. Browse for a shapefile and click Load/Import\n"
+                    "1. Click 'Import Shapefile from File' to select and load a shapefile\n"
                     "2. Map your columns in the picker (population, county, votes)\n"
                     "3. Set districts, iterations, and enable desired scores\n"
                     "4. Click Start to begin optimization\n"
@@ -1321,32 +1322,44 @@ class MosaicApp:
                 _render(self._buf_cs_score,  "cs_score_series",  "cs_score_x",  "cs_score_y")
                 _render(self._buf_cs_excess, "cs_excess_series", "cs_excess_x", "cs_excess_y")
                 _render(self._buf_cs_clean,  "cs_clean_series",  "cs_clean_x",  "cs_clean_y")
+                if self._buf_cs_excess.ys:
+                    hi = max(1, int(max(self._buf_cs_excess.ys)))
+                    dpg.set_axis_limits("cs_excess_y", 0, hi + 1)
+                if self._buf_cs_clean.ys:
+                    lo = max(0, int(min(self._buf_cs_clean.ys)) - 1)
+                    hi = int(max(self._buf_cs_clean.ys)) + 1
+                    dpg.set_axis_limits("cs_clean_y", lo, hi)
+            if (self.runner is not None and self.runner.county_pops is not None
+                    and self.runner.populations is not None):
+                n_dist = dpg.get_value(self._num_districts)
+                tol = dpg.get_value(self._tolerance)
+                ideal_pop = float(self.runner.populations.sum()) / n_dist if n_dist > 0 else 1.0
+                min_dp = max(ideal_pop * (1.0 - tol), 1.0)
+                max_clean = int(np.floor(self.runner.county_pops / min_dp).sum())
+                dpg.set_value("cs_max_clean_note",
+                              f"Maximum feasible single-county districts: {max_clean:,}")
 
-        mm_on    = dpg.get_value(self._mm_enabled)
-        eg_on    = dpg.get_value(self._eg_enabled)
-        seats_on = dpg.get_value(self._seats_enabled)
-        comp_on  = dpg.get_value(self._comp_enabled)
         pp_on    = dpg.get_value(self._pp_enabled)
 
         if dpg.is_item_shown("panel_mm"):
-            dpg.configure_item("mm_plot_grp",     show=mm_on)
-            dpg.configure_item("mm_inactive_lbl", show=not mm_on)
-            if mm_on:
+            dpg.configure_item("mm_plot_grp",     show=self._has_elections)
+            dpg.configure_item("mm_inactive_lbl", show=not self._has_elections)
+            if self._has_elections:
                 _render(self._buf_mm, "mm_series", "mm_x", "mm_y")
         if dpg.is_item_shown("panel_eg"):
-            dpg.configure_item("eg_plot_grp",     show=eg_on)
-            dpg.configure_item("eg_inactive_lbl", show=not eg_on)
-            if eg_on:
+            dpg.configure_item("eg_plot_grp",     show=self._has_elections)
+            dpg.configure_item("eg_inactive_lbl", show=not self._has_elections)
+            if self._has_elections:
                 _render(self._buf_eg, "eg_series", "eg_x", "eg_y")
         if dpg.is_item_shown("panel_dem_seats"):
-            dpg.configure_item("seats_plot_grp",     show=seats_on)
-            dpg.configure_item("seats_inactive_lbl", show=not seats_on)
-            if seats_on:
+            dpg.configure_item("seats_plot_grp",     show=self._has_elections)
+            dpg.configure_item("seats_inactive_lbl", show=not self._has_elections)
+            if self._has_elections:
                 _render(self._buf_seats, "seats_series", "seats_x", "seats_y")
         if dpg.is_item_shown("panel_comp"):
-            dpg.configure_item("comp_plot_grp",     show=comp_on)
-            dpg.configure_item("comp_inactive_lbl", show=not comp_on)
-            if comp_on:
+            dpg.configure_item("comp_plot_grp",     show=self._has_elections)
+            dpg.configure_item("comp_inactive_lbl", show=not self._has_elections)
+            if self._has_elections:
                 _render(self._buf_comp, "comp_series", "comp_x", "comp_y")
         if dpg.is_item_shown("panel_pp"):
             dpg.configure_item("pp_plot_grp",     show=pp_on)
@@ -1373,7 +1386,8 @@ class MosaicApp:
                        if self.state.current_assignment is not None else None)
                 _pnd = self.state.num_districts
             if (_pa is not None and self.runner is not None
-                    and self.runner.election_arrays):
+                    and self.runner.election_arrays
+                    and len(self.runner.election_arrays[0][0]) == len(_pa)):
                 _dem, _gop = self.runner.election_arrays[0]
                 _dem_d = np.bincount(_pa, weights=_dem.astype(np.float64), minlength=_pnd)
                 _gop_d = np.bincount(_pa, weights=_gop.astype(np.float64), minlength=_pnd)
@@ -1505,6 +1519,7 @@ class MosaicApp:
 
         # Enable/disable county-dependent controls based on what was loaded
         has_county = cfg.county_col is not None
+        self._has_county = has_county
         dpg.configure_item(self._cs_lbl,
                            color=(180, 180, 180) if has_county else (90, 90, 90))
         dpg.configure_item(self._cs_enabled, enabled=has_county)
@@ -1519,9 +1534,15 @@ class MosaicApp:
             dpg.set_value(self._splits_view, False)
             if self.map_view:
                 self.map_view.splits_view = False
+        # Enable/disable county splits panel menu item; close if now unavailable
+        dpg.configure_item(self._panel_cs_item, enabled=has_county)
+        if not has_county and dpg.is_item_shown("panel_county_splits"):
+            dpg.set_value(self._panel_cs_item, False)
+            dpg.configure_item("panel_county_splits", show=False)
 
         # Partisan overlay map toggle
         has_elections = bool(cfg.elections)
+        self._has_elections = has_elections
         dpg.configure_item(self._partisan_overlay, enabled=has_elections)
         dpg.configure_item(self._district_partisan, enabled=has_elections)
         if not has_elections:
@@ -1553,6 +1574,18 @@ class MosaicApp:
             ]:
                 dpg.set_value(chk, False)
                 dpg.configure_item(ctrl_tag, show=False)
+        # Enable/disable partisan panel menu items; close any open ones when unavailable
+        for item_tag, panel_tag in [
+            (self._panel_partisan_item, "panel_partisanship"),
+            (self._panel_mm_item,       "panel_mm"),
+            (self._panel_eg_item,       "panel_eg"),
+            (self._panel_seats_item,    "panel_dem_seats"),
+            (self._panel_comp_item,     "panel_comp"),
+        ]:
+            dpg.configure_item(item_tag, enabled=has_elections)
+            if not has_elections and dpg.is_item_shown(panel_tag):
+                dpg.set_value(item_tag, False)
+                dpg.configure_item(panel_tag, show=False)
 
     # ── Popup toggle callbacks ────────────────────────────────────────────────
 
@@ -1723,7 +1756,7 @@ class MosaicApp:
 
     # ── Action callbacks ──────────────────────────────────────────────────────
 
-    def _on_browse(self):
+    def _on_import_shapefile(self):
         root = tk.Tk()
         root.withdraw()
         root.attributes("-topmost", True)
@@ -1733,17 +1766,17 @@ class MosaicApp:
             initialdir=Path.cwd() / "shapefiles",
         )
         root.destroy()
-        if path:
-            dpg.set_value(self._file_path, path)
-
-    def _on_load(self):
-        path = dpg.get_value(self._file_path)
         if not path:
-            self.state.update(status=AlgorithmStatus.ERROR,
-                              error_message="Please enter a shapefile path")
             return
         self.runner = AlgorithmRunner(self.state)
         self._loaded_config = None
+        self._has_elections = False
+        self._has_county    = False
+        self.state.update(
+            current_assignment=None,
+            best_assignment=None,
+            initial_assignment=None,
+        )
         dpg.set_value(self._shp_info, "Reading shapefile...")
         dpg.configure_item(self._shp_info, color=(150, 150, 150))
         threading.Thread(
@@ -1754,6 +1787,22 @@ class MosaicApp:
                         config: ShapefileConfig) -> None:
         """Called by ShapefileDialog when the user clicks Confirm and Load."""
         self._loaded_config = config
+        # Flush all history and series before the new load so charts start
+        # fresh and the previous file's data doesn't bleed through.
+        with self.state._lock:
+            self.state.score_history = []
+            self.state.temperature_history = []
+            self.state.acceptance_rate_history = []
+            self.state.county_splits_score_history = []
+            self.state.county_excess_splits_history = []
+            self.state.county_clean_districts_history = []
+            self.state.mm_history = []
+            self.state.eg_history = []
+            self.state.dem_seats_history = []
+            self.state.competitive_count_history = []
+            self.state.pp_history = []
+            self.state.cut_edges_history = []
+        self._clear_all_series()
         dpg.set_value(self._shp_info, "Building graph...")
         dpg.configure_item(self._shp_info, color=(150, 150, 150))
         threading.Thread(
