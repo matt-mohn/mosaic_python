@@ -696,10 +696,10 @@ class MosaicApp:
         ):
             self._tolerance = dpg.add_slider_float(
                 label="Population Tolerance",
-                default_value=0.05, min_value=0.001, max_value=0.20,
+                default_value=0.05, min_value=0.001, max_value=0.10,
                 format="%.3f", width=260,
             )
-            dpg.add_text("  (e.g. 0.05 = 5% max deviation)",
+            dpg.add_text("  (e.g. 0.05 = 5% max deviation from ideal in either direction)",
                          color=(150, 150, 150))
             dpg.add_spacer(height=10)
             dpg.add_separator()
@@ -708,7 +708,7 @@ class MosaicApp:
                          color=(200, 200, 100))
             self._pop_dev_harbor = dpg.add_slider_float(
                 label="Safe Harbor",
-                default_value=0.0025, min_value=0.0, max_value=0.20,
+                default_value=0.0025, min_value=0.0, max_value=0.05,
                 format="%.4f", width=260,
             )
             dpg.add_text(
