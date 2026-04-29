@@ -76,6 +76,37 @@ _BORDER_RGBA        = np.array([0,   0,   0,   255], dtype=np.uint8)
 _COUNTY_BORDER_RGBA = np.array([180, 180, 180, 255], dtype=np.uint8)
 _SPLITS_DIM_RGBA    = np.array([28,  28,  28,  255], dtype=np.uint8)
 
+# Compactness (Polsby-Popper 0→1): red = not compact, green = compact
+_COMPACT_STOPS = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+_COMPACT_RGB   = np.array([
+    [190, 50,  50 ],
+    [210, 130, 50 ],
+    [210, 200, 70 ],
+    [100, 185, 85 ],
+    [40,  155, 90 ],
+], dtype=np.float64)
+
+# Pop. deviation (signed %, mapped through ±_POP_DEV_MAX): blue = under, red = over
+_POP_DEV_MAX   = 0.10   # clamp to ±10 %
+_POP_DEV_STOPS = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+_POP_DEV_RGB   = np.array([
+    [65,  105, 225],
+    [135, 165, 225],
+    [185, 185, 185],
+    [225, 155, 100],
+    [200, 60,  60 ],
+], dtype=np.float64)
+
+_FOUR_PI = 4.0 * np.pi
+
+
+def _interp_palette(stops: np.ndarray, rgb: np.ndarray, t: np.ndarray) -> np.ndarray:
+    """Interpolate an RGB palette at positions t ∈ [0, 1]. Returns (N, 3) uint8."""
+    r = np.interp(t, stops, rgb[:, 0])
+    g = np.interp(t, stops, rgb[:, 1])
+    b = np.interp(t, stops, rgb[:, 2])
+    return np.stack([r, g, b], axis=-1).clip(0, 255).astype(np.uint8)
+
 
 def _stable_color_mapping(
     current: np.ndarray,
@@ -127,11 +158,15 @@ class MapView:
         self._county_array: Optional[np.ndarray] = None
         self._dem_votes: Optional[np.ndarray] = None
         self._gop_votes: Optional[np.ndarray] = None
+        self._pp_data = None
+        self._populations: Optional[np.ndarray] = None
         # Overlay mode flags (set by GUI callbacks)
         self.county_overlay: bool = False
         self.partisan_overlay: bool = False          # colour each precinct by its own partisan lean
         self.district_partisan_overlay: bool = False  # colour each district by its aggregate partisan lean
         self.splits_view: bool = False
+        self.compactness_view: bool = False          # colour each district by Polsby-Popper score
+        self.pop_dev_view: bool = False              # colour each district by population deviation
 
     # ── Load (thread-safe, no DPG) ────────────────────────────────────────────
 
@@ -141,6 +176,8 @@ class MapView:
         county_array: Optional[np.ndarray] = None,
         dem_votes: Optional[np.ndarray] = None,
         gop_votes: Optional[np.ndarray] = None,
+        pp_data=None,
+        populations: Optional[np.ndarray] = None,
     ) -> None:
         """
         Project geometries and rasterise each precinct into pixel_map.
@@ -149,6 +186,8 @@ class MapView:
         self._county_array = county_array
         self._dem_votes = dem_votes
         self._gop_votes = gop_votes
+        self._pp_data = pp_data
+        self._populations = populations
         W, H = self._w, self._h
         bounds = gdf.total_bounds
         gw = max(bounds[2] - bounds[0], 1e-9)
@@ -233,6 +272,47 @@ class MapView:
         lut[n] = _BG_COLOR
         return lut
 
+    def _build_compactness_lut(self, assignment: np.ndarray, n_districts: int) -> np.ndarray:
+        """Per-precinct LUT coloured by each district's Polsby-Popper score."""
+        n = self._n_precincts
+        pd = self._pp_data
+        dist_area  = np.bincount(assignment, weights=pd.areas,
+                                  minlength=n_districts).astype(np.float64)
+        dist_perim = np.bincount(assignment, weights=pd.ext_perimeters,
+                                  minlength=n_districts).astype(np.float64)
+        eu, ev, elen = pd.edge_u, pd.edge_v, pd.edge_len
+        if len(eu) > 0:
+            eu_d = assignment[eu]
+            ev_d = assignment[ev]
+            is_cut = eu_d != ev_d
+            if is_cut.any():
+                np.add.at(dist_perim, eu_d[is_cut], elen[is_cut])
+                np.add.at(dist_perim, ev_d[is_cut], elen[is_cut])
+        safe_perim = np.where(dist_perim > 0, dist_perim, 1.0)
+        pp_d = np.clip(_FOUR_PI * dist_area / safe_perim ** 2, 0.0, 1.0)
+        colors_d = _interp_palette(_COMPACT_STOPS, _COMPACT_RGB, pp_d)
+        lut = np.zeros((n + 1, 4), dtype=np.uint8)
+        lut[:n, :3] = colors_d[assignment]
+        lut[:n, 3]  = 255
+        lut[n] = _BG_COLOR
+        return lut
+
+    def _build_pop_dev_lut(self, assignment: np.ndarray, n_districts: int) -> np.ndarray:
+        """Per-precinct LUT coloured by each district's population deviation from ideal."""
+        n = self._n_precincts
+        pop_d = np.bincount(assignment,
+                            weights=self._populations.astype(np.float64),
+                            minlength=n_districts)
+        ideal = pop_d.mean() if pop_d.mean() > 0 else 1.0
+        dev   = (pop_d - ideal) / ideal
+        t     = np.clip(dev / _POP_DEV_MAX, -1.0, 1.0) * 0.5 + 0.5
+        colors_d = _interp_palette(_POP_DEV_STOPS, _POP_DEV_RGB, t)
+        lut = np.zeros((n + 1, 4), dtype=np.uint8)
+        lut[:n, :3] = colors_d[assignment]
+        lut[:n, 3]  = 255
+        lut[n] = _BG_COLOR
+        return lut
+
     def _county_border_mask(self, pm: np.ndarray) -> np.ndarray:
         """Boolean mask of pixels that lie on county borders."""
         ca = self._county_array
@@ -281,6 +361,10 @@ class MapView:
             lut = self._build_partisan_lut()
         elif self.district_partisan_overlay and self._dem_votes is not None:
             lut = self._build_district_partisan_lut(assignment, n_districts)
+        elif self.compactness_view and self._pp_data is not None:
+            lut = self._build_compactness_lut(assignment, n_districts)
+        elif self.pop_dev_view and self._populations is not None:
+            lut = self._build_pop_dev_lut(assignment, n_districts)
         else:
             if initial is not None and len(initial) == len(assignment):
                 ci = _stable_color_mapping(assignment, initial, n_districts)

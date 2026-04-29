@@ -73,11 +73,14 @@ def inspect_shapefile(path: str | Path) -> ShapefileInspection:
             is_num = pd.api.types.is_numeric_dtype(s)
 
             # If dtype is non-numeric but every non-null value parses as a number, coerce.
+            # Skip coercion when any value has a leading zero — those are zero-padded
+            # identifiers like FIPS/GEOID20 codes that must stay as strings.
             if not is_num:
                 non_null = s.dropna()
                 if len(non_null) > 0:
                     converted = pd.to_numeric(non_null, errors="coerce")
-                    if converted.notna().all():
+                    has_leading_zero = non_null.astype(str).str.match(r'^0\d').any()
+                    if converted.notna().all() and not has_leading_zero:
                         gdf[c] = pd.to_numeric(s, errors="coerce")
                         s = gdf[c]
                         is_num = True

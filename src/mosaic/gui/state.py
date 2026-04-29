@@ -111,6 +111,7 @@ class SharedState:
     # Control flags
     should_stop: bool = False
     should_pause: bool = False
+    pause_time: float = 0.0      # wall-clock time when pause began (0 = not paused)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -184,6 +185,7 @@ class SharedState:
             self.shp_inspect_ready = False
             self.should_stop = False
             self.should_pause = False
+            self.pause_time = 0.0
             self.error_message = ""
             self.start_time = 0.0
             self.end_time = 0.0

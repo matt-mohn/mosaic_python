@@ -344,9 +344,11 @@ class AlgorithmRunner:
                     return
 
                 if self.state.check_should_pause():
+                    _pause_start = time.time()
                     self.state.update(
                         status=AlgorithmStatus.PAUSED,
                         status_message="Paused",
+                        pause_time=_pause_start,
                     )
                     while self.state.check_should_pause():
                         if self.state.check_should_stop():
@@ -354,10 +356,15 @@ class AlgorithmRunner:
                                 status=AlgorithmStatus.IDLE,
                                 status_message="Stopped",
                                 end_time=time.time(),
+                                pause_time=0.0,
                             )
                             return
                         time.sleep(0.05)
+                    # Shift start_time forward by pause duration so IPS stays accurate
+                    (current_start,) = self.state.get("start_time")
                     self.state.update(
+                        start_time=current_start + (time.time() - _pause_start),
+                        pause_time=0.0,
                         status=AlgorithmStatus.RUNNING,
                         status_message="Running ReCom...",
                     )
