@@ -39,6 +39,7 @@ def _build_score_breakdown(ps, cfg) -> dict:
     _add("Cut Edges",      cfg.weight_cut_edges * ps.cut_edges)
     _add("County Splits",  cfg.weight_county_splits * ps.county_splits)
     _add("Polsby-Popper",  cfg.weight_polsby_popper * ps.polsby_popper)
+    _add("Pop. Deviation", cfg.weight_pop_deviation * ps.pop_deviation)
     if cfg.weight_mean_median:
         _add("Mean-Median",    cfg.weight_mean_median *
              ((ps.mean_median - cfg.target_mean_median) * 100) ** 2)

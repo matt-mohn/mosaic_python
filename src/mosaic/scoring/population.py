@@ -70,6 +70,29 @@ def get_plan_stats(
     )
 
 
+def score_pop_deviation(
+    assignment: np.ndarray,
+    populations: np.ndarray,
+    ideal_pop: float,
+    n_districts: int,
+    safe_harbor: float = 0.0025,
+) -> float:
+    """
+    Mean squared fractional deviation beyond the safe-harbor threshold, * 10000.
+
+    Districts within safe_harbor of ideal contribute 0; those outside contribute
+    (|dev_frac| - safe_harbor)^2 * 10000.
+
+    Typical range: 0 (all within harbor) to ~22 (all districts at 5% tolerance
+    boundary with 0.25% harbor).  Scaled to be comparable with Polsby-Popper [0, 100].
+    """
+    pop_d = np.bincount(assignment, weights=populations.astype(np.float64),
+                        minlength=n_districts)
+    dev_frac = np.abs(pop_d - ideal_pop) / max(float(ideal_pop), 1.0)
+    excess = np.maximum(0.0, dev_frac - safe_harbor)
+    return float(np.mean(excess ** 2) * 10_000)
+
+
 # Keep these for backwards compatibility / future use
 def calculate_population_score(
     populations: np.ndarray,
