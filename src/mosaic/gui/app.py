@@ -204,6 +204,7 @@ class MosaicApp:
         self._build_score_contrib_panel()
         self._build_county_splits_panel()
         self._build_partisanship_panel()
+        self._build_win_chance_panel()
         self._build_mm_panel()
         self._build_eg_panel()
         self._build_dem_seats_panel()
@@ -256,6 +257,10 @@ class MosaicApp:
                     self._panel_partisan_item = dpg.add_menu_item(
                         label="Partisanship", check=True, default_value=False,
                         callback=self._on_panel_partisan_toggle,
+                    )
+                    self._panel_win_chance_item = dpg.add_menu_item(
+                        label="Win Chance", check=True, default_value=False,
+                        callback=self._on_panel_win_chance_toggle,
                     )
                     self._panel_mm_item = dpg.add_menu_item(
                         label="Mean-Median", check=True, default_value=False,
@@ -928,6 +933,31 @@ class MosaicApp:
                     dpg.bind_item_theme(_med, self._partisan_ref_theme)
         dpg.set_axis_limits("partisan_y", 0.0, 1.0)
 
+    def _build_win_chance_panel(self):
+        with dpg.window(
+            label="Win Chance", tag="panel_win_chance",
+            show=False, width=540, height=320,
+            pos=[_LEFT_W + 120, 110],
+            on_close=lambda: dpg.set_value(self._panel_win_chance_item, False),
+        ):
+            with dpg.plot(height=-1, width=-1, tag="win_chance_plot"):
+                dpg.add_plot_axis(
+                    dpg.mvXAxis, tag="win_chance_x",
+                    label="Districts (least to most likely D win)",
+                    no_tick_labels=True,
+                )
+                with dpg.plot_axis(dpg.mvYAxis, label="P(D wins)", tag="win_chance_y"):
+                    self._win_chance_bar_series = []
+                    for i in range(12):
+                        s = dpg.add_bar_series([], [], weight=0.85, show=True)
+                        dpg.bind_item_theme(s, self._partisan_bar_themes[i])
+                        self._win_chance_bar_series.append(s)
+                    _wref = dpg.add_line_series(
+                        [0, 200], [0.5, 0.5], label="##wref50", tag="win_chance_ref",
+                    )
+                    dpg.bind_item_theme(_wref, self._partisan_ref_theme)
+        dpg.set_axis_limits("win_chance_y", 0.0, 1.0)
+
     def _build_mm_panel(self):
         with dpg.window(
             label="Mean-Median Difference", tag="panel_mm",
@@ -1443,6 +1473,39 @@ class MosaicApp:
                 dpg.fit_axis_data("partisan_x")
                 dpg.set_axis_limits("partisan_y", 0.0, 1.0)
 
+        # Win Chance panel — same layout, Y = P(D wins) via logistic model
+        if dpg.is_item_shown("panel_win_chance"):
+            from mosaic.gui.map_view import _PARTISAN_BREAKS
+            from mosaic.scoring.partisan import election_k
+            with self.state._lock:
+                _wa = (self.state.current_assignment.copy()
+                       if self.state.current_assignment is not None else None)
+                _wnd = self.state.num_districts
+            if (_wa is not None and self.runner is not None
+                    and self.runner.election_arrays
+                    and len(self.runner.election_arrays[0][0]) == len(_wa)):
+                _dem, _gop = self.runner.election_arrays[0]
+                _dem_d = np.bincount(_wa, weights=_dem.astype(np.float64), minlength=_wnd)
+                _gop_d = np.bincount(_wa, weights=_gop.astype(np.float64), minlength=_wnd)
+                _tot_d = _dem_d + _gop_d
+                _shares = np.where(_tot_d > 0, _dem_d / _tot_d, 0.5)
+                _k = election_k(dpg.get_value(self._win_prob))
+                _p_win = 1.0 / (1.0 + np.exp(-_k * (_shares - 0.5)))
+                sorted_p = np.sort(_p_win)
+                wranks = np.arange(1, len(sorted_p) + 1, dtype=float)
+                wbucket = np.searchsorted(_PARTISAN_BREAKS, sorted_p, side="right") - 1
+                wbucket = np.clip(wbucket, 0, 11)
+                for bi in range(12):
+                    mask = wbucket == bi
+                    dpg.set_value(
+                        self._win_chance_bar_series[bi],
+                        [wranks[mask].tolist(), sorted_p[mask].tolist()],
+                    )
+                wn = len(sorted_p)
+                dpg.set_value("win_chance_ref", [[0.5, wn + 0.5], [0.5, 0.5]])
+                dpg.fit_axis_data("win_chance_x")
+                dpg.set_axis_limits("win_chance_y", 0.0, 1.0)
+
         # Keep dem seats target slider bounded by current district count
         n_dist_val = dpg.get_value(self._num_districts)
         dpg.configure_item(self._target_dem_seats, max_value=n_dist_val)
@@ -1523,6 +1586,8 @@ class MosaicApp:
         ):
             dpg.set_value(tag, empty)
         for s in self._partisan_bar_series:
+            dpg.set_value(s, empty)
+        for s in self._win_chance_bar_series:
             dpg.set_value(s, empty)
 
     # ── Shapefile info label ──────────────────────────────────────────────────
@@ -1612,11 +1677,12 @@ class MosaicApp:
                 dpg.configure_item(ctrl_tag, show=False)
         # Enable/disable partisan panel menu items; close any open ones when unavailable
         for item_tag, panel_tag in [
-            (self._panel_partisan_item, "panel_partisanship"),
-            (self._panel_mm_item,       "panel_mm"),
-            (self._panel_eg_item,       "panel_eg"),
-            (self._panel_seats_item,    "panel_dem_seats"),
-            (self._panel_comp_item,     "panel_comp"),
+            (self._panel_partisan_item,   "panel_partisanship"),
+            (self._panel_win_chance_item, "panel_win_chance"),
+            (self._panel_mm_item,         "panel_mm"),
+            (self._panel_eg_item,         "panel_eg"),
+            (self._panel_seats_item,      "panel_dem_seats"),
+            (self._panel_comp_item,       "panel_comp"),
         ]:
             dpg.configure_item(item_tag, enabled=has_elections)
             if not has_elections and dpg.is_item_shown(panel_tag):
@@ -1693,6 +1759,9 @@ class MosaicApp:
 
     def _on_panel_partisan_toggle(self):
         dpg.configure_item("panel_partisanship", show=dpg.get_value(self._panel_partisan_item))
+
+    def _on_panel_win_chance_toggle(self):
+        dpg.configure_item("panel_win_chance", show=dpg.get_value(self._panel_win_chance_item))
 
     def _on_panel_mm_toggle(self):
         dpg.configure_item("panel_mm", show=dpg.get_value(self._panel_mm_item))
