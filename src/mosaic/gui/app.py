@@ -95,6 +95,7 @@ _CONTRIB_METRICS = [
     ("Efficiency Gap",  "contrib_efficiency_gap"),
     ("Mean-Median",     "contrib_mean_median"),
     ("Polsby-Popper",   "contrib_polsby_popper"),
+    ("Pop. Deviation",  "contrib_pop_deviation"),
 ]
 
 # ── Layout constants ──────────────────────────────────────────────────────────
