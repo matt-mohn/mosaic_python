@@ -704,7 +704,7 @@ class MosaicApp:
             dpg.add_spacer(height=10)
             dpg.add_separator()
             dpg.add_spacer(height=6)
-            dpg.add_text("Pop. Deviation Score — Safe Harbor",
+            dpg.add_text("Pop. Deviation Score - Safe Harbor",
                          color=(200, 200, 100))
             self._pop_dev_harbor = dpg.add_slider_float(
                 label="Safe Harbor",
