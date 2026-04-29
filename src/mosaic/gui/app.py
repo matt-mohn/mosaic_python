@@ -712,7 +712,7 @@ class MosaicApp:
                 format="%.4f", width=260,
             )
             dpg.add_text(
-                "  Districts within this % of ideal are not penalized.\n"
+                "  Districts within this %% of ideal are not penalized.\n"
                 "  Cannot exceed Population Tolerance (clamped on run).",
                 color=(150, 150, 150),
             )
