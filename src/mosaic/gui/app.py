@@ -542,6 +542,24 @@ class MosaicApp:
                                     color=(150, 150, 150),
                                 )
 
+                        dpg.add_spacer(height=4)
+
+                        # Population Deviation
+                        with dpg.group(horizontal=True):
+                            self._popdev_enabled = dpg.add_checkbox(
+                                default_value=False,
+                                callback=self._on_popdev_score_toggle,
+                            )
+                            self._popdev_lbl = dpg.add_text(
+                                "Pop. Deviation", color=(180, 180, 180),
+                            )
+                        with dpg.group(tag="popdev_controls", show=False):
+                            self._w_pop_deviation = dpg.add_slider_float(
+                                label="Weight",
+                                default_value=1.0, min_value=0.0, max_value=10.0,
+                                format="%.1f", width=_SCORE_COL_W - 100,
+                            )
+
                     # Col 2: shape + partisan bias
                     with dpg.child_window(width=_SCORE_COL_W, height=-1,
                                           border=False):
@@ -672,8 +690,8 @@ class MosaicApp:
             label="Run Config -- Population",
             tag="popup_population", show=False,
             modal=True, no_close=True,
-            width=420, height=150,
-            pos=[(_VP_W - 420) // 2, (_VP_H - 150) // 2],
+            width=420, height=220,
+            pos=[(_VP_W - 420) // 2, (_VP_H - 220) // 2],
         ):
             self._tolerance = dpg.add_slider_float(
                 label="Population Tolerance",
@@ -682,6 +700,21 @@ class MosaicApp:
             )
             dpg.add_text("  (e.g. 0.05 = 5% max deviation)",
                          color=(150, 150, 150))
+            dpg.add_spacer(height=10)
+            dpg.add_separator()
+            dpg.add_spacer(height=6)
+            dpg.add_text("Pop. Deviation Score — Safe Harbor",
+                         color=(200, 200, 100))
+            self._pop_dev_harbor = dpg.add_slider_float(
+                label="Safe Harbor",
+                default_value=0.0025, min_value=0.0, max_value=0.5,
+                format="%.4f", width=260,
+            )
+            dpg.add_text(
+                "  Districts within this % of ideal are not penalized.\n"
+                "  Cannot exceed Population Tolerance (clamped on run).",
+                color=(150, 150, 150),
+            )
             dpg.add_spacer(height=8)
             dpg.add_button(
                 label="Close",
@@ -1718,6 +1751,12 @@ class MosaicApp:
                            color=(90, 220, 90) if en else (110, 110, 110))
         dpg.configure_item("pp_controls", show=en)
 
+    def _on_popdev_score_toggle(self):
+        en = dpg.get_value(self._popdev_enabled)
+        dpg.configure_item(self._popdev_lbl,
+                           color=(90, 220, 90) if en else (180, 180, 180))
+        dpg.configure_item("popdev_controls", show=en)
+
     def _on_mm_toggle(self):
         en = dpg.get_value(self._mm_enabled)
         dpg.configure_item(self._mm_lbl,
@@ -2063,6 +2102,11 @@ class MosaicApp:
         w_cs   = dpg.get_value(self._w_county_splits) if cs_on else 0.0
         w_pp   = (dpg.get_value(self._w_polsby_popper)
                   if dpg.get_value(self._pp_enabled) else 0.0)
+        w_pd   = (dpg.get_value(self._w_pop_deviation)
+                  if dpg.get_value(self._popdev_enabled) else 0.0)
+        # Safe harbor cannot exceed population tolerance
+        _tol    = dpg.get_value(self._tolerance)
+        _harbor = min(dpg.get_value(self._pop_dev_harbor), _tol)
 
         n_dist_run = dpg.get_value(self._num_districts)
         raw_target_seats = dpg.get_value(self._target_dem_seats)
@@ -2072,6 +2116,8 @@ class MosaicApp:
             weight_cut_edges=w_cut,
             weight_county_splits=w_cs,
             weight_polsby_popper=w_pp,
+            weight_pop_deviation=w_pd,
+            pop_deviation_safe_harbor=_harbor,
             weight_mean_median=dpg.get_value(self._w_mean_median) if mm_on else 0.0,
             target_mean_median=dpg.get_value(self._target_mean_median) if mm_on else 0.0,
             weight_efficiency_gap=dpg.get_value(self._w_efficiency_gap) if eg_on else 0.0,

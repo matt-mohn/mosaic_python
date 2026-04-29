@@ -24,6 +24,8 @@ class ScoreConfig:
     weight_cut_edges: float = 1.0
     weight_county_splits: float = 0.0
     weight_polsby_popper: float = 0.0
+    weight_pop_deviation: float = 0.0
+    pop_deviation_safe_harbor: float = 0.0025   # fractional; 0.0025 = 0.25%
     # Partisan metrics (require election data; all off by default)
     weight_mean_median: float = 0.0
     target_mean_median: float = 0.0
@@ -43,6 +45,7 @@ class PlanScore:
     cut_edges: int
     county_splits: float = 0.0
     polsby_popper: float = 0.0          # stored as 1 - mean_PP (penalty form)
+    pop_deviation: float = 0.0          # mean squared excess dev * 10000
     county_excess_splits: int = 0
     county_clean_districts: int = 0
     # Partisan raw metric values (before target penalty; for display)
@@ -74,6 +77,7 @@ def score_plan(
     """
     from mosaic.scoring.county_splits import score_county_splits
     from mosaic.scoring.polsby_popper import score_polsby_popper
+    from mosaic.scoring.population import score_pop_deviation
     from mosaic.scoring.partisan import (
         score_mean_median, score_efficiency_gap,
         score_dem_seats, score_competitiveness,
@@ -81,7 +85,7 @@ def score_plan(
 
     cut_edges = len(cut_edge_indices)
     total = config.weight_cut_edges * cut_edges
-    cs_raw = pp_raw = 0.0
+    cs_raw = pp_raw = pd_raw = 0.0
     cs_excess = cs_clean = 0
     mm_raw = eg_raw = seats_raw = comp_raw = 0.0
 
@@ -98,6 +102,15 @@ def score_plan(
             and pp_data is not None and n_districts is not None:
         pp_raw = score_polsby_popper(assignment, pp_data, n_districts)
         total += config.weight_polsby_popper * pp_raw
+
+    if config.weight_pop_deviation and assignment is not None \
+            and populations is not None and ideal_pop is not None \
+            and n_districts is not None:
+        pd_raw = score_pop_deviation(
+            assignment, populations, ideal_pop, n_districts,
+            safe_harbor=config.pop_deviation_safe_harbor,
+        )
+        total += config.weight_pop_deviation * pd_raw
 
     # Partisan metrics — only run when election data is available
     has_election = (dem_votes is not None and gop_votes is not None
@@ -142,6 +155,7 @@ def score_plan(
         county_excess_splits=cs_excess,
         county_clean_districts=cs_clean,
         polsby_popper=pp_raw,
+        pop_deviation=pd_raw,
         mean_median=mm_raw,
         efficiency_gap=eg_raw,
         dem_seats=seats_raw,
