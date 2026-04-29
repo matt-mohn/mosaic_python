@@ -412,27 +412,39 @@ class MosaicApp:
                             dpg.add_image("map_texture")
                         with dpg.group(horizontal=True):
                             self._county_overlay = dpg.add_checkbox(
-                                label="County Overlay",
+                                label="County",
                                 default_value=False,
                                 callback=self._on_county_overlay_toggle,
                             )
                             self._splits_view = dpg.add_checkbox(
-                                label="Splits View",
+                                label="Splits",
                                 default_value=False,
                                 enabled=False,
                                 callback=self._on_splits_view_toggle,
                             )
                             self._partisan_overlay = dpg.add_checkbox(
-                                label="Precincts by Partisanship",
+                                label="Precinct Results",
                                 default_value=False,
                                 enabled=False,
                                 callback=self._on_partisan_overlay_toggle,
                             )
                             self._district_partisan = dpg.add_checkbox(
-                                label="Districts by Partisanship",
+                                label="District Results",
                                 default_value=False,
                                 enabled=False,
                                 callback=self._on_district_partisan_toggle,
+                            )
+                            self._compactness_view = dpg.add_checkbox(
+                                label="Compactness",
+                                default_value=False,
+                                enabled=False,
+                                callback=self._on_compactness_toggle,
+                            )
+                            self._pop_dev_view = dpg.add_checkbox(
+                                label="Pop. Deviation",
+                                default_value=False,
+                                enabled=False,
+                                callback=self._on_pop_dev_toggle,
                             )
 
                         dpg.add_spacer(height=4)
@@ -1192,10 +1204,13 @@ class MosaicApp:
                        if self.runner.election_arrays else None)
             gop_ref = (self.runner.election_arrays[0][1]
                        if self.runner.election_arrays else None)
+            pp_data_ref  = self.runner.pp_data
+            pop_ref      = self.runner.populations
             mv = self.map_view
             def _bg_load():
                 mv.load(gdf_ref, county_array=county_array_ref,
-                        dem_votes=dem_ref, gop_votes=gop_ref)
+                        dem_votes=dem_ref, gop_votes=gop_ref,
+                        pp_data=pp_data_ref, populations=pop_ref)
                 self._map_loading = False
                 self._map_ready = True
             threading.Thread(target=_bg_load, daemon=True).start()
@@ -1243,11 +1258,14 @@ class MosaicApp:
         # Timer / IPS
         st = self.state.start_time
         et = self.state.end_time
+        pt = self.state.pause_time
         if st > 0 and cur > 0:
-            elapsed = (
-                (time.time() - st) if is_running
-                else (et - st if et > 0 else time.time() - st)
-            )
+            if is_running:
+                elapsed = time.time() - st
+            elif is_paused and pt > 0:
+                elapsed = pt - st          # frozen at the moment pause began
+            else:
+                elapsed = et - st if et > 0 else time.time() - st
             ips = cur / elapsed if elapsed > 0 else 0
             m, s = divmod(int(elapsed), 60)
             dpg.set_value(self._timer_txt,
@@ -1559,6 +1577,20 @@ class MosaicApp:
                 if self.map_view:
                     self.map_view.district_partisan_overlay = False
 
+        # Compactness and Pop. Deviation map views
+        has_pp   = self.runner is not None and self.runner.pp_data is not None
+        has_pops = self.runner is not None and self.runner.populations is not None
+        dpg.configure_item(self._compactness_view, enabled=has_pp)
+        dpg.configure_item(self._pop_dev_view,     enabled=has_pops)
+        if not has_pp and dpg.get_value(self._compactness_view):
+            dpg.set_value(self._compactness_view, False)
+            if self.map_view:
+                self.map_view.compactness_view = False
+        if not has_pops and dpg.get_value(self._pop_dev_view):
+            dpg.set_value(self._pop_dev_view, False)
+            if self.map_view:
+                self.map_view.pop_dev_view = False
+
         # Enable/disable partisan metric controls based on election data
         _pt_color = (180, 180, 180) if has_elections else (90, 90, 90)
         for chk, lbl in [
@@ -1705,10 +1737,15 @@ class MosaicApp:
 
     def _on_partisan_overlay_toggle(self):
         if dpg.get_value(self._partisan_overlay):
-            # Mutually exclusive with district partisan
-            dpg.set_value(self._district_partisan, False)
-            if self.map_view:
-                self.map_view.district_partisan_overlay = False
+            # Mutually exclusive with other base-layer views
+            for cb, attr in [
+                (self._district_partisan, "district_partisan_overlay"),
+                (self._compactness_view,  "compactness_view"),
+                (self._pop_dev_view,      "pop_dev_view"),
+            ]:
+                dpg.set_value(cb, False)
+                if self.map_view:
+                    setattr(self.map_view, attr, False)
         if self.map_view is None or not self.map_view._loaded:
             return
         self.map_view.partisan_overlay = dpg.get_value(self._partisan_overlay)
@@ -1725,10 +1762,15 @@ class MosaicApp:
 
     def _on_district_partisan_toggle(self):
         if dpg.get_value(self._district_partisan):
-            # Mutually exclusive with precinct partisan
-            dpg.set_value(self._partisan_overlay, False)
-            if self.map_view:
-                self.map_view.partisan_overlay = False
+            # Mutually exclusive with other base-layer views
+            for cb, attr in [
+                (self._partisan_overlay, "partisan_overlay"),
+                (self._compactness_view, "compactness_view"),
+                (self._pop_dev_view,     "pop_dev_view"),
+            ]:
+                dpg.set_value(cb, False)
+                if self.map_view:
+                    setattr(self.map_view, attr, False)
         if self.map_view is None or not self.map_view._loaded:
             return
         self.map_view.district_partisan_overlay = dpg.get_value(self._district_partisan)
@@ -1747,6 +1789,56 @@ class MosaicApp:
         if self.map_view is None or not self.map_view._loaded:
             return
         self.map_view.splits_view = dpg.get_value(self._splits_view)
+        with self.state._lock:
+            _a    = (self.state.current_assignment.copy()
+                     if self.state.current_assignment is not None else None)
+            _init = (self.state.initial_assignment.copy()
+                     if self.state.initial_assignment is not None else None)
+            _nd   = self.state.num_districts
+        if _a is not None:
+            self.map_view.render_assignment(_a, _nd, _init)
+        else:
+            self.map_view.draw_blank()
+
+    def _on_compactness_toggle(self):
+        if dpg.get_value(self._compactness_view):
+            # Mutually exclusive with partisan base views
+            for cb, attr in [
+                (self._partisan_overlay, "partisan_overlay"),
+                (self._district_partisan, "district_partisan_overlay"),
+                (self._pop_dev_view, "pop_dev_view"),
+            ]:
+                dpg.set_value(cb, False)
+                if self.map_view:
+                    setattr(self.map_view, attr, False)
+        if self.map_view is None or not self.map_view._loaded:
+            return
+        self.map_view.compactness_view = dpg.get_value(self._compactness_view)
+        with self.state._lock:
+            _a    = (self.state.current_assignment.copy()
+                     if self.state.current_assignment is not None else None)
+            _init = (self.state.initial_assignment.copy()
+                     if self.state.initial_assignment is not None else None)
+            _nd   = self.state.num_districts
+        if _a is not None:
+            self.map_view.render_assignment(_a, _nd, _init)
+        else:
+            self.map_view.draw_blank()
+
+    def _on_pop_dev_toggle(self):
+        if dpg.get_value(self._pop_dev_view):
+            # Mutually exclusive with partisan base views
+            for cb, attr in [
+                (self._partisan_overlay, "partisan_overlay"),
+                (self._district_partisan, "district_partisan_overlay"),
+                (self._compactness_view, "compactness_view"),
+            ]:
+                dpg.set_value(cb, False)
+                if self.map_view:
+                    setattr(self.map_view, attr, False)
+        if self.map_view is None or not self.map_view._loaded:
+            return
+        self.map_view.pop_dev_view = dpg.get_value(self._pop_dev_view)
         with self.state._lock:
             _a    = (self.state.current_assignment.copy()
                      if self.state.current_assignment is not None else None)
