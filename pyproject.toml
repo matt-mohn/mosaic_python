@@ -43,6 +43,9 @@ dev = [
     "ruff>=0.1",
     "mypy>=1.0",
 ]
+fast = [
+    "numba>=0.57",
+]
 
 [project.scripts]
 mosaic = "mosaic:main"

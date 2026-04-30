@@ -1416,7 +1416,9 @@ class MosaicApp:
                     "  - Mean-Median: Partisan asymmetry (0 = balanced)\n"
                     "  - Efficiency Gap: Wasted votes (0 = no advantage)\n"
                     "  - Competitiveness: Lower = more competitive districts\n"
-                    "  - Expected Dem Seats: Probabilistic seat count",
+                    "  - Expected Dem Seats: Probabilistic seat count\n"
+                    "  - Chance of Majority: P(a party wins a majority of seats)\n"
+                    "  - Supermajority/Hinge: P(a party wins >= a chosen seat threshold)",
                     wrap=540, color=(180, 180, 180),
                 )
                 dpg.add_spacer(height=8)
