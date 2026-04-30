@@ -1465,8 +1465,9 @@ class MosaicApp:
     def _update_ui(self):
         snap = self.state.get_all()
         status  = snap["status"]
-        is_running = status == AlgorithmStatus.RUNNING
-        is_paused  = status == AlgorithmStatus.PAUSED
+        is_running      = status == AlgorithmStatus.RUNNING
+        is_paused       = status == AlgorithmStatus.PAUSED
+        is_partitioning = status == AlgorithmStatus.PARTITIONING
         is_busy    = status in (
             AlgorithmStatus.RUNNING,
             AlgorithmStatus.PARTITIONING,
@@ -1817,7 +1818,7 @@ class MosaicApp:
         # ── Button states ─────────────────────────────────────────────────────
         dpg.configure_item("menu_scores",    enabled=not is_busy)
         dpg.configure_item(self._run_btn,    enabled=not is_busy)
-        dpg.configure_item(self._pause_btn,  enabled=is_running or is_paused)
+        dpg.configure_item(self._pause_btn,  enabled=is_running or is_paused or is_partitioning)
         dpg.configure_item(self._pause_btn,
                            label="Resume" if is_paused else "Pause")
         dpg.configure_item(self._reset_btn,  enabled=True)

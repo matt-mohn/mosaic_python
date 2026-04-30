@@ -279,7 +279,14 @@ class AlgorithmRunner:
                 on_progress=lambda c, t: self.state.update(
                     status_message=f"Creating district {c}/{t}..."
                 ),
+                should_cancel=lambda: (
+                    self.state.check_should_stop() or self.state.check_should_pause()
+                ),
             )
+            if assignment is None:
+                self.state.request_resume()
+                self.state.update(status=AlgorithmStatus.IDLE, status_message="")
+                return
             log.info("Initial partition complete")
             self.state.update(initial_assignment=assignment.copy())
 
