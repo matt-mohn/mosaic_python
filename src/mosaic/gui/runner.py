@@ -38,7 +38,7 @@ def _build_score_breakdown(ps, cfg) -> dict:
             result[name] = contrib / total * 100.0
     _add("Cut Edges",      cfg.weight_cut_edges * ps.cut_edges)
     _add("County Splits",  cfg.weight_county_splits * ps.county_splits)
-    _add("Polsby-Popper",  cfg.weight_polsby_popper * ps.polsby_popper)
+    _add("Compactness (PP)", cfg.weight_polsby_popper * ps.polsby_popper)
     _add("Pop. Deviation", cfg.weight_pop_deviation * ps.pop_deviation)
     if cfg.weight_mean_median:
         _add("Mean-Median",    cfg.weight_mean_median *
@@ -50,6 +50,14 @@ def _build_score_breakdown(ps, cfg) -> dict:
         _add("Dem Seats",      cfg.weight_dem_seats *
              (ps.dem_seats - cfg.target_dem_seats) ** 2 * 100)
     _add("Competitiveness", cfg.weight_competitiveness * ps.competitiveness * 100)
+    if cfg.weight_majority_chance_dem:
+        _add("D Majority", cfg.weight_majority_chance_dem *
+             (1.0 - ps.majority_chance_dem) ** 1.5 * 100)
+    if cfg.weight_majority_chance_rep:
+        _add("R Majority", cfg.weight_majority_chance_rep *
+             (1.0 - ps.majority_chance_rep) ** 1.5 * 100)
+    if cfg.weight_hinge:
+        _add("Hinge", cfg.weight_hinge * (1.0 - ps.hinge_chance) ** 1.5 * 100)
     return result
 
 
@@ -291,8 +299,11 @@ class AlgorithmRunner:
                 self.state.eg_history.append(current_ps.efficiency_gap)
                 self.state.dem_seats_history.append(current_ps.dem_seats)
                 self.state.competitive_count_history.append(0)
-                self.state.pp_history.append(current_ps.polsby_popper)
+                self.state.pp_history.append(1.0 - current_ps.polsby_popper / 100.0)
                 self.state.cut_edges_history.append(current_ps.cut_edges)
+                self.state.majority_dem_history.append(current_ps.majority_chance_dem)
+                self.state.majority_rep_history.append(current_ps.majority_chance_rep)
+                self.state.hinge_history.append(current_ps.hinge_chance)
 
             self.state.update(
                 status=AlgorithmStatus.RUNNING,
@@ -408,6 +419,7 @@ class AlgorithmRunner:
                         current_score=current_ps.total,
                         current_cut_edges=current_ps.cut_edges,
                         successful_steps=self.state.successful_steps + 1,
+                        score_breakdown=_build_score_breakdown(current_ps, score_config),
                     )
                 else:
                     self.state.update(current_iteration=iteration)
@@ -433,8 +445,11 @@ class AlgorithmRunner:
                     self.state.eg_history.append(current_ps.efficiency_gap)
                     self.state.dem_seats_history.append(current_ps.dem_seats)
                     self.state.competitive_count_history.append(comp_count)
-                    self.state.pp_history.append(current_ps.polsby_popper)
+                    self.state.pp_history.append(1.0 - current_ps.polsby_popper / 100.0)
                     self.state.cut_edges_history.append(current_ps.cut_edges)
+                    self.state.majority_dem_history.append(current_ps.majority_chance_dem)
+                    self.state.majority_rep_history.append(current_ps.majority_chance_rep)
+                    self.state.hinge_history.append(current_ps.hinge_chance)
                     n_score = len(self.state.score_history)
                     if ann is not None:
                         self.state.temperature_history.append(ann.temperature)
@@ -466,10 +481,6 @@ class AlgorithmRunner:
                 if _now - _last_map_time >= map_render_interval:
                     self.state.update(map_needs_update=True)
                     _last_map_time = _now
-
-                if iteration % 500 == 0:
-                    self.state.update(score_breakdown=_build_score_breakdown(
-                        current_ps, score_config))
 
                 if iteration % 100 == 0:
                     elapsed = time.time() - self.state.start_time

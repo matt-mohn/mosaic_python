@@ -35,6 +35,23 @@ class PPData:
     edge_len: np.ndarray        # (m,) float64 — shared boundary length
 
 
+@dataclass
+class CountyData:
+    """
+    Precomputed constants for county-splits scoring.
+
+    These depend only on geography, populations, ideal_pop, and tolerance —
+    all of which are fixed for the lifetime of a run.  Computing them once
+    and reusing across all scoring calls avoids redundant work inside the
+    hot loop.
+    """
+    county_pops: np.ndarray   # (n_counties,) float64 — population per county
+    allowances: np.ndarray    # (n_counties,) int32  — ceil(county_pop / ideal_pop)
+    max_clean: int            # sum of floor(county_pop / min_district_pop)
+    pops_f: np.ndarray        # (n,) float64 — populations cast to float64 once
+    n_counties: int
+
+
 def find_county_array(gdf: gpd.GeoDataFrame) -> Optional[np.ndarray]:
     """
     Scan common column names for a county identifier.
@@ -114,4 +131,40 @@ def precompute_pp_data(gdf: gpd.GeoDataFrame, graph: nx.Graph) -> Optional[PPDat
         )
     except Exception as exc:
         log.warning(f"PP data precomputation failed: {exc}. Polsby-Popper disabled.")
+        return None
+
+
+def precompute_county_data(
+    county_ids: np.ndarray,
+    populations: np.ndarray,
+    ideal_pop: float,
+    tolerance: float,
+) -> Optional[CountyData]:
+    """
+    Precompute county-splits constants that are fixed for the lifetime of a run.
+
+    Returns None if county_ids is None (county scoring disabled).
+    """
+    if county_ids is None:
+        return None
+    try:
+        pops_f = populations.astype(np.float64)
+        n_counties = int(county_ids.max()) + 1
+        county_pops = np.bincount(county_ids, weights=pops_f, minlength=n_counties)
+
+        safe_ideal = max(float(ideal_pop), 1.0)
+        allowances = np.ceil(county_pops / safe_ideal).astype(np.int32)
+
+        min_district_pop = max(float(ideal_pop) * (1.0 - tolerance), 1.0)
+        max_clean = int(np.floor(county_pops / min_district_pop).sum())
+
+        return CountyData(
+            county_pops=county_pops,
+            allowances=allowances,
+            max_clean=max_clean,
+            pops_f=pops_f,
+            n_counties=n_counties,
+        )
+    except Exception as exc:
+        log.warning(f"County data precomputation failed: {exc}.")
         return None
