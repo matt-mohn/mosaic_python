@@ -55,27 +55,33 @@ class ShapefileInspection:
     hint_county_col: Optional[str] = None
 
 
-_GEOID_COL_NAMES: set[str] = {"geoid", "geoid20", "geoid10", "vtdid", "vtd"}
-# Standard fixed widths for census GEOID identifiers
+# Census GEOID column names — used only for the no-fiona heuristic fallback
+_GEOID_COL_NAMES: frozenset[str] = frozenset({"geoid", "geoid20", "geoid10", "vtdid", "vtd"})
+# Standard fixed widths for census GEOIDs — fallback only
 _GEOID_STANDARD_WIDTHS: frozenset[int] = frozenset({5, 11, 12, 15})
 
 
-def _restore_geoid_strings(gdf: gpd.GeoDataFrame, path: str) -> None:
+def _restore_zero_padded_ids(gdf: gpd.GeoDataFrame, path: str) -> None:
     """
-    Zero-pad GEOID-like columns that geopandas loaded as int64.
+    Restore leading zeros for int64 columns that lost them at read time.
 
-    Happens when the .dbf stores the field as type 'N' (numeric) instead of
-    'C' (character). geopandas reads it faithfully as int64, silently dropping
-    leading zeros. We recover the original width from fiona's schema if
-    available, or by checking whether max_len+1 is a standard GEOID length.
+    When a .dbf field is stored as type 'N' (numeric), geopandas reads it as
+    int64 regardless of the column name, silently dropping leading zeros (e.g.
+    GEOID20 "08001000001" becomes 8001000001, or "Vtd_ID" "003" becomes 3).
+
+    Primary fix: use fiona's schema to get the original field width for ANY
+    int64 column. If schema_width > max digit count of current values, the
+    difference was leading zeros and we restore them with zfill.
+
+    Fallback (no fiona): apply only to columns whose name matches a known
+    census GEOID pattern, using a standard-length heuristic. Arbitrary
+    column names are left untouched — we cannot safely infer their width.
     """
-    candidates = [
+    int64_cols = [
         c for c in gdf.columns
-        if c != "geometry"
-        and pd.api.types.is_integer_dtype(gdf[c])
-        and (c.lower() in _GEOID_COL_NAMES or c.lower().startswith("geoid"))
+        if c != "geometry" and pd.api.types.is_integer_dtype(gdf[c])
     ]
-    if not candidates:
+    if not int64_cols:
         return
 
     fiona_props: dict[str, str] = {}
@@ -86,20 +92,35 @@ def _restore_geoid_strings(gdf: gpd.GeoDataFrame, path: str) -> None:
     except Exception:
         pass
 
-    for col in candidates:
+    for col in int64_cols:
+        non_null = gdf[col].dropna()
+        if non_null.empty:
+            continue
+        max_digits = int(non_null.astype(str).str.len().max())
+
         target_width: int | None = None
+
+        # Primary: fiona schema width — works for any column name/length
         field_spec = fiona_props.get(col, "")
         if ":" in field_spec:
             try:
-                target_width = int(field_spec.split(":")[1])
+                schema_width = int(field_spec.split(":")[1])
+                if schema_width > max_digits:
+                    target_width = schema_width
             except ValueError:
                 pass
-        if target_width is None:
-            max_len = int(gdf[col].dropna().astype(str).str.len().max())
-            if (max_len + 1) in _GEOID_STANDARD_WIDTHS:
-                target_width = max_len + 1
+
+        # Fallback: GEOID-name heuristic only — arbitrary names skipped
+        if target_width is None and (
+            col.lower() in _GEOID_COL_NAMES or col.lower().startswith("geoid")
+        ):
+            if (max_digits + 1) in _GEOID_STANDARD_WIDTHS:
+                target_width = max_digits + 1
+
         if target_width is not None:
-            gdf[col] = gdf[col].astype(str).str.zfill(target_width)
+            mask = gdf[col].notna()
+            gdf.loc[mask, col] = gdf.loc[mask, col].astype(str).str.zfill(target_width)
+            gdf[col] = gdf[col].where(mask, other=None)
             log.info(f"Column '{col}': zero-padded to width {target_width} (was int64 in .dbf)")
 
 
@@ -112,7 +133,7 @@ def inspect_shapefile(path: str | Path) -> ShapefileInspection:
     try:
         gdf = gpd.read_file(path)
         gdf = gdf.reset_index(drop=True)
-        _restore_geoid_strings(gdf, path)
+        _restore_zero_padded_ids(gdf, path)
         n = len(gdf)
 
         cols = [c for c in gdf.columns if c != "geometry"]
