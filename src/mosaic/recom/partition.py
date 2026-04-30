@@ -31,7 +31,8 @@ def create_initial_partition(
     tolerance: float,
     seed: int | None = None,
     on_progress: Callable[[int, int], None] | None = None,
-) -> np.ndarray:
+    should_cancel: Callable[[], bool] | None = None,
+) -> np.ndarray | None:
     """
     Create an initial district assignment by sequentially carving one district
     at a time from the remaining precinct graph.
@@ -43,19 +44,26 @@ def create_initial_partition(
         tolerance: Population deviation tolerance (e.g., 0.05 for 5%)
         seed: Random seed for reproducibility
         on_progress: Callback(district_num, num_districts) for progress updates
+        should_cancel: Optional callable; if it returns True partitioning stops
+                       and None is returned immediately.
 
     Returns:
-        Array of district assignments (0 to num_districts-1) indexed by node ID
+        Array of district assignments (0 to num_districts-1), or None if
+        cancelled via should_cancel.
     """
     if seed is not None:
         np.random.seed(seed)
 
     for restart in range(_MAX_RESTARTS):
+        if should_cancel and should_cancel():
+            return None
         result = _try_partition(
-            graph, populations, num_districts, tolerance, on_progress
+            graph, populations, num_districts, tolerance, on_progress, should_cancel
         )
         if result is not None:
             return result
+        if should_cancel and should_cancel():
+            return None
         log.warning(f"Partition attempt {restart + 1} timed out, restarting...")
 
     raise RuntimeError(
@@ -70,6 +78,7 @@ def _try_partition(
     num_districts: int,
     tolerance: float,
     on_progress: Callable[[int, int], None] | None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> np.ndarray | None:
     """
     Attempt a sequential partition. Returns None if any cut times out.
@@ -107,6 +116,9 @@ def _try_partition(
                 f"District {district + 1}/{num_districts} timed out "
                 f"({len(remaining_nodes)} nodes remaining)"
             )
+            return None
+
+        if should_cancel and should_cancel():
             return None
 
         for node in carved:
