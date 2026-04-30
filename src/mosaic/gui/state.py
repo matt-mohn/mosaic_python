@@ -93,6 +93,9 @@ class SharedState:
     competitive_count_history: list = field(default_factory=list)
     pp_history: list = field(default_factory=list)
     cut_edges_history: list = field(default_factory=list)
+    majority_dem_history: list = field(default_factory=list)
+    majority_rep_history: list = field(default_factory=list)
+    hinge_history: list = field(default_factory=list)
 
     # Score breakdown: metric name → % of total weighted score (updated by runner)
     score_breakdown: dict = field(default_factory=dict)
@@ -179,6 +182,9 @@ class SharedState:
             self.competitive_count_history = []
             self.pp_history = []
             self.cut_edges_history = []
+            self.majority_dem_history = []
+            self.majority_rep_history = []
+            self.hinge_history = []
             self.score_breakdown = {}
             self.initial_assignment = None
             self.map_needs_update = False

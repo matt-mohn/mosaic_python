@@ -12,13 +12,15 @@ from mosaic.scoring.precompute import PPData, find_county_array, precompute_pp_d
 from mosaic.scoring.county_splits import score_county_splits
 from mosaic.scoring.polsby_popper import score_polsby_popper
 from mosaic.scoring.partisan import (
-    election_k,
     district_dem_shares,
     eg_from_shares,
+    k_to_sigma,
+    p_win_gaussian,
     score_mean_median,
     score_efficiency_gap,
     score_dem_seats,
     score_competitiveness,
+    score_majority_chance,
 )
 
 __all__ = [
@@ -35,11 +37,13 @@ __all__ = [
     "precompute_pp_data",
     "score_county_splits",
     "score_polsby_popper",
-    "election_k",
     "district_dem_shares",
     "eg_from_shares",
+    "k_to_sigma",
+    "p_win_gaussian",
     "score_mean_median",
     "score_efficiency_gap",
     "score_dem_seats",
     "score_competitiveness",
+    "score_majority_chance",
 ]

@@ -21,7 +21,7 @@ from mosaic.recom.annealing import AnnealingConfig
 _PLOT_LIMIT   = 10_000   # max points rendered when limit-plots is on
 _COMPACT_AT   = 20_000   # compact local buffer when it exceeds this
 _COMPACT_KEEP = 10_000   # keep last N at full resolution after compaction
-_COMPACT_THIN = 5        # keep 1-in-N for the older portion
+_COMPACT_THIN = 50       # keep 1-in-N for old data (~200 pts per 10k iters)
 
 
 class _SeriesBuffer:
@@ -30,15 +30,18 @@ class _SeriesBuffer:
     The GUI copies only the *delta* since the last frame under the lock
     (~IPS/fps items, not the full history), keeping lock hold time constant
     regardless of total run length.  When the buffer exceeds _COMPACT_AT
-    entries, everything older than _COMPACT_KEEP is thinned to 1-in-_COMPACT_THIN.
+    entries, entries older than _COMPACT_KEEP that haven't been thinned yet
+    are thinned to 1-in-_COMPACT_THIN.  Already-thinned data is never
+    thinned again (_compact_end tracks the boundary).
     """
 
-    __slots__ = ("xs", "ys", "read")
+    __slots__ = ("xs", "ys", "read", "_compact_end")
 
     def __init__(self):
         self.xs: list = []   # iteration indices (survive thinning intact)
         self.ys: list = []   # values
         self.read: int = 0   # items consumed from SharedState list so far
+        self._compact_end: int = 0  # xs[:_compact_end] has already been thinned
 
     def add(self, new_ys: list, *, scale: float = 1.0) -> None:
         """Append plain-value delta (already copied outside the lock)."""
@@ -64,8 +67,13 @@ class _SeriesBuffer:
         if len(self.ys) <= _COMPACT_AT:
             return
         cut = len(self.ys) - _COMPACT_KEEP
-        self.xs = self.xs[:cut:_COMPACT_THIN] + self.xs[cut:]
-        self.ys = self.ys[:cut:_COMPACT_THIN] + self.ys[cut:]
+        if cut <= self._compact_end:
+            return  # nothing new to thin
+        thin_xs = self.xs[self._compact_end:cut:_COMPACT_THIN]
+        thin_ys = self.ys[self._compact_end:cut:_COMPACT_THIN]
+        self.xs = self.xs[:self._compact_end] + thin_xs + self.xs[cut:]
+        self.ys = self.ys[:self._compact_end] + thin_ys + self.ys[cut:]
+        self._compact_end += len(thin_xs)
 
     def plot_data(self, limit: bool) -> tuple:
         if limit and len(self.ys) > _PLOT_LIMIT:
@@ -79,23 +87,29 @@ class _SeriesBuffer:
         del self.xs[idx:]
         del self.ys[idx:]
         self.read = new_read
+        self._compact_end = min(self._compact_end, len(self.xs))
 
     def clear(self) -> None:
         self.xs.clear()
         self.ys.clear()
         self.read = 0
+        self._compact_end = 0
 
 
-# Score Contributor panel — alphabetical metric rows
-_CONTRIB_METRICS = [
-    ("Competitiveness", "contrib_competitiveness"),
-    ("County Splits",   "contrib_county_splits"),
-    ("Cut Edges",       "contrib_cut_edges"),
-    ("Dem Seats",       "contrib_dem_seats"),
-    ("Efficiency Gap",  "contrib_efficiency_gap"),
-    ("Mean-Median",     "contrib_mean_median"),
-    ("Polsby-Popper",   "contrib_polsby_popper"),
-    ("Pop. Deviation",  "contrib_pop_deviation"),
+# Score Contributor panel — bar chart metrics in display order (structural → partisan)
+# (name, x-tick label, RGBA fill)
+_CONTRIB_BAR_METRICS = [
+    ("Cut Edges",       "Cuts",   (160, 160, 165, 220)),
+    ("County Splits",   "Co.Spl", (190, 170, 130, 220)),
+    ("Compactness (PP)", "PP",    (90,  160, 220, 220)),
+    ("Pop. Deviation",  "PopDev", (220, 200, 70,  220)),
+    ("Mean-Median",     "MM",     (240, 140, 60,  220)),
+    ("Efficiency Gap",  "EG",     (225, 75,  75,  220)),
+    ("Dem Seats",       "Seats",  (180, 80,  220, 220)),
+    ("Competitiveness", "Comp",   (70,  200, 120, 220)),
+    ("D Majority",      "D Maj",  (70,  130, 210, 220)),
+    ("R Majority",      "R Maj",  (210, 70,  70,  220)),
+    ("Hinge",           "Hinge",  (140, 90,  200, 220)),
 ]
 
 # ── Layout constants ──────────────────────────────────────────────────────────
@@ -134,8 +148,7 @@ class MosaicApp:
         # Plot appearance toggle (app-local)
         self._limit_plots: int | str = ""   # DPG checkbox tag, set during setup
 
-        # Score Contributor panel tracking
-        self._last_contrib_iter: int = -1
+        self._contrib_bar_series: list = []
 
         # Track what data the current shapefile has
         self._has_elections: bool = False
@@ -154,6 +167,9 @@ class MosaicApp:
         self._buf_comp      = _SeriesBuffer()
         self._buf_pp        = _SeriesBuffer()
         self._buf_cuts      = _SeriesBuffer()
+        self._buf_maj_dem   = _SeriesBuffer()
+        self._buf_maj_rep   = _SeriesBuffer()
+        self._buf_hinge     = _SeriesBuffer()
 
     # ── Setup ─────────────────────────────────────────────────────────────────
 
@@ -212,6 +228,8 @@ class MosaicApp:
         self._build_comp_panel()
         self._build_pp_panel()
         self._build_cut_edges_panel()
+        self._build_majority_panel()
+        self._build_hinge_panel()
 
         # ── Main window ───────────────────────────────────────────────────────
         with dpg.window(tag="main_window", no_scrollbar=True):
@@ -243,6 +261,15 @@ class MosaicApp:
                     self._limit_plots = dpg.add_checkbox(
                         label="Limit plots to last 10,000 iterations",
                         default_value=True,
+                    )
+                    dpg.add_separator()
+                    dpg.add_text("Map Render Interval:")
+                    self._map_interval = dpg.add_slider_float(
+                        label="sec",
+                        default_value=0.75, min_value=0.25, max_value=30.0,
+                        format="%.2f s", width=160,
+                        callback=lambda s, d: self.state.update(
+                            map_render_interval=d),
                     )
                 with dpg.menu(label="Panels"):
                     self._panel_temp_item = dpg.add_menu_item(
@@ -280,12 +307,20 @@ class MosaicApp:
                         callback=self._on_panel_comp_toggle,
                     )
                     self._panel_pp_item = dpg.add_menu_item(
-                        label="Polsby-Popper", check=True, default_value=False,
+                        label="Compactness (PP)", check=True, default_value=False,
                         callback=self._on_panel_pp_toggle,
                     )
                     self._panel_cuts_item = dpg.add_menu_item(
                         label="Cut Edges", check=True, default_value=False,
                         callback=self._on_panel_cuts_toggle,
+                    )
+                    self._panel_hinge_item = dpg.add_menu_item(
+                        label="Supermajority/Hinge", check=True, default_value=False,
+                        callback=self._on_panel_hinge_toggle,
+                    )
+                    self._panel_majority_item = dpg.add_menu_item(
+                        label="Chance of Majority", check=True, default_value=False,
+                        callback=self._on_panel_majority_toggle,
                     )
                     dpg.add_separator()
                     self._panel_contrib_item = dpg.add_menu_item(
@@ -293,20 +328,74 @@ class MosaicApp:
                         callback=self._on_panel_contrib_toggle,
                     )
 
+                with dpg.menu(label="Scores", tag="menu_scores"):
+                    self._svis_cuts = dpg.add_menu_item(
+                        label="Cut Edges", check=True, default_value=False,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_cuts", dpg.get_value(self._svis_cuts),
+                            self._cut_enabled, self._on_cut_toggle),
+                    )
+                    self._svis_cs = dpg.add_menu_item(
+                        label="County Splits", check=True, default_value=True,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_cs", dpg.get_value(self._svis_cs),
+                            self._cs_enabled, self._on_cs_toggle),
+                    )
+                    self._svis_popdev = dpg.add_menu_item(
+                        label="Pop. Deviation", check=True, default_value=True,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_popdev", dpg.get_value(self._svis_popdev),
+                            self._popdev_enabled, self._on_popdev_score_toggle),
+                    )
+                    dpg.add_separator()
+                    self._svis_pp = dpg.add_menu_item(
+                        label="Compactness (PP)", check=True, default_value=True,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_pp", dpg.get_value(self._svis_pp),
+                            self._pp_enabled, self._on_pp_toggle),
+                    )
+                    self._svis_mm = dpg.add_menu_item(
+                        label="Mean-Median", check=True, default_value=False,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_mm", dpg.get_value(self._svis_mm),
+                            self._mm_enabled, self._on_mm_toggle),
+                    )
+                    self._svis_eg = dpg.add_menu_item(
+                        label="Efficiency Gap", check=True, default_value=True,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_eg", dpg.get_value(self._svis_eg),
+                            self._eg_enabled, self._on_eg_toggle),
+                    )
+                    dpg.add_separator()
+                    self._svis_comp = dpg.add_menu_item(
+                        label="Competitiveness", check=True, default_value=True,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_comp", dpg.get_value(self._svis_comp),
+                            self._comp_enabled, self._on_comp_toggle),
+                    )
+                    self._svis_seats = dpg.add_menu_item(
+                        label="Expected Dem Seats", check=True, default_value=False,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_seats", dpg.get_value(self._svis_seats),
+                            self._seats_enabled, self._on_seats_toggle),
+                    )
+                    self._svis_majority = dpg.add_menu_item(
+                        label="Chance of Majority", check=True, default_value=False,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_majority", dpg.get_value(self._svis_majority),
+                            self._majority_enabled, self._on_majority_toggle),
+                    )
+                    self._svis_hinge = dpg.add_menu_item(
+                        label="Supermajority/Hinge", check=True, default_value=False,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_hinge", dpg.get_value(self._svis_hinge),
+                            self._hinge_enabled, self._on_hinge_toggle),
+                    )
+
                 with dpg.menu(label="Help"):
                     dpg.add_menu_item(
                         label="Open Help...",
                         callback=lambda: dpg.configure_item("popup_help", show=True),
-                    )
-
-                with dpg.menu(label="Map"):
-                    dpg.add_text("Render interval:")
-                    self._map_interval = dpg.add_slider_float(
-                        label="sec",
-                        default_value=0.75, min_value=0.25, max_value=30.0,
-                        format="%.2f s", width=160,
-                        callback=lambda s, d: self.state.update(
-                            map_render_interval=d),
                     )
 
             with dpg.child_window(height=_TOP_H, border=False,
@@ -488,196 +577,254 @@ class MosaicApp:
 
             # ── Score panel (bottom) ──────────────────────────────────────────
             with dpg.child_window(height=-1, border=True):
+                dpg.add_text("For full scores, see toolbar",
+                             color=(160, 160, 160))
+                dpg.add_separator()
                 with dpg.group(horizontal=True):
 
                     # Col 1: structural metrics
                     with dpg.child_window(width=_SCORE_COL_W, height=-1,
                                           border=False):
-                        # Cut Edges
-                        with dpg.group(horizontal=True):
-                            self._cut_enabled = dpg.add_checkbox(
-                                default_value=True,
-                                callback=self._on_cut_toggle,
-                            )
-                            self._cut_lbl = dpg.add_text(
-                                "Cut Edges", color=(90, 220, 90),
-                            )
-                        with dpg.group(tag="cut_edge_controls"):
-                            self._w_cut_edges = dpg.add_slider_int(
-                                label="Weight",
-                                default_value=1, min_value=0, max_value=100,
-                                width=_SCORE_COL_W - 100,
-                            )
-
-                        dpg.add_spacer(height=4)
-
-                        # County Splits + Bias
-                        with dpg.group(horizontal=True):
-                            self._cs_enabled = dpg.add_checkbox(
-                                default_value=False,
-                                callback=self._on_cs_toggle,
-                            )
-                            self._cs_lbl = dpg.add_text(
-                                "County Splits and Bias", color=(110, 110, 110),
-                            )
-                        with dpg.group(tag="cs_controls", show=False):
-                            self._w_county_splits = dpg.add_slider_int(
-                                label="Weight",
-                                default_value=1, min_value=0, max_value=100,
-                                width=_SCORE_COL_W - 100,
-                            )
-                            dpg.add_spacer(height=3)
-                            self._county_bias_enabled = dpg.add_checkbox(
-                                label="County-Edge Bias",
-                                default_value=False,
-                                callback=self._on_county_bias_toggle,
-                            )
-                            with dpg.group(tag="county_bias_controls", show=False):
-                                self._county_bias = dpg.add_slider_int(
-                                    label="Multiplier",
-                                    default_value=5, min_value=1, max_value=20,
-                                    width=_SCORE_COL_W - 120,
+                        with dpg.group(tag="score_row_cuts", show=False):
+                            with dpg.group(horizontal=True):
+                                self._cut_enabled = dpg.add_checkbox(
+                                    default_value=False,
+                                    callback=self._on_cut_toggle,
                                 )
-                                dpg.add_text(
-                                    "  cross-county edges less likely cut",
-                                    color=(150, 150, 150),
+                                self._cut_lbl = dpg.add_text(
+                                    "Cut Edges", color=(90, 220, 90),
                                 )
+                            with dpg.group(tag="cut_edge_controls", show=False):
+                                self._w_cut_edges = dpg.add_slider_int(
+                                    label="Weight",
+                                    default_value=1, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 100,
+                                )
+                            dpg.add_spacer(height=4)
 
-                        dpg.add_spacer(height=4)
+                        with dpg.group(tag="score_row_cs", show=True):
+                            with dpg.group(horizontal=True):
+                                self._cs_enabled = dpg.add_checkbox(
+                                    default_value=False,
+                                    callback=self._on_cs_toggle,
+                                )
+                                self._cs_lbl = dpg.add_text(
+                                    "County Splits and Bias", color=(110, 110, 110),
+                                )
+                            with dpg.group(tag="cs_controls", show=False):
+                                self._w_county_splits = dpg.add_slider_int(
+                                    label="Weight",
+                                    default_value=1, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 100,
+                                )
+                                dpg.add_spacer(height=3)
+                                self._county_bias_enabled = dpg.add_checkbox(
+                                    label="County-Edge Bias",
+                                    default_value=False,
+                                    callback=self._on_county_bias_toggle,
+                                )
+                                with dpg.group(tag="county_bias_controls", show=False):
+                                    self._county_bias = dpg.add_slider_int(
+                                        label="Multiplier",
+                                        default_value=5, min_value=1, max_value=20,
+                                        width=_SCORE_COL_W - 120,
+                                    )
+                                    dpg.add_text(
+                                        "  cross-county edges less likely cut",
+                                        color=(150, 150, 150),
+                                    )
+                            dpg.add_spacer(height=4)
 
-                        # Population Deviation
-                        with dpg.group(horizontal=True):
-                            self._popdev_enabled = dpg.add_checkbox(
-                                default_value=False,
-                                callback=self._on_popdev_score_toggle,
-                            )
-                            self._popdev_lbl = dpg.add_text(
-                                "Pop. Deviation", color=(180, 180, 180),
-                            )
-                        with dpg.group(tag="popdev_controls", show=False):
-                            self._w_pop_deviation = dpg.add_slider_float(
-                                label="Weight",
-                                default_value=1.0, min_value=0.0, max_value=10.0,
-                                format="%.1f", width=_SCORE_COL_W - 100,
-                            )
+                        with dpg.group(tag="score_row_popdev", show=True):
+                            with dpg.group(horizontal=True):
+                                self._popdev_enabled = dpg.add_checkbox(
+                                    default_value=False,
+                                    callback=self._on_popdev_score_toggle,
+                                )
+                                self._popdev_lbl = dpg.add_text(
+                                    "Pop. Deviation", color=(180, 180, 180),
+                                )
+                            with dpg.group(tag="popdev_controls", show=False):
+                                self._w_pop_deviation = dpg.add_slider_float(
+                                    label="Weight",
+                                    default_value=1.0, min_value=0.0, max_value=100.0,
+                                    format="%.1f", width=_SCORE_COL_W - 100,
+                                )
 
                     # Col 2: shape + partisan bias
                     with dpg.child_window(width=_SCORE_COL_W, height=-1,
                                           border=False):
-                        # Polsby-Popper
-                        with dpg.group(horizontal=True):
-                            self._pp_enabled = dpg.add_checkbox(
-                                default_value=False,
-                                callback=self._on_pp_toggle,
-                            )
-                            self._pp_lbl = dpg.add_text(
-                                "Polsby-Popper", color=(180, 180, 180),
-                            )
-                        with dpg.group(tag="pp_controls", show=False):
-                            self._w_polsby_popper = dpg.add_slider_int(
-                                label="Weight",
-                                default_value=1, min_value=0, max_value=100,
-                                width=_SCORE_COL_W - 100,
-                            )
+                        with dpg.group(tag="score_row_pp", show=True):
+                            with dpg.group(horizontal=True):
+                                self._pp_enabled = dpg.add_checkbox(
+                                    default_value=True,
+                                    callback=self._on_pp_toggle,
+                                )
+                                self._pp_lbl = dpg.add_text(
+                                    "Compactness (PP)", color=(90, 220, 90),
+                                )
+                            with dpg.group(tag="pp_controls", show=True):
+                                self._w_polsby_popper = dpg.add_slider_int(
+                                    label="Weight",
+                                    default_value=1, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 100,
+                                )
+                            dpg.add_spacer(height=4)
 
-                        dpg.add_spacer(height=4)
+                        with dpg.group(tag="score_row_mm", show=False):
+                            with dpg.group(horizontal=True):
+                                self._mm_enabled = dpg.add_checkbox(
+                                    default_value=False, enabled=False,
+                                    callback=self._on_mm_toggle,
+                                )
+                                self._mm_lbl = dpg.add_text(
+                                    "Mean-Median Difference",
+                                    color=(90, 90, 90),
+                                )
+                            with dpg.group(tag="mm_controls", show=False):
+                                self._w_mean_median = dpg.add_slider_int(
+                                    label="Weight",
+                                    default_value=1, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 100,
+                                )
+                                self._target_mean_median = dpg.add_slider_float(
+                                    label="Target MM",
+                                    default_value=0.0, min_value=-0.15, max_value=0.15,
+                                    format="%.3f", width=_SCORE_COL_W - 100,
+                                )
+                                dpg.add_text(
+                                    "  - = D advantage  |  + = R advantage",
+                                    color=(110, 110, 110),
+                                )
+                            dpg.add_spacer(height=4)
 
-                        # Mean-Median Difference
-                        with dpg.group(horizontal=True):
-                            self._mm_enabled = dpg.add_checkbox(
-                                default_value=False, enabled=False,
-                                callback=self._on_mm_toggle,
-                            )
-                            self._mm_lbl = dpg.add_text(
-                                "Mean-Median Difference",
-                                color=(90, 90, 90),
-                            )
-                        with dpg.group(tag="mm_controls", show=False):
-                            self._w_mean_median = dpg.add_slider_int(
-                                label="Weight",
-                                default_value=1, min_value=0, max_value=100,
-                                width=_SCORE_COL_W - 100,
-                            )
-                            self._target_mean_median = dpg.add_slider_float(
-                                label="Target MM",
-                                default_value=0.0, min_value=-0.15, max_value=0.15,
-                                format="%.3f", width=_SCORE_COL_W - 100,
-                            )
-                            dpg.add_text(
-                                "  - = D advantage  |  + = R advantage",
-                                color=(110, 110, 110),
-                            )
-
-                        dpg.add_spacer(height=4)
-
-                        # Efficiency Gap
-                        with dpg.group(horizontal=True):
-                            self._eg_enabled = dpg.add_checkbox(
-                                default_value=False, enabled=False,
-                                callback=self._on_eg_toggle,
-                            )
-                            self._eg_lbl = dpg.add_text(
-                                "Efficiency Gap",
-                                color=(90, 90, 90),
-                            )
-                        with dpg.group(tag="eg_controls", show=False):
-                            self._w_efficiency_gap = dpg.add_slider_int(
-                                label="Weight",
-                                default_value=1, min_value=0, max_value=100,
-                                width=_SCORE_COL_W - 100,
-                            )
-                            self._target_efficiency_gap = dpg.add_slider_float(
-                                label="Target EG",
-                                default_value=0.0, min_value=-0.35, max_value=0.35,
-                                format="%.3f", width=_SCORE_COL_W - 100,
-                            )
-                            dpg.add_text(
-                                "  - = D bias  |  + = R bias",
-                                color=(110, 110, 110),
-                            )
+                        with dpg.group(tag="score_row_eg", show=True):
+                            with dpg.group(horizontal=True):
+                                self._eg_enabled = dpg.add_checkbox(
+                                    default_value=False, enabled=False,
+                                    callback=self._on_eg_toggle,
+                                )
+                                self._eg_lbl = dpg.add_text(
+                                    "Efficiency Gap",
+                                    color=(90, 90, 90),
+                                )
+                            with dpg.group(tag="eg_controls", show=False):
+                                self._w_efficiency_gap = dpg.add_slider_int(
+                                    label="Weight",
+                                    default_value=1, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 100,
+                                )
+                                self._target_efficiency_gap = dpg.add_slider_float(
+                                    label="Target EG",
+                                    default_value=0.0, min_value=-0.35, max_value=0.35,
+                                    format="%.3f", width=_SCORE_COL_W - 100,
+                                )
+                                dpg.add_text(
+                                    "  - = D bias  |  + = R bias",
+                                    color=(110, 110, 110),
+                                )
 
                     # Col 3: outcome metrics
                     with dpg.child_window(width=-1, height=-1, border=False):
-                        # Competitiveness
-                        with dpg.group(horizontal=True):
-                            self._comp_enabled = dpg.add_checkbox(
-                                default_value=False, enabled=False,
-                                callback=self._on_comp_toggle,
-                            )
-                            self._comp_lbl = dpg.add_text(
-                                "Competitiveness",
-                                color=(90, 90, 90),
-                            )
-                        with dpg.group(tag="comp_controls", show=False):
-                            self._w_competitiveness = dpg.add_slider_int(
-                                label="Weight",
-                                default_value=1, min_value=0, max_value=100,
-                                width=_SCORE_COL_W - 100,
-                            )
+                        with dpg.group(tag="score_row_comp", show=True):
+                            with dpg.group(horizontal=True):
+                                self._comp_enabled = dpg.add_checkbox(
+                                    default_value=False, enabled=False,
+                                    callback=self._on_comp_toggle,
+                                )
+                                self._comp_lbl = dpg.add_text(
+                                    "Competitiveness",
+                                    color=(90, 90, 90),
+                                )
+                            with dpg.group(tag="comp_controls", show=False):
+                                self._w_competitiveness = dpg.add_slider_int(
+                                    label="Weight",
+                                    default_value=1, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 100,
+                                )
+                            dpg.add_spacer(height=4)
 
-                        dpg.add_spacer(height=4)
+                        with dpg.group(tag="score_row_seats", show=False):
+                            with dpg.group(horizontal=True):
+                                self._seats_enabled = dpg.add_checkbox(
+                                    default_value=False, enabled=False,
+                                    callback=self._on_seats_toggle,
+                                )
+                                self._seats_lbl = dpg.add_text(
+                                    "Expected Dem Seats",
+                                    color=(90, 90, 90),
+                                )
+                            with dpg.group(tag="seats_controls", show=False):
+                                self._w_dem_seats = dpg.add_slider_int(
+                                    label="Weight",
+                                    default_value=1, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 100,
+                                )
+                                self._target_dem_seats = dpg.add_slider_int(
+                                    label="Target S",
+                                    default_value=7, min_value=1, max_value=14,
+                                    width=_SCORE_COL_W - 100,
+                                )
+                            dpg.add_spacer(height=4)
 
-                        # Expected Dem Seats
-                        with dpg.group(horizontal=True):
-                            self._seats_enabled = dpg.add_checkbox(
-                                default_value=False, enabled=False,
-                                callback=self._on_seats_toggle,
-                            )
-                            self._seats_lbl = dpg.add_text(
-                                "Expected Dem Seats",
-                                color=(90, 90, 90),
-                            )
-                        with dpg.group(tag="seats_controls", show=False):
-                            self._w_dem_seats = dpg.add_slider_int(
-                                label="Weight",
-                                default_value=1, min_value=0, max_value=100,
-                                width=_SCORE_COL_W - 100,
-                            )
-                            self._target_dem_seats = dpg.add_slider_int(
-                                label="Target Seats",
-                                default_value=7, min_value=1, max_value=14,
-                                width=_SCORE_COL_W - 100,
-                            )
+                        with dpg.group(tag="score_row_majority", show=False):
+                            with dpg.group(horizontal=True):
+                                self._majority_enabled = dpg.add_checkbox(
+                                    default_value=False, enabled=False,
+                                    callback=self._on_majority_toggle,
+                                )
+                                self._majority_lbl = dpg.add_text(
+                                    "Chance of Majority",
+                                    color=(90, 90, 90),
+                                )
+                            with dpg.group(tag="majority_controls", show=False):
+                                self._w_majority = dpg.add_slider_int(
+                                    label="Weight",
+                                    default_value=1, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 100,
+                                )
+                                with dpg.group(horizontal=True):
+                                    self._majority_dem_chk = dpg.add_checkbox(
+                                        label="D", default_value=True,
+                                        callback=self._on_majority_dem_chk,
+                                    )
+                                    dpg.add_spacer(width=12)
+                                    self._majority_rep_chk = dpg.add_checkbox(
+                                        label="R", default_value=False,
+                                        callback=self._on_majority_rep_chk,
+                                    )
+
+                        with dpg.group(tag="score_row_hinge", show=False):
+                            with dpg.group(horizontal=True):
+                                self._hinge_enabled = dpg.add_checkbox(
+                                    default_value=False, enabled=False,
+                                    callback=self._on_hinge_toggle,
+                                )
+                                self._hinge_lbl = dpg.add_text(
+                                    "Supermajority/Hinge",
+                                    color=(90, 90, 90),
+                                )
+                            with dpg.group(tag="hinge_controls", show=False):
+                                self._w_hinge = dpg.add_slider_int(
+                                    label="Weight",
+                                    default_value=1, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 100,
+                                )
+                                self._hinge_threshold = dpg.add_slider_int(
+                                    label="Threshold",
+                                    default_value=8, min_value=1, max_value=14,
+                                    width=_SCORE_COL_W - 100,
+                                )
+                                with dpg.group(horizontal=True):
+                                    self._hinge_dem_chk = dpg.add_checkbox(
+                                        label="D", default_value=True,
+                                        callback=self._on_hinge_dem_chk,
+                                    )
+                                    dpg.add_spacer(width=12)
+                                    self._hinge_rep_chk = dpg.add_checkbox(
+                                        label="R", default_value=False,
+                                        callback=self._on_hinge_rep_chk,
+                                    )
 
         dpg.set_primary_window("main_window", True)
         dpg.setup_dearpygui()
@@ -712,7 +859,7 @@ class MosaicApp:
                 format="%.4f", width=260,
             )
             dpg.add_text(
-                "  Districts within this %% of ideal are not penalized.\n"
+                "  Districts within this % of ideal are not penalized.\n"
                 "  Cannot exceed Population Tolerance (clamped on run).",
                 color=(150, 150, 150),
             )
@@ -813,8 +960,8 @@ class MosaicApp:
             label="Optimization -- Partisanship Settings",
             tag="popup_partisan", show=False,
             modal=True, no_close=True,
-            width=460, height=220,
-            pos=[(_VP_W - 460) // 2, (_VP_H - 220) // 2],
+            width=460, height=280,
+            pos=[(_VP_W - 460) // 2, (_VP_H - 280) // 2],
         ):
             dpg.add_text(
                 "Applied when partisan metrics are enabled.",
@@ -832,6 +979,17 @@ class MosaicApp:
                 "  P(D wins district | D has 55% of two-party vote)",
                 color=(150, 150, 150),
             )
+            dpg.add_spacer(height=6)
+
+            self._swing_sigma = dpg.add_slider_float(
+                label="Swing sigma (shared)",
+                default_value=0.03, min_value=0.005, max_value=0.10,
+                format="%.3f", width=220,
+            )
+            dpg.add_text(
+                "  Std dev of partisan-environment swing shared across all districts",
+                color=(150, 150, 150),
+            )
             dpg.add_spacer(height=8)
 
             dpg.add_text("Efficiency Gap mode:")
@@ -841,7 +999,7 @@ class MosaicApp:
                 horizontal=True,
             )
             dpg.add_text(
-                "  Robust efficiency gap weights efficiency gap by multiple swings from the baseline election provided",
+                "  Robust EG integrates out both swing sigma and per-district noise",
                 color=(150, 150, 150),
             )
             dpg.add_spacer(height=8)
@@ -949,7 +1107,7 @@ class MosaicApp:
                     label="Districts (least to most Democratic)",
                     no_tick_labels=True,
                 )
-                with dpg.plot_axis(dpg.mvYAxis, label="D Vote Share", tag="partisan_y"):
+                with dpg.plot_axis(dpg.mvYAxis, label="D Vote Share (%)", tag="partisan_y"):
                     self._partisan_bar_series = []
                     for i in range(12):
                         s = dpg.add_bar_series([], [], weight=0.85, show=True)
@@ -958,14 +1116,14 @@ class MosaicApp:
                     # Reference lines drawn after bars so they render on top;
                     # ##-prefix suppresses legend entries.
                     _ref = dpg.add_line_series(
-                        [0, 200], [0.5, 0.5], label="##ref50", tag="partisan_ref",
+                        [0, 200], [50.0, 50.0], label="##ref50", tag="partisan_ref",
                     )
                     dpg.bind_item_theme(_ref, self._partisan_ref_theme)
                     _med = dpg.add_line_series(
                         [], [], label="##refmed", tag="partisan_median",
                     )
                     dpg.bind_item_theme(_med, self._partisan_ref_theme)
-        dpg.set_axis_limits("partisan_y", 0.0, 1.0)
+        dpg.set_axis_limits("partisan_y", 0.0, 100.0)
 
     def _build_win_chance_panel(self):
         with dpg.window(
@@ -980,17 +1138,21 @@ class MosaicApp:
                     label="Districts (least to most likely D win)",
                     no_tick_labels=True,
                 )
-                with dpg.plot_axis(dpg.mvYAxis, label="P(D wins)", tag="win_chance_y"):
+                with dpg.plot_axis(dpg.mvYAxis, label="P(D wins) (%)", tag="win_chance_y"):
                     self._win_chance_bar_series = []
                     for i in range(12):
                         s = dpg.add_bar_series([], [], weight=0.85, show=True)
                         dpg.bind_item_theme(s, self._partisan_bar_themes[i])
                         self._win_chance_bar_series.append(s)
                     _wref = dpg.add_line_series(
-                        [0, 200], [0.5, 0.5], label="##wref50", tag="win_chance_ref",
+                        [0, 200], [50.0, 50.0], label="##wref50", tag="win_chance_ref",
                     )
                     dpg.bind_item_theme(_wref, self._partisan_ref_theme)
-        dpg.set_axis_limits("win_chance_y", 0.0, 1.0)
+                    _wmed = dpg.add_line_series(
+                        [], [], label="##wrefmed", tag="win_chance_median",
+                    )
+                    dpg.bind_item_theme(_wmed, self._partisan_ref_theme)
+        dpg.set_axis_limits("win_chance_y", 0.0, 100.0)
 
     def _build_mm_panel(self):
         with dpg.window(
@@ -1066,21 +1228,26 @@ class MosaicApp:
 
     def _build_pp_panel(self):
         with dpg.window(
-            label="Polsby-Popper", tag="panel_pp",
-            show=False, width=500, height=280,
+            label="Compactness (PP)", tag="panel_pp",
+            show=False, width=500, height=295,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_pp_item, False),
         ):
             with dpg.group(tag="pp_plot_grp"):
-                with dpg.plot(height=-1, width=-1):
+                with dpg.plot(height=240, width=-1):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="pp_x")
-                    with dpg.plot_axis(dpg.mvYAxis, label="PP Penalty (lower=compact)", tag="pp_y"):
+                    with dpg.plot_axis(dpg.mvYAxis, label="Polsby-Popper (1 = circle)", tag="pp_y"):
                         dpg.add_line_series([], [], label="PP", tag="pp_series")
+                dpg.add_text(
+                    "Optimizer uses (1 - PP) as penalty; higher is more compact.",
+                    color=(120, 120, 120),
+                )
             dpg.add_text(
                 "Apply a score to use this panel.",
                 tag="pp_inactive_lbl", show=False, color=(150, 150, 150),
             )
+        dpg.set_axis_limits("pp_y", 0.0, 1.0)
 
     def _build_cut_edges_panel(self):
         with dpg.window(
@@ -1095,24 +1262,89 @@ class MosaicApp:
                 with dpg.plot_axis(dpg.mvYAxis, label="Cut Edges", tag="cuts_y"):
                     dpg.add_line_series([], [], label="Cuts", tag="cuts_series")
 
+    def _build_majority_panel(self):
+        with dpg.window(
+            label="Chance of Majority", tag="panel_majority",
+            show=False, width=500, height=280,
+            pos=[_LEFT_W + 80, 80],
+            on_close=lambda: dpg.set_value(self._panel_majority_item, False),
+        ):
+            with dpg.group(tag="majority_plot_grp"):
+                with dpg.plot(height=-1, width=-1):
+                    dpg.add_plot_legend()
+                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="maj_x")
+                    with dpg.plot_axis(dpg.mvYAxis, label="P(Majority)", tag="maj_y"):
+                        dpg.add_line_series([], [], label="P(D maj)", tag="maj_dem_series")
+                        dpg.add_line_series([], [], label="P(R maj)", tag="maj_rep_series")
+            dpg.add_text(
+                "Load election data to use this panel.",
+                tag="majority_inactive_lbl", show=False, color=(150, 150, 150),
+            )
+        dpg.set_axis_limits("maj_y", 0.0, 1.0)
+
+    def _build_hinge_panel(self):
+        with dpg.window(
+            label="Supermajority/Hinge", tag="panel_hinge",
+            show=False, width=500, height=280,
+            pos=[_LEFT_W + 80, 80],
+            on_close=lambda: dpg.set_value(self._panel_hinge_item, False),
+        ):
+            with dpg.group(tag="hinge_plot_grp"):
+                with dpg.plot(height=-1, width=-1):
+                    dpg.add_plot_legend()
+                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="hinge_x")
+                    with dpg.plot_axis(dpg.mvYAxis, label="P(Hinge)", tag="hinge_y"):
+                        dpg.add_line_series([], [], label="P(hinge)", tag="hinge_series")
+            dpg.add_text(
+                "Load election data to use this panel.",
+                tag="hinge_inactive_lbl", show=False, color=(150, 150, 150),
+            )
+        dpg.set_axis_limits("hinge_y", 0.0, 1.0)
+
     def _build_score_contrib_panel(self):
+        self._contrib_bar_themes = []
+        for _, _, rgba in _CONTRIB_BAR_METRICS:
+            with dpg.theme() as t:
+                with dpg.theme_component(dpg.mvBarSeries):
+                    dpg.add_theme_color(
+                        dpg.mvPlotCol_Fill, rgba,
+                        category=dpg.mvThemeCat_Plots,
+                    )
+            self._contrib_bar_themes.append(t)
+
         with dpg.window(
             label="Score Contributors", tag="panel_score_contrib",
-            show=False, width=340, height=240,
+            show=False, width=480, height=300,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_contrib_item, False),
         ):
-            dpg.add_text("% of weighted score each metric contributes.",
-                         color=(150, 150, 150))
-            dpg.add_text("Updated every 500 iterations.",
-                         color=(120, 120, 120))
-            dpg.add_separator()
-            dpg.add_spacer(height=4)
-            for _name, _tag in _CONTRIB_METRICS:
-                dpg.add_text("", tag=_tag, show=False)
-            self._contrib_status = dpg.add_text(
-                "Start a run to see contributors.", color=(130, 130, 130),
+            dpg.add_text(
+                "Share of total score each metric contributes - the optimizer "
+                "minimizes the total, so taller bars are driving the annealing harder.",
+                wrap=460, color=(150, 150, 150),
             )
+            dpg.add_spacer(height=2)
+            with dpg.plot(height=-1, width=-1, no_mouse_pos=True):
+                dpg.add_plot_axis(
+                    dpg.mvXAxis, tag="contrib_x",
+                    no_gridlines=True,
+                )
+                dpg.set_axis_ticks(
+                    "contrib_x",
+                    tuple((lbl, float(i + 1))
+                          for i, (_, lbl, _) in enumerate(_CONTRIB_BAR_METRICS)),
+                )
+                dpg.set_axis_limits("contrib_x", 0.5, len(_CONTRIB_BAR_METRICS) + 0.5)
+                with dpg.plot_axis(dpg.mvYAxis, label="%", tag="contrib_y"):
+                    self._contrib_bar_series = []
+                    for i, (name, _, _) in enumerate(_CONTRIB_BAR_METRICS):
+                        s = dpg.add_bar_series(
+                            [float(i + 1)], [0.0], weight=0.7,
+                            label="##cb{}".format(i),
+                        )
+                        dpg.bind_item_theme(s, self._contrib_bar_themes[i])
+                        self._contrib_bar_series.append(s)
+            dpg.set_axis_limits("contrib_y", 0.0, 100.0)
 
     def _build_help_popup(self):
         with dpg.window(
@@ -1180,7 +1412,7 @@ class MosaicApp:
                 dpg.add_text(
                     "  - Cut Edges: Fewer cut edges = more compact districts\n"
                     "  - County Splits: Penalizes unnecessary county splits\n"
-                    "  - Polsby-Popper: Geometric compactness (circle = 1.0)\n"
+                    "  - Compactness (PP): Geometric compactness (circle = 1.0)\n"
                     "  - Mean-Median: Partisan asymmetry (0 = balanced)\n"
                     "  - Efficiency Gap: Wasted votes (0 = no advantage)\n"
                     "  - Competitiveness: Lower = more competitive districts\n"
@@ -1381,6 +1613,9 @@ class MosaicApp:
             _cod  = list(self.state.competitive_count_history[self._buf_comp.read:])
             _pd   = list(self.state.pp_history[self._buf_pp.read:])
             _cutd = list(self.state.cut_edges_history[self._buf_cuts.read:])
+            _mjd  = list(self.state.majority_dem_history[self._buf_maj_dem.read:])
+            _mjr  = list(self.state.majority_rep_history[self._buf_maj_rep.read:])
+            _hgd  = list(self.state.hinge_history[self._buf_hinge.read:])
 
         self._buf_score.add(_sd)
         self._buf_acc.add_pairs(_ad, scale=100.0)
@@ -1394,6 +1629,9 @@ class MosaicApp:
         self._buf_comp.add(_cod)
         self._buf_pp.add(_pd)
         self._buf_cuts.add(_cutd)
+        self._buf_maj_dem.add(_mjd)
+        self._buf_maj_rep.add(_mjr)
+        self._buf_hinge.add(_hgd)
 
         limit = dpg.get_value(self._limit_plots) if self._limit_plots else False
 
@@ -1458,6 +1696,17 @@ class MosaicApp:
             dpg.configure_item("comp_inactive_lbl", show=not self._has_elections)
             if self._has_elections:
                 _render(self._buf_comp, "comp_series", "comp_x", "comp_y")
+        if dpg.is_item_shown("panel_majority"):
+            dpg.configure_item("majority_plot_grp",     show=self._has_elections)
+            dpg.configure_item("majority_inactive_lbl", show=not self._has_elections)
+            if self._has_elections:
+                _render(self._buf_maj_dem, "maj_dem_series", "maj_x", "maj_y")
+                _render(self._buf_maj_rep, "maj_rep_series", "maj_x", "maj_y")
+        if dpg.is_item_shown("panel_hinge"):
+            dpg.configure_item("hinge_plot_grp",     show=self._has_elections)
+            dpg.configure_item("hinge_inactive_lbl", show=not self._has_elections)
+            if self._has_elections:
+                _render(self._buf_hinge, "hinge_series", "hinge_x", "hinge_y")
         if dpg.is_item_shown("panel_pp"):
             dpg.configure_item("pp_plot_grp",     show=pp_on)
             dpg.configure_item("pp_inactive_lbl", show=not pp_on)
@@ -1466,14 +1715,28 @@ class MosaicApp:
         if dpg.is_item_shown("panel_cut_edges"):
             _render(self._buf_cuts, "cuts_series", "cuts_x", "cuts_y")
 
-        # Score Contributors panel — refresh every 500 iterations
+        # Score Contributors panel — live bar chart, only active metrics shown
         if dpg.is_item_shown("panel_score_contrib"):
-            cur_it = snap["current_iteration"]
-            if cur_it % 500 == 0 and cur_it != self._last_contrib_iter:
-                self._last_contrib_iter = cur_it
-                with self.state._lock:
-                    bd = dict(self.state.score_breakdown)
-                self._refresh_score_contrib(bd)
+            with self.state._lock:
+                bd = dict(self.state.score_breakdown)
+            active = [(i, name, short)
+                      for i, (name, short, _) in enumerate(_CONTRIB_BAR_METRICS)
+                      if bd.get(name, 0.0) > 0.0]
+            if active:
+                dpg.set_axis_ticks(
+                    "contrib_x",
+                    tuple((short, float(pos + 1))
+                          for pos, (_, _, short) in enumerate(active)),
+                )
+                dpg.set_axis_limits("contrib_x", 0.5, len(active) + 0.5)
+            active_idx = {i for i, _, _ in active}
+            for pos, (orig_i, name, _) in enumerate(active):
+                dpg.set_value(self._contrib_bar_series[orig_i],
+                              [[float(pos + 1)], [bd[name]]])
+                dpg.configure_item(self._contrib_bar_series[orig_i], show=True)
+            for i in range(len(_CONTRIB_BAR_METRICS)):
+                if i not in active_idx:
+                    dpg.configure_item(self._contrib_bar_series[i], show=False)
 
         # Partisanship panel — live bar chart from current assignment
         if dpg.is_item_shown("panel_partisanship"):
@@ -1498,19 +1761,20 @@ class MosaicApp:
                     mask = bucket_idx == bi
                     dpg.set_value(
                         self._partisan_bar_series[bi],
-                        [ranks[mask].tolist(), sorted_shares[mask].tolist()],
+                        [ranks[mask].tolist(), (sorted_shares[mask] * 100.0).tolist()],
                     )
                 n = len(sorted_shares)
-                dpg.set_value("partisan_ref", [[0.5, n + 0.5], [0.5, 0.5]])
+                dpg.set_value("partisan_ref", [[0.5, n + 0.5], [50.0, 50.0]])
                 median_x = (n + 1) / 2.0
-                dpg.set_value("partisan_median", [[median_x, median_x], [0.0, 1.0]])
+                dpg.set_value("partisan_median", [[median_x, median_x], [0.0, 100.0]])
                 dpg.fit_axis_data("partisan_x")
-                dpg.set_axis_limits("partisan_y", 0.0, 1.0)
+                dpg.set_axis_limits("partisan_y", 0.0, 100.0)
 
-        # Win Chance panel — same layout, Y = P(D wins) via logistic model
+        # Win Chance panel — same layout, Y = P(D wins) via unified Gaussian model
         if dpg.is_item_shown("panel_win_chance"):
+            import math
             from mosaic.gui.map_view import _PARTISAN_BREAKS
-            from mosaic.scoring.partisan import election_k
+            from mosaic.scoring.partisan import k_to_sigma, p_win_gaussian
             with self.state._lock:
                 _wa = (self.state.current_assignment.copy()
                        if self.state.current_assignment is not None else None)
@@ -1523,8 +1787,9 @@ class MosaicApp:
                 _gop_d = np.bincount(_wa, weights=_gop.astype(np.float64), minlength=_wnd)
                 _tot_d = _dem_d + _gop_d
                 _shares = np.where(_tot_d > 0, _dem_d / _tot_d, 0.5)
-                _k = election_k(dpg.get_value(self._win_prob))
-                _p_win = 1.0 / (1.0 + np.exp(-_k * (_shares - 0.5)))
+                _sigma_d    = k_to_sigma(dpg.get_value(self._win_prob))
+                _sigma_comb = math.sqrt(dpg.get_value(self._swing_sigma) ** 2 + _sigma_d ** 2)
+                _p_win = p_win_gaussian(_shares, _sigma_comb)
                 sorted_p = np.sort(_p_win)
                 wranks = np.arange(1, len(sorted_p) + 1, dtype=float)
                 wbucket = np.searchsorted(_PARTISAN_BREAKS, sorted_p, side="right") - 1
@@ -1533,18 +1798,22 @@ class MosaicApp:
                     mask = wbucket == bi
                     dpg.set_value(
                         self._win_chance_bar_series[bi],
-                        [wranks[mask].tolist(), sorted_p[mask].tolist()],
+                        [wranks[mask].tolist(), (sorted_p[mask] * 100.0).tolist()],
                     )
                 wn = len(sorted_p)
-                dpg.set_value("win_chance_ref", [[0.5, wn + 0.5], [0.5, 0.5]])
+                dpg.set_value("win_chance_ref", [[0.5, wn + 0.5], [50.0, 50.0]])
+                wmedian_x = (wn + 1) / 2.0
+                dpg.set_value("win_chance_median", [[wmedian_x, wmedian_x], [0.0, 100.0]])
                 dpg.fit_axis_data("win_chance_x")
-                dpg.set_axis_limits("win_chance_y", 0.0, 1.0)
+                dpg.set_axis_limits("win_chance_y", 0.0, 100.0)
 
-        # Keep dem seats target slider bounded by current district count
+        # Keep district-count-dependent sliders bounded
         n_dist_val = dpg.get_value(self._num_districts)
         dpg.configure_item(self._target_dem_seats, max_value=n_dist_val)
+        dpg.configure_item(self._hinge_threshold,  max_value=n_dist_val)
 
         # ── Button states ─────────────────────────────────────────────────────
+        dpg.configure_item("menu_scores",    enabled=not is_busy)
         dpg.configure_item(self._run_btn,    enabled=not is_busy)
         dpg.configure_item(self._pause_btn,  enabled=is_running or is_paused)
         dpg.configure_item(self._pause_btn,
@@ -1589,18 +1858,6 @@ class MosaicApp:
             self._nudge_theme if can_revert else self._antinudge_theme,
         )
 
-    def _refresh_score_contrib(self, bd: dict) -> None:
-        any_shown = False
-        for name, tag in _CONTRIB_METRICS:
-            pct = bd.get(name, 0.0)
-            if pct > 0.01:
-                dots = max(1, 36 - len(name))
-                dpg.set_value(tag, f"{name} {'.' * dots} {pct:5.1f}%")
-                dpg.configure_item(tag, show=True)
-                any_shown = True
-            else:
-                dpg.configure_item(tag, show=False)
-        dpg.configure_item(self._contrib_status, show=not any_shown)
 
     def _clear_all_series(self) -> None:
         """Clear local history buffers and blank all DPG plot series."""
@@ -1609,6 +1866,7 @@ class MosaicApp:
             self._buf_cs_score, self._buf_cs_excess, self._buf_cs_clean,
             self._buf_mm, self._buf_eg, self._buf_seats,
             self._buf_comp, self._buf_pp, self._buf_cuts,
+            self._buf_maj_dem, self._buf_maj_rep, self._buf_hinge,
         ):
             buf.clear()
         empty = [[], []]
@@ -1617,12 +1875,27 @@ class MosaicApp:
             "cs_score_series", "cs_excess_series", "cs_clean_series",
             "mm_series", "eg_series", "seats_series",
             "comp_series", "pp_series", "cuts_series",
+            "maj_dem_series", "maj_rep_series", "hinge_series",
         ):
             dpg.set_value(tag, empty)
+        for ax in (
+            "score_x", "score_y", "acc_x", "acc_y",
+            "panel_temp_x", "panel_temp_y",
+            "cs_score_x", "cs_score_y",
+            "cs_excess_x", "cs_excess_y",
+            "cs_clean_x", "cs_clean_y",
+            "mm_x", "mm_y", "eg_x", "eg_y",
+            "seats_x", "seats_y", "comp_x", "comp_y",
+            "pp_x", "pp_y", "cuts_x", "cuts_y",
+            "maj_x", "maj_y", "hinge_x", "hinge_y",
+        ):
+            dpg.set_axis_limits_auto(ax)
         for s in self._partisan_bar_series:
             dpg.set_value(s, empty)
         for s in self._win_chance_bar_series:
             dpg.set_value(s, empty)
+        for i, s in enumerate(self._contrib_bar_series):
+            dpg.set_value(s, [[float(i + 1)], [0.0]])
 
     # ── Shapefile info label ──────────────────────────────────────────────────
 
@@ -1693,19 +1966,23 @@ class MosaicApp:
         # Enable/disable partisan metric controls based on election data
         _pt_color = (180, 180, 180) if has_elections else (90, 90, 90)
         for chk, lbl in [
-            (self._mm_enabled,   self._mm_lbl),
-            (self._eg_enabled,   self._eg_lbl),
-            (self._comp_enabled, self._comp_lbl),
-            (self._seats_enabled, self._seats_lbl),
+            (self._mm_enabled,       self._mm_lbl),
+            (self._eg_enabled,       self._eg_lbl),
+            (self._comp_enabled,     self._comp_lbl),
+            (self._seats_enabled,    self._seats_lbl),
+            (self._majority_enabled, self._majority_lbl),
+            (self._hinge_enabled,    self._hinge_lbl),
         ]:
             dpg.configure_item(chk, enabled=has_elections)
             dpg.configure_item(lbl, color=_pt_color)
         if not has_elections:
             for chk, ctrl_tag in [
-                (self._mm_enabled,    "mm_controls"),
-                (self._eg_enabled,    "eg_controls"),
-                (self._comp_enabled,  "comp_controls"),
-                (self._seats_enabled, "seats_controls"),
+                (self._mm_enabled,       "mm_controls"),
+                (self._eg_enabled,       "eg_controls"),
+                (self._comp_enabled,     "comp_controls"),
+                (self._seats_enabled,    "seats_controls"),
+                (self._majority_enabled, "majority_controls"),
+                (self._hinge_enabled,    "hinge_controls"),
             ]:
                 dpg.set_value(chk, False)
                 dpg.configure_item(ctrl_tag, show=False)
@@ -1717,6 +1994,8 @@ class MosaicApp:
             (self._panel_eg_item,         "panel_eg"),
             (self._panel_seats_item,      "panel_dem_seats"),
             (self._panel_comp_item,       "panel_comp"),
+            (self._panel_majority_item,   "panel_majority"),
+            (self._panel_hinge_item,      "panel_hinge"),
         ]:
             dpg.configure_item(item_tag, enabled=has_elections)
             if not has_elections and dpg.is_item_shown(panel_tag):
@@ -1782,6 +2061,42 @@ class MosaicApp:
                            color=(90, 220, 90) if en else (110, 110, 110))
         dpg.configure_item("seats_controls", show=en)
 
+    def _on_majority_toggle(self):
+        en = dpg.get_value(self._majority_enabled)
+        dpg.configure_item(self._majority_lbl,
+                           color=(90, 220, 90) if en else (110, 110, 110))
+        dpg.configure_item("majority_controls", show=en)
+
+    def _on_majority_dem_chk(self):
+        if dpg.get_value(self._majority_dem_chk):
+            dpg.set_value(self._majority_rep_chk, False)
+
+    def _on_majority_rep_chk(self):
+        if dpg.get_value(self._majority_rep_chk):
+            dpg.set_value(self._majority_dem_chk, False)
+
+    def _on_hinge_toggle(self):
+        en = dpg.get_value(self._hinge_enabled)
+        dpg.configure_item(self._hinge_lbl,
+                           color=(90, 220, 90) if en else (110, 110, 110))
+        dpg.configure_item("hinge_controls", show=en)
+
+    def _on_hinge_dem_chk(self):
+        if dpg.get_value(self._hinge_dem_chk):
+            dpg.set_value(self._hinge_rep_chk, False)
+
+    def _on_hinge_rep_chk(self):
+        if dpg.get_value(self._hinge_rep_chk):
+            dpg.set_value(self._hinge_dem_chk, False)
+
+    def _set_score_row_vis(self, row_tag: str, show: bool,
+                           chk_item: int, toggle_cb) -> None:
+        """Show/hide a score row; if hiding, force-disable the checkbox."""
+        dpg.configure_item(row_tag, show=show)
+        if not show and dpg.get_value(chk_item):
+            dpg.set_value(chk_item, False)
+            toggle_cb()
+
     def _on_county_bias_toggle(self):
         dpg.configure_item("county_bias_controls",
                            show=dpg.get_value(self._county_bias_enabled))
@@ -1821,13 +2136,14 @@ class MosaicApp:
     def _on_panel_cuts_toggle(self):
         dpg.configure_item("panel_cut_edges", show=dpg.get_value(self._panel_cuts_item))
 
+    def _on_panel_majority_toggle(self):
+        dpg.configure_item("panel_majority", show=dpg.get_value(self._panel_majority_item))
+
+    def _on_panel_hinge_toggle(self):
+        dpg.configure_item("panel_hinge", show=dpg.get_value(self._panel_hinge_item))
+
     def _on_panel_contrib_toggle(self):
-        show = dpg.get_value(self._panel_contrib_item)
-        dpg.configure_item("panel_score_contrib", show=show)
-        if show:
-            with self.state._lock:
-                bd = dict(self.state.score_breakdown)
-            self._refresh_score_contrib(bd)
+        dpg.configure_item("panel_score_contrib", show=dpg.get_value(self._panel_contrib_item))
 
     def _on_county_overlay_toggle(self):
         if self.map_view is None or not self.map_view._loaded:
@@ -2007,6 +2323,9 @@ class MosaicApp:
             self.state.competitive_count_history = []
             self.state.pp_history = []
             self.state.cut_edges_history = []
+            self.state.majority_dem_history = []
+            self.state.majority_rep_history = []
+            self.state.hinge_history = []
         self._clear_all_series()
         dpg.set_value(self._shp_info, "Building graph...")
         dpg.configure_item(self._shp_info, color=(150, 150, 150))
@@ -2068,6 +2387,7 @@ class MosaicApp:
             self._buf_score, self._buf_cs_score, self._buf_cs_excess,
             self._buf_cs_clean, self._buf_mm, self._buf_eg,
             self._buf_seats, self._buf_comp, self._buf_pp, self._buf_cuts,
+            self._buf_maj_dem, self._buf_maj_rep,
         ):
             buf.trim_to(best_iter, n_score)
         self._buf_temp.trim_to(best_iter, n_temp)
@@ -2091,11 +2411,12 @@ class MosaicApp:
                               error_message="Please load a shapefile first")
             return
 
-        cs_on    = dpg.get_value(self._cs_enabled)
-        mm_on    = dpg.get_value(self._mm_enabled)
-        eg_on    = dpg.get_value(self._eg_enabled)
-        comp_on  = dpg.get_value(self._comp_enabled)
-        seats_on = dpg.get_value(self._seats_enabled)
+        cs_on      = dpg.get_value(self._cs_enabled)
+        mm_on      = dpg.get_value(self._mm_enabled)
+        eg_on      = dpg.get_value(self._eg_enabled)
+        comp_on    = dpg.get_value(self._comp_enabled)
+        seats_on   = dpg.get_value(self._seats_enabled)
+        maj_on     = dpg.get_value(self._majority_enabled)
         robust_eg = dpg.get_value(self._eg_mode) == "Robust (recommended)"
 
         w_cut  = (dpg.get_value(self._w_cut_edges)
@@ -2127,7 +2448,18 @@ class MosaicApp:
             weight_dem_seats=dpg.get_value(self._w_dem_seats) if seats_on else 0.0,
             target_dem_seats=target_seats,
             weight_competitiveness=dpg.get_value(self._w_competitiveness) if comp_on else 0.0,
+            weight_majority_chance_dem=(dpg.get_value(self._w_majority)
+                                        if maj_on and dpg.get_value(self._majority_dem_chk)
+                                        else 0.0),
+            weight_majority_chance_rep=(dpg.get_value(self._w_majority)
+                                        if maj_on and dpg.get_value(self._majority_rep_chk)
+                                        else 0.0),
             election_win_prob_at_55=dpg.get_value(self._win_prob),
+            election_swing_sigma=dpg.get_value(self._swing_sigma),
+            weight_hinge=(dpg.get_value(self._w_hinge)
+                          if dpg.get_value(self._hinge_enabled) else 0.0),
+            hinge_threshold=max(1, min(dpg.get_value(self._hinge_threshold), n_dist_run)),
+            hinge_dem=dpg.get_value(self._hinge_dem_chk),
         )
 
         guided = dpg.get_value(self._cool_mode) == "Guided (recommended)"
@@ -2155,6 +2487,7 @@ class MosaicApp:
             county_bias_enabled=cb_en,
             county_bias=cb_val,
         )
+        self._clear_all_series()
         self.state.reset_run()
 
         self.algorithm_thread = threading.Thread(
@@ -2183,6 +2516,9 @@ class MosaicApp:
             self.state.competitive_count_history = []
             self.state.pp_history = []
             self.state.cut_edges_history = []
+            self.state.majority_dem_history = []
+            self.state.majority_rep_history = []
+            self.state.hinge_history = []
         self.state.update(
             status=AlgorithmStatus.IDLE,
             status_message="",
@@ -2198,7 +2534,6 @@ class MosaicApp:
             current_assignment=None,
             score_breakdown={},
         )
-        self._last_contrib_iter = -1
         # Reset status bar and score readouts
         dpg.set_value(self._status_txt, "Status: Idle")
         dpg.set_value(self._iter_txt,   "Iteration: 0 / 0")
@@ -2210,7 +2545,6 @@ class MosaicApp:
         dpg.set_value(self._acc_txt,    "Entropy: --")
         dpg.set_value(self._succ_txt,   "Accepted steps: --")
         self._clear_all_series()
-        self._refresh_score_contrib({})
         if self.map_view is not None and self.map_view._loaded:
             self.map_view.draw_blank()
 
