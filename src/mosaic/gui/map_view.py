@@ -29,7 +29,7 @@ from typing import Optional
 
 import geopandas as gpd
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 import dearpygui.dearpygui as dpg
 
@@ -160,6 +160,11 @@ class MapView:
         self._gop_votes: Optional[np.ndarray] = None
         self._pp_data = None
         self._populations: Optional[np.ndarray] = None
+        self._precinct_centroids: Optional[np.ndarray] = None  # (N, 2) projected pixel coords
+        self._proj_scale: float = 1.0
+        self._proj_offset: tuple[float, float] = (0.0, 0.0)
+        self._proj_bounds: tuple[float, float] = (0.0, 0.0)  # (b0, b1)
+        self._proj_h: float = 0.0
         # Overlay mode flags (set by GUI callbacks)
         self.county_overlay: bool = False
         self.partisan_overlay: bool = False          # colour each precinct by its own partisan lean
@@ -167,6 +172,7 @@ class MapView:
         self.splits_view: bool = False
         self.compactness_view: bool = False          # colour each district by Polsby-Popper score
         self.pop_dev_view: bool = False              # colour each district by population deviation
+        self.show_labels: bool = False               # show district number labels
 
     # ── Load (thread-safe, no DPG) ────────────────────────────────────────────
 
@@ -223,6 +229,17 @@ class MapView:
 
         self._pixel_map = np.array(img, dtype=np.int32)
         self._n_precincts = len(gdf)
+
+        # Precompute precinct centroids in pixel coordinates for label placement
+        centroids = []
+        for geom in gdf.geometry:
+            if geom is not None:
+                c = geom.centroid
+                centroids.append(proj(c.x, c.y))
+            else:
+                centroids.append((0.0, 0.0))
+        self._precinct_centroids = np.array(centroids, dtype=np.float64)
+
         self._loaded = True
 
     # ── DPG upload helpers (GUI thread only) ──────────────────────────────────
@@ -417,5 +434,90 @@ class MapView:
         border[:, :-1] |= bv & vv
         border[:, 1:]  |= bv & vv
         rgba[border] = _BORDER_RGBA
+
+        # ── District labels (if enabled) ─────────────────────────────────────
+        if self.show_labels and self._precinct_centroids is not None:
+            # Compute stable label numbers (matching color assignment)
+            if initial is not None and len(initial) == len(assignment):
+                stable_colors = _stable_color_mapping(assignment, initial, n_districts)
+            else:
+                stable_colors = assignment
+
+            # Build mapping: current district -> stable label number
+            dist_to_label = {}
+            for d in range(n_districts):
+                mask = assignment == d
+                if mask.any():
+                    # Use the stable color index as the label (1-indexed for display)
+                    dist_to_label[d] = int(stable_colors[mask][0]) + 1
+
+            # Compute district centroids as mean of precinct centroids
+            district_centers = []
+            for d in range(n_districts):
+                mask = assignment == d
+                if mask.any():
+                    cx = self._precinct_centroids[mask, 0].mean()
+                    cy = self._precinct_centroids[mask, 1].mean()
+                    label = str(dist_to_label.get(d, d + 1))
+                    district_centers.append((d, cx, cy, label))
+
+            # Sort by approximate area (larger districts first for priority)
+            areas = np.bincount(assignment, minlength=n_districts)
+            district_centers.sort(key=lambda x: -areas[x[0]])
+
+            # Greedy collision avoidance
+            font_h = 10
+            char_w = 6
+            placed_boxes = []
+            labels_to_draw = []
+
+            for d, cx, cy, label in district_centers:
+                half_w = len(label) * char_w / 2 + 2
+                half_h = font_h / 2 + 2
+                box = (cx - half_w, cy - half_h, cx + half_w, cy + half_h)
+
+                # Check collision
+                collision = False
+                for pb in placed_boxes:
+                    if not (box[2] < pb[0] or box[0] > pb[2] or
+                            box[3] < pb[1] or box[1] > pb[3]):
+                        collision = True
+                        break
+
+                if not collision:
+                    placed_boxes.append(box)
+                    labels_to_draw.append((int(cx), int(cy), label))
+
+            # Draw labels onto rgba via PIL
+            if labels_to_draw:
+                img = Image.fromarray(rgba, mode="RGBA")
+                draw = ImageDraw.Draw(img)
+                try:
+                    font = ImageFont.truetype("arial.ttf", font_h)
+                    use_anchor = True
+                except OSError:
+                    font = ImageFont.load_default()
+                    use_anchor = False
+
+                for px, py, text in labels_to_draw:
+                    if use_anchor:
+                        # TrueType font supports anchor
+                        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                            draw.text((px + dx, py + dy), text,
+                                      fill=(0, 0, 0, 255), font=font, anchor="mm")
+                        draw.text((px, py), text,
+                                  fill=(255, 255, 255, 255), font=font, anchor="mm")
+                    else:
+                        # Default font: manually center
+                        bbox = draw.textbbox((0, 0), text, font=font)
+                        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                        tx, ty = px - tw // 2, py - th // 2
+                        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                            draw.text((tx + dx, ty + dy), text,
+                                      fill=(0, 0, 0, 255), font=font)
+                        draw.text((tx, ty), text,
+                                  fill=(255, 255, 255, 255), font=font)
+
+                rgba = np.array(img, dtype=np.uint8)
 
         dpg.set_value(self._ttag, self._to_dpg(rgba))
