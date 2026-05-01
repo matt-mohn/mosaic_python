@@ -166,6 +166,9 @@ class MosaicApp:
         self._buf_seats     = _SeriesBuffer()
         self._buf_comp      = _SeriesBuffer()
         self._buf_pp        = _SeriesBuffer()
+        self._buf_popdev    = _SeriesBuffer()
+        self._buf_popdev_var = _SeriesBuffer()
+        self._buf_popdev_rng = _SeriesBuffer()
         self._buf_cuts      = _SeriesBuffer()
         self._buf_maj_dem   = _SeriesBuffer()
         self._buf_maj_rep   = _SeriesBuffer()
@@ -227,6 +230,7 @@ class MosaicApp:
         self._build_dem_seats_panel()
         self._build_comp_panel()
         self._build_pp_panel()
+        self._build_popdev_panel()
         self._build_cut_edges_panel()
         self._build_majority_panel()
         self._build_hinge_panel()
@@ -309,6 +313,10 @@ class MosaicApp:
                     self._panel_pp_item = dpg.add_menu_item(
                         label="Compactness (PP)", check=True, default_value=False,
                         callback=self._on_panel_pp_toggle,
+                    )
+                    self._panel_popdev_item = dpg.add_menu_item(
+                        label="Pop. Deviation", check=True, default_value=False,
+                        callback=self._on_panel_popdev_toggle,
                     )
                     self._panel_cuts_item = dpg.add_menu_item(
                         label="Cut Edges", check=True, default_value=False,
@@ -540,6 +548,11 @@ class MosaicApp:
                                 default_value=False,
                                 enabled=False,
                                 callback=self._on_pop_dev_toggle,
+                            )
+                            self._show_labels = dpg.add_checkbox(
+                                label="Labels",
+                                default_value=False,
+                                callback=self._on_labels_toggle,
                             )
 
                         dpg.add_spacer(height=4)
@@ -1249,6 +1262,33 @@ class MosaicApp:
             )
         dpg.set_axis_limits("pp_y", 0.0, 1.0)
 
+    def _build_popdev_panel(self):
+        with dpg.window(
+            label="Pop. Deviation", tag="panel_popdev",
+            show=False, width=500, height=320,
+            pos=[_LEFT_W + 100, 100],
+            on_close=lambda: dpg.set_value(self._panel_popdev_item, False),
+        ):
+            with dpg.group(tag="popdev_plot_grp"):
+                with dpg.plot(height=260, width=-1):
+                    dpg.add_plot_legend()
+                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="popdev_x")
+                    with dpg.plot_axis(dpg.mvYAxis, label="Score", tag="popdev_y"):
+                        dpg.add_line_series([], [], label="Combined",
+                                            tag="popdev_series")
+                        dpg.add_line_series([], [], label="Variance (×100k)",
+                                            tag="popdev_var_series")
+                        dpg.add_line_series([], [], label="Range (×10k)",
+                                            tag="popdev_rng_series")
+                dpg.add_text(
+                    "Combined = sqrt((Variance + Range) / 2). Lower is better.",
+                    color=(120, 120, 120),
+                )
+            dpg.add_text(
+                "Apply a score to use this panel.",
+                tag="popdev_inactive_lbl", show=False, color=(150, 150, 150),
+            )
+
     def _build_cut_edges_panel(self):
         with dpg.window(
             label="Cut Edges", tag="panel_cut_edges",
@@ -1615,6 +1655,9 @@ class MosaicApp:
             _sed  = list(self.state.dem_seats_history[self._buf_seats.read:])
             _cod  = list(self.state.competitive_count_history[self._buf_comp.read:])
             _pd   = list(self.state.pp_history[self._buf_pp.read:])
+            _pvd  = list(self.state.pop_deviation_history[self._buf_popdev.read:])
+            _pvd_var = list(self.state.pop_dev_variance_history[self._buf_popdev_var.read:])
+            _pvd_rng = list(self.state.pop_dev_range_history[self._buf_popdev_rng.read:])
             _cutd = list(self.state.cut_edges_history[self._buf_cuts.read:])
             _mjd  = list(self.state.majority_dem_history[self._buf_maj_dem.read:])
             _mjr  = list(self.state.majority_rep_history[self._buf_maj_rep.read:])
@@ -1631,6 +1674,9 @@ class MosaicApp:
         self._buf_seats.add(_sed)
         self._buf_comp.add(_cod)
         self._buf_pp.add(_pd)
+        self._buf_popdev.add(_pvd)
+        self._buf_popdev_var.add(_pvd_var)
+        self._buf_popdev_rng.add(_pvd_rng)
         self._buf_cuts.add(_cutd)
         self._buf_maj_dem.add(_mjd)
         self._buf_maj_rep.add(_mjr)
@@ -1715,6 +1761,14 @@ class MosaicApp:
             dpg.configure_item("pp_inactive_lbl", show=not pp_on)
             if pp_on:
                 _render(self._buf_pp, "pp_series", "pp_x", "pp_y")
+        if dpg.is_item_shown("panel_popdev"):
+            popdev_on = dpg.get_value(self._popdev_enabled)
+            dpg.configure_item("popdev_plot_grp",     show=popdev_on)
+            dpg.configure_item("popdev_inactive_lbl", show=not popdev_on)
+            if popdev_on:
+                _render(self._buf_popdev, "popdev_series", "popdev_x", "popdev_y")
+                _render(self._buf_popdev_var, "popdev_var_series", "popdev_x", "popdev_y")
+                _render(self._buf_popdev_rng, "popdev_rng_series", "popdev_x", "popdev_y")
         if dpg.is_item_shown("panel_cut_edges"):
             _render(self._buf_cuts, "cuts_series", "cuts_x", "cuts_y")
 
@@ -1868,7 +1922,8 @@ class MosaicApp:
             self._buf_score, self._buf_acc, self._buf_temp,
             self._buf_cs_score, self._buf_cs_excess, self._buf_cs_clean,
             self._buf_mm, self._buf_eg, self._buf_seats,
-            self._buf_comp, self._buf_pp, self._buf_cuts,
+            self._buf_comp, self._buf_pp, self._buf_popdev,
+            self._buf_popdev_var, self._buf_popdev_rng, self._buf_cuts,
             self._buf_maj_dem, self._buf_maj_rep, self._buf_hinge,
         ):
             buf.clear()
@@ -1877,7 +1932,8 @@ class MosaicApp:
             "score_series", "acc_series", "panel_temp_series",
             "cs_score_series", "cs_excess_series", "cs_clean_series",
             "mm_series", "eg_series", "seats_series",
-            "comp_series", "pp_series", "cuts_series",
+            "comp_series", "pp_series", "popdev_series",
+            "popdev_var_series", "popdev_rng_series", "cuts_series",
             "maj_dem_series", "maj_rep_series", "hinge_series",
         ):
             dpg.set_value(tag, empty)
@@ -1889,7 +1945,7 @@ class MosaicApp:
             "cs_clean_x", "cs_clean_y",
             "mm_x", "mm_y", "eg_x", "eg_y",
             "seats_x", "seats_y", "comp_x", "comp_y",
-            "pp_x", "pp_y", "cuts_x", "cuts_y",
+            "pp_x", "pp_y", "popdev_x", "popdev_y", "cuts_x", "cuts_y",
             "maj_x", "maj_y", "hinge_x", "hinge_y",
         ):
             dpg.set_axis_limits_auto(ax)
@@ -2136,6 +2192,9 @@ class MosaicApp:
     def _on_panel_pp_toggle(self):
         dpg.configure_item("panel_pp", show=dpg.get_value(self._panel_pp_item))
 
+    def _on_panel_popdev_toggle(self):
+        dpg.configure_item("panel_popdev", show=dpg.get_value(self._panel_popdev_item))
+
     def _on_panel_cuts_toggle(self):
         dpg.configure_item("panel_cut_edges", show=dpg.get_value(self._panel_cuts_item))
 
@@ -2278,6 +2337,21 @@ class MosaicApp:
         else:
             self.map_view.draw_blank()
 
+    def _on_labels_toggle(self):
+        if self.map_view is None or not self.map_view._loaded:
+            return
+        self.map_view.show_labels = dpg.get_value(self._show_labels)
+        with self.state._lock:
+            _a    = (self.state.current_assignment.copy()
+                     if self.state.current_assignment is not None else None)
+            _init = (self.state.initial_assignment.copy()
+                     if self.state.initial_assignment is not None else None)
+            _nd   = self.state.num_districts
+        if _a is not None:
+            self.map_view.render_assignment(_a, _nd, _init)
+        else:
+            self.map_view.draw_blank()
+
     # ── Action callbacks ──────────────────────────────────────────────────────
 
     def _on_import_shapefile(self):
@@ -2325,6 +2399,9 @@ class MosaicApp:
             self.state.dem_seats_history = []
             self.state.competitive_count_history = []
             self.state.pp_history = []
+            self.state.pop_deviation_history = []
+            self.state.pop_dev_variance_history = []
+            self.state.pop_dev_range_history = []
             self.state.cut_edges_history = []
             self.state.majority_dem_history = []
             self.state.majority_rep_history = []
@@ -2366,6 +2443,9 @@ class MosaicApp:
             self.state.dem_seats_history        = self.state.dem_seats_history[:n_score]
             self.state.competitive_count_history = self.state.competitive_count_history[:n_score]
             self.state.pp_history               = self.state.pp_history[:n_score]
+            self.state.pop_deviation_history    = self.state.pop_deviation_history[:n_score]
+            self.state.pop_dev_variance_history = self.state.pop_dev_variance_history[:n_score]
+            self.state.pop_dev_range_history    = self.state.pop_dev_range_history[:n_score]
             self.state.cut_edges_history        = self.state.cut_edges_history[:n_score]
 
         # Release any paused algorithm thread before overwriting state
@@ -2389,7 +2469,8 @@ class MosaicApp:
         for buf in (
             self._buf_score, self._buf_cs_score, self._buf_cs_excess,
             self._buf_cs_clean, self._buf_mm, self._buf_eg,
-            self._buf_seats, self._buf_comp, self._buf_pp, self._buf_cuts,
+            self._buf_seats, self._buf_comp, self._buf_pp, self._buf_popdev,
+            self._buf_popdev_var, self._buf_popdev_rng, self._buf_cuts,
             self._buf_maj_dem, self._buf_maj_rep,
         ):
             buf.trim_to(best_iter, n_score)
@@ -2518,6 +2599,9 @@ class MosaicApp:
             self.state.dem_seats_history = []
             self.state.competitive_count_history = []
             self.state.pp_history = []
+            self.state.pop_deviation_history = []
+            self.state.pop_dev_variance_history = []
+            self.state.pop_dev_range_history = []
             self.state.cut_edges_history = []
             self.state.majority_dem_history = []
             self.state.majority_rep_history = []

@@ -76,21 +76,35 @@ def score_pop_deviation(
     ideal_pop: float,
     n_districts: int,
     safe_harbor: float = 0.0025,
-) -> float:
+    return_components: bool = False,
+) -> float | tuple[float, float, float]:
     """
-    Mean squared fractional deviation beyond the safe-harbor threshold, * 10000.
+    Combined variance + range score for population deviation.
 
-    Districts within safe_harbor of ideal contribute 0; those outside contribute
-    (|dev_frac| - safe_harbor)^2 * 10000.
+    Combines:
+      - variance_part: mean(excess²) × 100,000 (penalizes overall spread)
+      - range_part: (max_dev - min_dev) / 2 × 10,000 (penalizes extreme outliers)
 
-    Typical range: 0 (all within harbor) to ~22 (all districts at 5% tolerance
-    boundary with 0.25% harbor).  Scaled to be comparable with Polsby-Popper [0, 100].
+    Final score = sqrt((variance_part + range_part) / 2)
+
+    This balances pressure on both overall balance and worst-case districts.
+
+    If return_components=True, returns (combined, variance_part, range_part).
     """
+    ideal = max(float(ideal_pop), 1.0)
     pop_d = np.bincount(assignment, weights=populations.astype(np.float64),
                         minlength=n_districts)
-    dev_frac = np.abs(pop_d - ideal_pop) / max(float(ideal_pop), 1.0)
-    excess = np.maximum(0.0, dev_frac - safe_harbor)
-    return float(np.mean(excess ** 2) * 10_000)
+    dev_frac = (pop_d - ideal) / ideal  # signed deviation
+    abs_dev = np.abs(dev_frac)
+    excess = np.maximum(0.0, abs_dev - safe_harbor)
+
+    variance_part = float(np.mean(excess ** 2) * 100_000)
+    range_part = float((dev_frac.max() - dev_frac.min()) * 0.5 * 10_000)
+    combined = float(np.sqrt((variance_part + range_part) * 0.5))
+
+    if return_components:
+        return combined, variance_part, range_part
+    return combined
 
 
 # Keep these for backwards compatibility / future use
