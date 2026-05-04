@@ -14,6 +14,20 @@ _DISTRICT_TIMEOUT = 5.0
 _MAX_RESTARTS = 10
 
 
+def _ramp_tolerance(k: int, num_districts: int, start: float, cap: float) -> float:
+    """
+    Harmonic ramp: tol_min ∝ 1/(N-k), normalised to [start, cap] over k∈[0,N-2].
+
+    Derived from the observation that in sequential bisection the number of valid
+    spanning-tree cuts scales as (N-k), so the minimum viable tolerance to maintain
+    constant expected valid cuts grows as 1/(N-k).  Mapping that curve onto [start,
+    cap] gives: tol(k) = start + (cap-start) * 2k / ((N-2)(N-k)).
+    """
+    if num_districts <= 2:
+        return cap
+    return start + (cap - start) * 2 * k / ((num_districts - 2) * (num_districts - k))
+
+
 def _nx_subgraph_to_ig(graph: nx.Graph, nodes: set) -> ig.Graph:
     """Build an igraph subgraph from a NetworkX graph restricted to given nodes."""
     node_list = sorted(nodes)
@@ -29,6 +43,7 @@ def create_initial_partition(
     populations: np.ndarray,
     num_districts: int,
     tolerance: float,
+    tolerance_start: float = 0.005,
     seed: int | None = None,
     on_progress: Callable[[int, int], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
@@ -41,7 +56,10 @@ def create_initial_partition(
         graph: Precinct adjacency graph. Nodes should be 0..N-1.
         populations: Population array indexed by node ID
         num_districts: Number of districts to create
-        tolerance: Population deviation tolerance (e.g., 0.05 for 5%)
+        tolerance: Population deviation cap (e.g., 0.05 for 5%)
+        tolerance_start: Starting tolerance for the harmonic ramp (default 0.5%).
+            Early cuts — made on large pools where tight balance is cheap — begin
+            here and ramp up to `tolerance` by the final cut.
         seed: Random seed for reproducibility
         on_progress: Callback(district_num, num_districts) for progress updates
         should_cancel: Optional callable; if it returns True partitioning stops
@@ -58,7 +76,8 @@ def create_initial_partition(
         if should_cancel and should_cancel():
             return None
         result = _try_partition(
-            graph, populations, num_districts, tolerance, on_progress, should_cancel
+            graph, populations, num_districts, tolerance, tolerance_start,
+            on_progress, should_cancel
         )
         if result is not None:
             return result
@@ -77,6 +96,7 @@ def _try_partition(
     populations: np.ndarray,
     num_districts: int,
     tolerance: float,
+    tolerance_start: float,
     on_progress: Callable[[int, int], None] | None,
     should_cancel: Callable[[], bool] | None = None,
 ) -> np.ndarray | None:
@@ -87,6 +107,7 @@ def _try_partition(
     the carved district needs to be within tolerance. The very last cut uses
     one_sided=False to ensure both remaining districts are valid (prevents the
     last district from drifting out of tolerance and never recovering in annealing).
+    Tolerance is ramped harmonically from tolerance_start to tolerance.
     """
     n = graph.number_of_nodes()
     total_pop = populations.sum()
@@ -100,12 +121,13 @@ def _try_partition(
         is_last_cut = (district == num_districts - 2)
 
         ig_sub = _nx_subgraph_to_ig(graph, remaining_nodes)
+        tol = _ramp_tolerance(district, num_districts, tolerance_start, tolerance)
 
         carved = find_balanced_cut_ig(
             ig_sub,
             populations,
             ideal_pop,
-            tolerance,
+            tol,
             max_attempts=10000,
             one_sided=not is_last_cut,
             timeout=_DISTRICT_TIMEOUT,

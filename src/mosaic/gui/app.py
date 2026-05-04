@@ -166,9 +166,9 @@ class MosaicApp:
         self._buf_seats     = _SeriesBuffer()
         self._buf_comp      = _SeriesBuffer()
         self._buf_pp        = _SeriesBuffer()
-        self._buf_popdev    = _SeriesBuffer()
-        self._buf_popdev_var = _SeriesBuffer()
-        self._buf_popdev_rng = _SeriesBuffer()
+        self._buf_popdev     = _SeriesBuffer()
+        self._buf_popdev_max = _SeriesBuffer()
+        self._buf_popdev_mean = _SeriesBuffer()
         self._buf_cuts      = _SeriesBuffer()
         self._buf_maj_dem   = _SeriesBuffer()
         self._buf_maj_rep   = _SeriesBuffer()
@@ -1265,23 +1265,21 @@ class MosaicApp:
     def _build_popdev_panel(self):
         with dpg.window(
             label="Pop. Deviation", tag="panel_popdev",
-            show=False, width=500, height=320,
+            show=False, width=500, height=300,
             pos=[_LEFT_W + 100, 100],
             on_close=lambda: dpg.set_value(self._panel_popdev_item, False),
         ):
             with dpg.group(tag="popdev_plot_grp"):
-                with dpg.plot(height=260, width=-1):
+                with dpg.plot(height=240, width=-1):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="popdev_x")
-                    with dpg.plot_axis(dpg.mvYAxis, label="Score", tag="popdev_y"):
-                        dpg.add_line_series([], [], label="Combined",
-                                            tag="popdev_series")
-                        dpg.add_line_series([], [], label="Variance (×100k)",
-                                            tag="popdev_var_series")
-                        dpg.add_line_series([], [], label="Range (×10k)",
-                                            tag="popdev_rng_series")
+                    with dpg.plot_axis(dpg.mvYAxis, label="% Deviation", tag="popdev_y"):
+                        dpg.add_line_series([], [], label="Max %",
+                                            tag="popdev_max_series")
+                        dpg.add_line_series([], [], label="Mean %",
+                                            tag="popdev_mean_series")
                 dpg.add_text(
-                    "Combined = sqrt((Variance + Range) / 2). Lower is better.",
+                    "Max and mean absolute deviation from ideal population. Lower is better.",
                     color=(120, 120, 120),
                 )
             dpg.add_text(
@@ -1656,8 +1654,8 @@ class MosaicApp:
             _cod  = list(self.state.competitive_count_history[self._buf_comp.read:])
             _pd   = list(self.state.pp_history[self._buf_pp.read:])
             _pvd  = list(self.state.pop_deviation_history[self._buf_popdev.read:])
-            _pvd_var = list(self.state.pop_dev_variance_history[self._buf_popdev_var.read:])
-            _pvd_rng = list(self.state.pop_dev_range_history[self._buf_popdev_rng.read:])
+            _pvd_max  = list(self.state.pop_dev_max_history[self._buf_popdev_max.read:])
+            _pvd_mean = list(self.state.pop_dev_mean_history[self._buf_popdev_mean.read:])
             _cutd = list(self.state.cut_edges_history[self._buf_cuts.read:])
             _mjd  = list(self.state.majority_dem_history[self._buf_maj_dem.read:])
             _mjr  = list(self.state.majority_rep_history[self._buf_maj_rep.read:])
@@ -1675,8 +1673,8 @@ class MosaicApp:
         self._buf_comp.add(_cod)
         self._buf_pp.add(_pd)
         self._buf_popdev.add(_pvd)
-        self._buf_popdev_var.add(_pvd_var)
-        self._buf_popdev_rng.add(_pvd_rng)
+        self._buf_popdev_max.add(_pvd_max)
+        self._buf_popdev_mean.add(_pvd_mean)
         self._buf_cuts.add(_cutd)
         self._buf_maj_dem.add(_mjd)
         self._buf_maj_rep.add(_mjr)
@@ -1706,13 +1704,17 @@ class MosaicApp:
                 _render(self._buf_cs_score,  "cs_score_series",  "cs_score_x",  "cs_score_y")
                 _render(self._buf_cs_excess, "cs_excess_series", "cs_excess_x", "cs_excess_y")
                 _render(self._buf_cs_clean,  "cs_clean_series",  "cs_clean_x",  "cs_clean_y")
+                if self._buf_cs_score.ys:
+                    _, w = self._buf_cs_score.plot_data(limit)
+                    dpg.set_axis_limits("cs_score_y", 0, max(w) * 1.05)
                 if self._buf_cs_excess.ys:
-                    hi = max(1, int(max(self._buf_cs_excess.ys)))
+                    _, w = self._buf_cs_excess.plot_data(limit)
+                    hi = max(1, int(max(w)))
                     dpg.set_axis_limits("cs_excess_y", 0, hi + 1)
                 if self._buf_cs_clean.ys:
-                    lo = max(0, int(min(self._buf_cs_clean.ys)) - 1)
-                    hi = int(max(self._buf_cs_clean.ys)) + 1
-                    dpg.set_axis_limits("cs_clean_y", lo, hi)
+                    _, w = self._buf_cs_clean.plot_data(limit)
+                    hi = int(max(w)) + 1
+                    dpg.set_axis_limits("cs_clean_y", 0, hi)
             if (self.runner is not None and self.runner.county_pops is not None
                     and self.runner.populations is not None):
                 n_dist = dpg.get_value(self._num_districts)
@@ -1766,9 +1768,11 @@ class MosaicApp:
             dpg.configure_item("popdev_plot_grp",     show=popdev_on)
             dpg.configure_item("popdev_inactive_lbl", show=not popdev_on)
             if popdev_on:
-                _render(self._buf_popdev, "popdev_series", "popdev_x", "popdev_y")
-                _render(self._buf_popdev_var, "popdev_var_series", "popdev_x", "popdev_y")
-                _render(self._buf_popdev_rng, "popdev_rng_series", "popdev_x", "popdev_y")
+                _render(self._buf_popdev_max,  "popdev_max_series",  "popdev_x", "popdev_y")
+                _render(self._buf_popdev_mean, "popdev_mean_series", "popdev_x", "popdev_y")
+                all_ys = self._buf_popdev_max.ys + self._buf_popdev_mean.ys
+                if all_ys:
+                    dpg.set_axis_limits("popdev_y", 0.0, max(all_ys) * 1.05)
         if dpg.is_item_shown("panel_cut_edges"):
             _render(self._buf_cuts, "cuts_series", "cuts_x", "cuts_y")
 
@@ -1923,7 +1927,7 @@ class MosaicApp:
             self._buf_cs_score, self._buf_cs_excess, self._buf_cs_clean,
             self._buf_mm, self._buf_eg, self._buf_seats,
             self._buf_comp, self._buf_pp, self._buf_popdev,
-            self._buf_popdev_var, self._buf_popdev_rng, self._buf_cuts,
+            self._buf_popdev_max, self._buf_popdev_mean, self._buf_cuts,
             self._buf_maj_dem, self._buf_maj_rep, self._buf_hinge,
         ):
             buf.clear()
@@ -1932,8 +1936,8 @@ class MosaicApp:
             "score_series", "acc_series", "panel_temp_series",
             "cs_score_series", "cs_excess_series", "cs_clean_series",
             "mm_series", "eg_series", "seats_series",
-            "comp_series", "pp_series", "popdev_series",
-            "popdev_var_series", "popdev_rng_series", "cuts_series",
+            "comp_series", "pp_series",
+            "popdev_max_series", "popdev_mean_series", "cuts_series",
             "maj_dem_series", "maj_rep_series", "hinge_series",
         ):
             dpg.set_value(tag, empty)
@@ -2211,20 +2215,10 @@ class MosaicApp:
         if self.map_view is None or not self.map_view._loaded:
             return
         self.map_view.county_overlay = dpg.get_value(self._county_overlay)
-        with self.state._lock:
-            _a    = (self.state.current_assignment.copy()
-                     if self.state.current_assignment is not None else None)
-            _init = (self.state.initial_assignment.copy()
-                     if self.state.initial_assignment is not None else None)
-            _nd   = self.state.num_districts
-        if _a is not None:
-            self.map_view.render_assignment(_a, _nd, _init)
-        else:
-            self.map_view.draw_blank()
+        self.state.update(map_needs_update=True)
 
     def _on_partisan_overlay_toggle(self):
         if dpg.get_value(self._partisan_overlay):
-            # Mutually exclusive with other base-layer views
             for cb, attr in [
                 (self._district_partisan, "district_partisan_overlay"),
                 (self._compactness_view,  "compactness_view"),
@@ -2236,20 +2230,10 @@ class MosaicApp:
         if self.map_view is None or not self.map_view._loaded:
             return
         self.map_view.partisan_overlay = dpg.get_value(self._partisan_overlay)
-        with self.state._lock:
-            _a    = (self.state.current_assignment.copy()
-                     if self.state.current_assignment is not None else None)
-            _init = (self.state.initial_assignment.copy()
-                     if self.state.initial_assignment is not None else None)
-            _nd   = self.state.num_districts
-        if _a is not None:
-            self.map_view.render_assignment(_a, _nd, _init)
-        else:
-            self.map_view.draw_blank()
+        self.state.update(map_needs_update=True)
 
     def _on_district_partisan_toggle(self):
         if dpg.get_value(self._district_partisan):
-            # Mutually exclusive with other base-layer views
             for cb, attr in [
                 (self._partisan_overlay, "partisan_overlay"),
                 (self._compactness_view, "compactness_view"),
@@ -2261,35 +2245,16 @@ class MosaicApp:
         if self.map_view is None or not self.map_view._loaded:
             return
         self.map_view.district_partisan_overlay = dpg.get_value(self._district_partisan)
-        with self.state._lock:
-            _a    = (self.state.current_assignment.copy()
-                     if self.state.current_assignment is not None else None)
-            _init = (self.state.initial_assignment.copy()
-                     if self.state.initial_assignment is not None else None)
-            _nd   = self.state.num_districts
-        if _a is not None:
-            self.map_view.render_assignment(_a, _nd, _init)
-        else:
-            self.map_view.draw_blank()
+        self.state.update(map_needs_update=True)
 
     def _on_splits_view_toggle(self):
         if self.map_view is None or not self.map_view._loaded:
             return
         self.map_view.splits_view = dpg.get_value(self._splits_view)
-        with self.state._lock:
-            _a    = (self.state.current_assignment.copy()
-                     if self.state.current_assignment is not None else None)
-            _init = (self.state.initial_assignment.copy()
-                     if self.state.initial_assignment is not None else None)
-            _nd   = self.state.num_districts
-        if _a is not None:
-            self.map_view.render_assignment(_a, _nd, _init)
-        else:
-            self.map_view.draw_blank()
+        self.state.update(map_needs_update=True)
 
     def _on_compactness_toggle(self):
         if dpg.get_value(self._compactness_view):
-            # Mutually exclusive with partisan base views
             for cb, attr in [
                 (self._partisan_overlay, "partisan_overlay"),
                 (self._district_partisan, "district_partisan_overlay"),
@@ -2301,20 +2266,10 @@ class MosaicApp:
         if self.map_view is None or not self.map_view._loaded:
             return
         self.map_view.compactness_view = dpg.get_value(self._compactness_view)
-        with self.state._lock:
-            _a    = (self.state.current_assignment.copy()
-                     if self.state.current_assignment is not None else None)
-            _init = (self.state.initial_assignment.copy()
-                     if self.state.initial_assignment is not None else None)
-            _nd   = self.state.num_districts
-        if _a is not None:
-            self.map_view.render_assignment(_a, _nd, _init)
-        else:
-            self.map_view.draw_blank()
+        self.state.update(map_needs_update=True)
 
     def _on_pop_dev_toggle(self):
         if dpg.get_value(self._pop_dev_view):
-            # Mutually exclusive with partisan base views
             for cb, attr in [
                 (self._partisan_overlay, "partisan_overlay"),
                 (self._district_partisan, "district_partisan_overlay"),
@@ -2326,31 +2281,13 @@ class MosaicApp:
         if self.map_view is None or not self.map_view._loaded:
             return
         self.map_view.pop_dev_view = dpg.get_value(self._pop_dev_view)
-        with self.state._lock:
-            _a    = (self.state.current_assignment.copy()
-                     if self.state.current_assignment is not None else None)
-            _init = (self.state.initial_assignment.copy()
-                     if self.state.initial_assignment is not None else None)
-            _nd   = self.state.num_districts
-        if _a is not None:
-            self.map_view.render_assignment(_a, _nd, _init)
-        else:
-            self.map_view.draw_blank()
+        self.state.update(map_needs_update=True)
 
     def _on_labels_toggle(self):
         if self.map_view is None or not self.map_view._loaded:
             return
         self.map_view.show_labels = dpg.get_value(self._show_labels)
-        with self.state._lock:
-            _a    = (self.state.current_assignment.copy()
-                     if self.state.current_assignment is not None else None)
-            _init = (self.state.initial_assignment.copy()
-                     if self.state.initial_assignment is not None else None)
-            _nd   = self.state.num_districts
-        if _a is not None:
-            self.map_view.render_assignment(_a, _nd, _init)
-        else:
-            self.map_view.draw_blank()
+        self.state.update(map_needs_update=True)
 
     # ── Action callbacks ──────────────────────────────────────────────────────
 
@@ -2400,8 +2337,8 @@ class MosaicApp:
             self.state.competitive_count_history = []
             self.state.pp_history = []
             self.state.pop_deviation_history = []
-            self.state.pop_dev_variance_history = []
-            self.state.pop_dev_range_history = []
+            self.state.pop_dev_max_history = []
+            self.state.pop_dev_mean_history = []
             self.state.cut_edges_history = []
             self.state.majority_dem_history = []
             self.state.majority_rep_history = []
@@ -2443,9 +2380,9 @@ class MosaicApp:
             self.state.dem_seats_history        = self.state.dem_seats_history[:n_score]
             self.state.competitive_count_history = self.state.competitive_count_history[:n_score]
             self.state.pp_history               = self.state.pp_history[:n_score]
-            self.state.pop_deviation_history    = self.state.pop_deviation_history[:n_score]
-            self.state.pop_dev_variance_history = self.state.pop_dev_variance_history[:n_score]
-            self.state.pop_dev_range_history    = self.state.pop_dev_range_history[:n_score]
+            self.state.pop_deviation_history = self.state.pop_deviation_history[:n_score]
+            self.state.pop_dev_max_history   = self.state.pop_dev_max_history[:n_score]
+            self.state.pop_dev_mean_history  = self.state.pop_dev_mean_history[:n_score]
             self.state.cut_edges_history        = self.state.cut_edges_history[:n_score]
 
         # Release any paused algorithm thread before overwriting state
@@ -2470,7 +2407,7 @@ class MosaicApp:
             self._buf_score, self._buf_cs_score, self._buf_cs_excess,
             self._buf_cs_clean, self._buf_mm, self._buf_eg,
             self._buf_seats, self._buf_comp, self._buf_pp, self._buf_popdev,
-            self._buf_popdev_var, self._buf_popdev_rng, self._buf_cuts,
+            self._buf_popdev_max, self._buf_popdev_mean, self._buf_cuts,
             self._buf_maj_dem, self._buf_maj_rep,
         ):
             buf.trim_to(best_iter, n_score)
@@ -2600,8 +2537,8 @@ class MosaicApp:
             self.state.competitive_count_history = []
             self.state.pp_history = []
             self.state.pop_deviation_history = []
-            self.state.pop_dev_variance_history = []
-            self.state.pop_dev_range_history = []
+            self.state.pop_dev_max_history = []
+            self.state.pop_dev_mean_history = []
             self.state.cut_edges_history = []
             self.state.majority_dem_history = []
             self.state.majority_rep_history = []
