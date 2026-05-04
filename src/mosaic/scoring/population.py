@@ -79,31 +79,29 @@ def score_pop_deviation(
     return_components: bool = False,
 ) -> float | tuple[float, float, float]:
     """
-    Combined variance + range score for population deviation.
+    Population balance score combining average and worst-case excess deviation.
 
-    Combines:
-      - variance_part: mean(excess²) × 100,000 (penalizes overall spread)
-      - range_part: (max_dev - min_dev) / 2 × 10,000 (penalizes extreme outliers)
+    Score = (mean(excess²) + max(excess²)) × 50,000, where
+    excess = max(0, |dev_frac| - safe_harbor).
+    Equals mean(excess²) × 100k when all districts deviate equally;
+    rises faster when one district is an outlier. Lower is better; 0 means
+    all districts are within the safe-harbor.
 
-    Final score = sqrt((variance_part + range_part) / 2)
-
-    This balances pressure on both overall balance and worst-case districts.
-
-    If return_components=True, returns (combined, variance_part, range_part).
+    If return_components=True, returns (score, max_dev_pct, mean_dev_pct)
+    where max_dev_pct and mean_dev_pct are actual percentages (0-100).
     """
     ideal = max(float(ideal_pop), 1.0)
     pop_d = np.bincount(assignment, weights=populations.astype(np.float64),
                         minlength=n_districts)
-    dev_frac = (pop_d - ideal) / ideal  # signed deviation
-    abs_dev = np.abs(dev_frac)
+    abs_dev = np.abs(pop_d - ideal) / ideal
     excess = np.maximum(0.0, abs_dev - safe_harbor)
-
-    variance_part = float(np.mean(excess ** 2) * 100_000)
-    range_part = float((dev_frac.max() - dev_frac.min()) * 0.5 * 10_000)
-    combined = float(np.sqrt((variance_part + range_part) * 0.5))
+    excess_sq = excess ** 2
+    combined = float((np.mean(excess_sq) + np.max(excess_sq)) * 50_000)
 
     if return_components:
-        return combined, variance_part, range_part
+        max_dev_pct = float(abs_dev.max() * 100.0)
+        mean_dev_pct = float(abs_dev.mean() * 100.0)
+        return combined, max_dev_pct, mean_dev_pct
     return combined
 
 

@@ -12,7 +12,7 @@ import pandas as pd
 
 log = logging.getLogger("mosaic")
 
-_POP_HINTS    = {"population", "pop", "total_pop", "totpop", "pop100", "p0010001", "p001001"}
+_POP_HINTS    = {"population", "pop", "total_pop", "totpop", "pop100", "p0010001", "p001001", "pop_total"}
 _ID_HINTS     = {"geoid20", "geoid", "vtdid", "vtd", "precinct_id", "id", "gid", "objectid"}
 _COUNTY_HINTS = {
     "cty", "county", "countyfp20", "countyfp", "county20",
@@ -119,6 +119,7 @@ def _restore_zero_padded_ids(gdf: gpd.GeoDataFrame, path: str) -> None:
 
         if target_width is not None:
             mask = gdf[col].notna()
+            gdf[col] = gdf[col].astype(object)
             gdf.loc[mask, col] = gdf.loc[mask, col].astype(str).str.zfill(target_width)
             gdf[col] = gdf[col].where(mask, other=None)
             log.info(f"Column '{col}': zero-padded to width {target_width} (was int64 in .dbf)")

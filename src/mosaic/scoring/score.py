@@ -51,9 +51,9 @@ class PlanScore:
     cut_edges: int
     county_splits: float = 0.0
     polsby_popper: float = 0.0          # stored as 1 - mean_PP (penalty form)
-    pop_deviation: float = 0.0          # combined score: sqrt((variance + range) / 2)
-    pop_dev_variance: float = 0.0       # variance component: mean(excess²) × 100k
-    pop_dev_range: float = 0.0          # range component: (max-min)/2 × 10k
+    pop_deviation: float = 0.0          # mean squared excess dev × 10,000
+    pop_dev_max: float = 0.0            # max |deviation| as % (display only)
+    pop_dev_mean: float = 0.0           # mean |deviation| as % (display only)
     county_excess_splits: int = 0
     county_clean_districts: int = 0
     # Partisan raw metric values (before target penalty; for display)
@@ -120,11 +120,11 @@ def score_plan(
         pp_raw = score_polsby_popper(assignment, pp_data, n_districts)
         total += config.weight_polsby_popper * pp_raw
 
-    pd_var = pd_rng = 0.0
+    pd_max = pd_mean = 0.0
     if config.weight_pop_deviation and assignment is not None \
             and populations is not None and ideal_pop is not None \
             and n_districts is not None:
-        pd_raw, pd_var, pd_rng = score_pop_deviation(
+        pd_raw, pd_max, pd_mean = score_pop_deviation(
             assignment, populations, ideal_pop, n_districts,
             safe_harbor=config.pop_deviation_safe_harbor,
             return_components=True,
@@ -231,8 +231,8 @@ def score_plan(
         county_clean_districts=cs_clean,
         polsby_popper=pp_raw,
         pop_deviation=pd_raw,
-        pop_dev_variance=pd_var,
-        pop_dev_range=pd_rng,
+        pop_dev_max=pd_max,
+        pop_dev_mean=pd_mean,
         mean_median=mm_raw,
         efficiency_gap=eg_raw,
         dem_seats=seats_raw,
