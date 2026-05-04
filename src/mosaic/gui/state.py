@@ -93,8 +93,8 @@ class SharedState:
     competitive_count_history: list = field(default_factory=list)
     pp_history: list = field(default_factory=list)
     pop_deviation_history: list = field(default_factory=list)
-    pop_dev_variance_history: list = field(default_factory=list)
-    pop_dev_range_history: list = field(default_factory=list)
+    pop_dev_max_history: list = field(default_factory=list)
+    pop_dev_mean_history: list = field(default_factory=list)
     cut_edges_history: list = field(default_factory=list)
     majority_dem_history: list = field(default_factory=list)
     majority_rep_history: list = field(default_factory=list)
@@ -185,8 +185,8 @@ class SharedState:
             self.competitive_count_history = []
             self.pp_history = []
             self.pop_deviation_history = []
-            self.pop_dev_variance_history = []
-            self.pop_dev_range_history = []
+            self.pop_dev_max_history = []
+            self.pop_dev_mean_history = []
             self.cut_edges_history = []
             self.majority_dem_history = []
             self.majority_rep_history = []

@@ -227,7 +227,12 @@ class AlgorithmRunner:
 
         except Exception as e:
             log.error(f"complete_load error: {e}", exc_info=True)
-            self.state.update(status=AlgorithmStatus.ERROR, error_message=str(e))
+            msg = f"{type(e).__name__}: {e}"
+            self.state.update(
+                status=AlgorithmStatus.ERROR,
+                error_message=msg,
+                status_message=msg,
+            )
             return False
 
     # ── Algorithm ─────────────────────────────────────────────────────────────
@@ -308,8 +313,8 @@ class AlgorithmRunner:
                 self.state.competitive_count_history.append(0)
                 self.state.pp_history.append(1.0 - current_ps.polsby_popper / 100.0)
                 self.state.pop_deviation_history.append(current_ps.pop_deviation)
-                self.state.pop_dev_variance_history.append(current_ps.pop_dev_variance)
-                self.state.pop_dev_range_history.append(current_ps.pop_dev_range)
+                self.state.pop_dev_max_history.append(current_ps.pop_dev_max)
+                self.state.pop_dev_mean_history.append(current_ps.pop_dev_mean)
                 self.state.cut_edges_history.append(current_ps.cut_edges)
                 self.state.majority_dem_history.append(current_ps.majority_chance_dem)
                 self.state.majority_rep_history.append(current_ps.majority_chance_rep)
@@ -457,6 +462,8 @@ class AlgorithmRunner:
                     self.state.competitive_count_history.append(comp_count)
                     self.state.pp_history.append(1.0 - current_ps.polsby_popper / 100.0)
                     self.state.pop_deviation_history.append(current_ps.pop_deviation)
+                    self.state.pop_dev_max_history.append(current_ps.pop_dev_max)
+                    self.state.pop_dev_mean_history.append(current_ps.pop_dev_mean)
                     self.state.cut_edges_history.append(current_ps.cut_edges)
                     self.state.majority_dem_history.append(current_ps.majority_chance_dem)
                     self.state.majority_rep_history.append(current_ps.majority_chance_rep)

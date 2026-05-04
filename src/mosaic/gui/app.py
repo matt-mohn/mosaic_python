@@ -607,6 +607,8 @@ class MosaicApp:
                                 self._cut_lbl = dpg.add_text(
                                     "Cut Edges", color=(90, 220, 90),
                                 )
+                                dpg.add_button(label="^", width=24,
+                                    callback=lambda: self._show_panel("panel_cut_edges", self._panel_cuts_item))
                             with dpg.group(tag="cut_edge_controls", show=False):
                                 self._w_cut_edges = dpg.add_slider_int(
                                     label="Weight",
@@ -624,6 +626,8 @@ class MosaicApp:
                                 self._cs_lbl = dpg.add_text(
                                     "County Splits and Bias", color=(110, 110, 110),
                                 )
+                                dpg.add_button(label="^", width=24,
+                                    callback=lambda: self._show_panel("panel_county_splits", self._panel_cs_item))
                             with dpg.group(tag="cs_controls", show=False):
                                 self._w_county_splits = dpg.add_slider_int(
                                     label="Weight",
@@ -657,6 +661,8 @@ class MosaicApp:
                                 self._popdev_lbl = dpg.add_text(
                                     "Pop. Deviation", color=(180, 180, 180),
                                 )
+                                dpg.add_button(label="^", width=24,
+                                    callback=lambda: self._show_panel("panel_popdev", self._panel_popdev_item))
                             with dpg.group(tag="popdev_controls", show=False):
                                 self._w_pop_deviation = dpg.add_slider_float(
                                     label="Weight",
@@ -676,6 +682,8 @@ class MosaicApp:
                                 self._pp_lbl = dpg.add_text(
                                     "Compactness (PP)", color=(90, 220, 90),
                                 )
+                                dpg.add_button(label="^", width=24,
+                                    callback=lambda: self._show_panel("panel_pp", self._panel_pp_item))
                             with dpg.group(tag="pp_controls", show=True):
                                 self._w_polsby_popper = dpg.add_slider_int(
                                     label="Weight",
@@ -694,6 +702,8 @@ class MosaicApp:
                                     "Mean-Median Difference",
                                     color=(90, 90, 90),
                                 )
+                                dpg.add_button(label="^", width=24,
+                                    callback=lambda: self._show_panel("panel_mm", self._panel_mm_item))
                             with dpg.group(tag="mm_controls", show=False):
                                 self._w_mean_median = dpg.add_slider_int(
                                     label="Weight",
@@ -721,6 +731,8 @@ class MosaicApp:
                                     "Efficiency Gap",
                                     color=(90, 90, 90),
                                 )
+                                dpg.add_button(label="^", width=24,
+                                    callback=lambda: self._show_panel("panel_eg", self._panel_eg_item))
                             with dpg.group(tag="eg_controls", show=False):
                                 self._w_efficiency_gap = dpg.add_slider_int(
                                     label="Weight",
@@ -749,6 +761,8 @@ class MosaicApp:
                                     "Competitiveness",
                                     color=(90, 90, 90),
                                 )
+                                dpg.add_button(label="^", width=24,
+                                    callback=lambda: self._show_panel("panel_comp", self._panel_comp_item))
                             with dpg.group(tag="comp_controls", show=False):
                                 self._w_competitiveness = dpg.add_slider_int(
                                     label="Weight",
@@ -767,6 +781,8 @@ class MosaicApp:
                                     "Expected Dem Seats",
                                     color=(90, 90, 90),
                                 )
+                                dpg.add_button(label="^", width=24,
+                                    callback=lambda: self._show_panel("panel_dem_seats", self._panel_seats_item))
                             with dpg.group(tag="seats_controls", show=False):
                                 self._w_dem_seats = dpg.add_slider_int(
                                     label="Weight",
@@ -790,6 +806,8 @@ class MosaicApp:
                                     "Chance of Majority",
                                     color=(90, 90, 90),
                                 )
+                                dpg.add_button(label="^", width=24,
+                                    callback=lambda: self._show_panel("panel_majority", self._panel_majority_item))
                             with dpg.group(tag="majority_controls", show=False):
                                 self._w_majority = dpg.add_slider_int(
                                     label="Weight",
@@ -817,6 +835,8 @@ class MosaicApp:
                                     "Supermajority/Hinge",
                                     color=(90, 90, 90),
                                 )
+                                dpg.add_button(label="^", width=24,
+                                    callback=lambda: self._show_panel("panel_hinge", self._panel_hinge_item))
                             with dpg.group(tag="hinge_controls", show=False):
                                 self._w_hinge = dpg.add_slider_int(
                                     label="Weight",
@@ -2163,6 +2183,11 @@ class MosaicApp:
     def _on_county_bias_toggle(self):
         dpg.configure_item("county_bias_controls",
                            show=dpg.get_value(self._county_bias_enabled))
+
+    def _show_panel(self, panel_tag: str, menu_item) -> None:
+        visible = dpg.is_item_shown(panel_tag)
+        dpg.set_value(menu_item, not visible)
+        dpg.configure_item(panel_tag, show=not visible)
 
     def _on_panel_temp_toggle(self):
         dpg.configure_item(
