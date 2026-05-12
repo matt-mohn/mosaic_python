@@ -1447,7 +1447,9 @@ class MosaicApp:
                     "random pairs of touching districts hundreds of times a second, "
                     "then divides them in a new way. This 'recombination' approach "
                     "means that the entire map can be replaced or reconfigured in "
-                    "only a few increments of a second.",
+                    "only a few increments of a second. The 'n=3 ReCom Mix' slider "
+                    "in Annealing Settings adds three-way recombinations to the mix - "
+                    "these help escape local minima at the cost of more time per step.",
                     wrap=540,
                 )
                 dpg.add_spacer(height=8)
@@ -1487,12 +1489,35 @@ class MosaicApp:
                     "  - Cut Edges: Fewer cut edges = more compact districts\n"
                     "  - County Splits: Penalizes unnecessary county splits\n"
                     "  - Compactness (PP): Geometric compactness (circle = 1.0)\n"
+                    "  - Pop. Deviation: Penalizes districts outside the safe-harbor\n"
+                    "      band around ideal pop (default 0.25%, configurable in\n"
+                    "      Configuration > Population, alongside the overall\n"
+                    "      tolerance bound which defaults to 5%)\n"
                     "  - Mean-Median: Partisan asymmetry (0 = balanced)\n"
                     "  - Efficiency Gap: Wasted votes (0 = no advantage)\n"
                     "  - Competitiveness: Lower = more competitive districts\n"
                     "  - Expected Dem Seats: Probabilistic seat count\n"
                     "  - Chance of Majority: P(a party wins a majority of seats)\n"
                     "  - Supermajority/Hinge: P(a party wins >= a chosen seat threshold)",
+                    wrap=540, color=(180, 180, 180),
+                )
+                dpg.add_spacer(height=8)
+
+                dpg.add_text("Map Views", color=(200, 200, 100))
+                dpg.add_separator()
+                dpg.add_text(
+                    "Toggle the checkboxes below the District Map to overlay or "
+                    "switch views:",
+                    wrap=540,
+                )
+                dpg.add_text(
+                    "  - County: outlines county boundaries\n"
+                    "  - Splits: highlights counties split across districts\n"
+                    "  - Precinct Results: colors precincts by partisan vote share\n"
+                    "  - District Results: colors districts by aggregate vote share\n"
+                    "  - Compactness: colors districts by Polsby-Popper score\n"
+                    "  - Pop. Deviation: colors districts by deviation from ideal\n"
+                    "  - Labels: numbers each district on the map",
                     wrap=540, color=(180, 180, 180),
                 )
                 dpg.add_spacer(height=8)
