@@ -370,6 +370,7 @@ dependencies = [
     { name = "igraph" },
     { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "numba" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -386,9 +387,6 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
-fast = [
-    { name = "numba" },
-]
 
 [package.metadata]
 requires-dist = [
@@ -397,7 +395,7 @@ requires-dist = [
     { name = "igraph", specifier = ">=1.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "networkx", specifier = ">=3.0" },
-    { name = "numba", marker = "extra == 'fast'", specifier = ">=0.57" },
+    { name = "numba", specifier = ">=0.57" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "pandas", specifier = ">=2.0" },
     { name = "pillow", specifier = ">=10.0" },
@@ -407,7 +405,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1" },
     { name = "shapely", specifier = ">=2.0" },
 ]
-provides-extras = ["dev", "fast"]
+provides-extras = ["dev"]
 
 [[package]]
 name = "mypy"
