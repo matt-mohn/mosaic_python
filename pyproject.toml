@@ -28,6 +28,7 @@ dependencies = [
     "pyogrio>=0.7",
     "networkx>=3.0",
     "numpy>=1.24",
+    "numba>=0.57",
     "pandas>=2.0",
     "shapely>=2.0",
     "dearpygui>=1.10",
@@ -42,9 +43,6 @@ dev = [
     "pytest-cov>=4.0",
     "ruff>=0.1",
     "mypy>=1.0",
-]
-fast = [
-    "numba>=0.57",
 ]
 
 [project.scripts]
