@@ -16,9 +16,12 @@ import igraph as ig
 
 from mosaic.gui.state import SharedState, AlgorithmStatus
 from mosaic.io.inspect import inspect_shapefile, ShapefileConfig, ShapefileInspection
-from mosaic.graph import build_adjacency_graph, load_cached_graph, save_cached_graph, get_cache_path
+from mosaic.graph import (
+    build_adjacency_graph, load_cached_graph, save_cached_graph,
+    get_cache_path, nx_to_igraph,
+)
 from mosaic.recom import create_initial_partition
-from mosaic.recom.recombination import recom_step_ig, GraphContext
+from mosaic.recom.recombination import recom_step_ig, recom_step_ig_n3, GraphContext
 from mosaic.recom.annealing import init_annealing, accept_proposal, cool_temperature
 from mosaic.scoring import score_plan
 from mosaic.scoring.precompute import PPData, precompute_pp_data
@@ -59,15 +62,6 @@ def _build_score_breakdown(ps, cfg) -> dict:
     if cfg.weight_hinge:
         _add("Hinge", cfg.weight_hinge * (1.0 - ps.hinge_chance) ** 1.5 * 100)
     return result
-
-
-def nx_to_igraph(nxg: nx.Graph) -> ig.Graph:
-    node_list = sorted(nxg.nodes())
-    node_to_idx = {node: i for i, node in enumerate(node_list)}
-    edges = [(node_to_idx[u], node_to_idx[v]) for u, v in nxg.edges()]
-    g = ig.Graph(n=len(node_list), edges=edges, directed=False)
-    g.vs["name"] = node_list
-    return g
 
 
 class AlgorithmRunner:
@@ -245,15 +239,26 @@ class AlgorithmRunner:
 
         (num_districts, tolerance, max_iterations, seed,
          score_config, annealing_config,
-         county_bias_enabled, county_bias) = self.state.get(
+         county_bias_enabled, county_bias,
+         n3_probability, n3_max_attempts_per_stage) = self.state.get(
             "num_districts", "pop_tolerance", "max_iterations", "seed",
             "score_config", "annealing_config",
             "county_bias_enabled", "county_bias",
+            "n3_probability", "n3_max_attempts_per_stage",
         )
 
         ideal_pop = self.populations.sum() / num_districts
         ctx = self.graph_ctx
         effective_bias = county_bias if county_bias_enabled else 1.0
+        # Freeze the n=3 mix at run start. When n3_enabled is False, the dispatch
+        # in the hot loop short-circuits BEFORE np.random.random() is even called,
+        # so a pure n=2 run pays only a single bool check per iteration.
+        n3_enabled = n3_probability > 0.0
+        if n3_enabled:
+            log.info(
+                f"n=3 ReCom mix enabled: p={n3_probability:.1%}, "
+                f"max_attempts_per_stage={n3_max_attempts_per_stage}"
+            )
 
         _skw = dict(
             county_ids=self.county_array,
@@ -296,9 +301,7 @@ class AlgorithmRunner:
             self.state.update(initial_assignment=assignment.copy())
 
             # ── Initial score ────────────────────────────────────────────────
-            cut_edge_indices = np.where(
-                assignment[ctx.edge_u] != assignment[ctx.edge_v]
-            )[0].astype(np.int32)
+            cut_edge_indices = ctx.compute_cut_edges(assignment)
             current_ps = score_plan(cut_edge_indices, score_config,
                                     assignment=assignment, **_skw)
 
@@ -397,11 +400,21 @@ class AlgorithmRunner:
                     )
 
                 # ── ReCom step ───────────────────────────────────────────────
-                new_assignment, valid, new_cut_indices = recom_step_ig(
-                    ctx, assignment, self.populations, ideal_pop, tolerance,
-                    cut_edge_indices,
-                    county_array=self.county_array, county_bias=effective_bias,
-                )
+                # Zero-overhead dispatch when n3_enabled is False: the `and`
+                # short-circuits, np.random.random() is never called.
+                if n3_enabled and np.random.random() < n3_probability:
+                    new_assignment, valid, new_cut_indices = recom_step_ig_n3(
+                        ctx, assignment, self.populations, ideal_pop, tolerance,
+                        cut_edge_indices,
+                        county_array=self.county_array, county_bias=effective_bias,
+                        max_attempts_per_stage=n3_max_attempts_per_stage,
+                    )
+                else:
+                    new_assignment, valid, new_cut_indices = recom_step_ig(
+                        ctx, assignment, self.populations, ideal_pop, tolerance,
+                        cut_edge_indices,
+                        county_array=self.county_array, county_bias=effective_bias,
+                    )
 
                 if not valid:
                     self.state.update(current_iteration=iteration)

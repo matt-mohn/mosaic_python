@@ -1,9 +1,21 @@
 """Build adjacency graph from shapefile geometries."""
 
 import geopandas as gpd
+import igraph as ig
 import networkx as nx
 from shapely import STRtree
 from shapely.geometry import Polygon, MultiPolygon
+
+
+def nx_to_igraph(nxg: nx.Graph) -> ig.Graph:
+    """Convert a NetworkX graph to an igraph Graph with original node IDs
+    preserved as the `name` vertex attribute (sorted index order)."""
+    node_list = sorted(nxg.nodes())
+    node_to_idx = {node: i for i, node in enumerate(node_list)}
+    edges = [(node_to_idx[u], node_to_idx[v]) for u, v in nxg.edges()]
+    g = ig.Graph(n=len(node_list), edges=edges, directed=False)
+    g.vs["name"] = node_list
+    return g
 
 
 def build_adjacency_graph(gdf: gpd.GeoDataFrame) -> nx.Graph:

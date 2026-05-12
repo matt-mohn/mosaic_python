@@ -981,6 +981,22 @@ class MosaicApp:
                         max_value=0.99999, format="%.5f", width=260,
                     )
 
+            dpg.add_spacer(height=10)
+            dpg.add_separator()
+            dpg.add_spacer(height=6)
+            dpg.add_text("n=3 ReCom Mix", color=(200, 200, 100))
+            self._n3_pct = dpg.add_slider_int(
+                label="% of iterations",
+                default_value=5, min_value=0, max_value=25,
+                format="%d %%", width=200,
+            )
+            dpg.add_text(
+                "  Fraction of steps that merge 3 districts (vs 2) and re-split.\n"
+                "  Helps escape local minima at the cost of ~2.4x per-step time.\n"
+                "  Set to 0 for mass-generation runs (no overhead).",
+                color=(150, 150, 150),
+            )
+
             dpg.add_spacer(height=8)
             dpg.add_button(
                 label="Close",
@@ -2532,6 +2548,7 @@ class MosaicApp:
             map_render_interval=dpg.get_value(self._map_interval),
             county_bias_enabled=cb_en,
             county_bias=cb_val,
+            n3_probability=dpg.get_value(self._n3_pct) / 100.0,
         )
         self._clear_all_series()
         self.state.reset_run()

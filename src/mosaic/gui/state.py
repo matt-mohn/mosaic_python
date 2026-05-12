@@ -114,6 +114,13 @@ class SharedState:
     county_bias_enabled: bool = False
     county_bias: float = 5.0
 
+    # n=3 ReCom mix probability. 0.0 = pure n=2 (~0 dispatch overhead, mass-generate mode).
+    # 0.05 default helps the chain escape local minima at ~5-7% wall-time cost.
+    # Set by GUI before run; frozen at run start to keep dispatch zero-overhead at 0.
+    n3_probability: float = 0.05
+    # Per-stage attempt cap for n=3 cuts. Bench showed 20 is the sweet spot.
+    n3_max_attempts_per_stage: int = 20
+
     # Control flags
     should_stop: bool = False
     should_pause: bool = False
