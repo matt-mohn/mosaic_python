@@ -100,8 +100,15 @@ def find_balanced_cut_ig(
     county_array: Optional[np.ndarray] = None,
     county_bias: float = 1.0,
     timeout: float | None = None,
+    out_state: dict | None = None,
 ) -> list | None:
-    """Find a balanced bipartition of the graph using random spanning trees."""
+    """Find a balanced bipartition of the graph using random spanning trees.
+
+    If `out_state` is provided (an empty dict), it is populated on success with
+    the data needed to attempt a follow-up cut in the residual tree without
+    building a fresh MST — see `try_residual_balanced_cut`. The state captures
+    the successful attempt's MST + BFS structure in SUBGRAPH index space.
+    """
     if "name" in graph.vs.attributes():
         node_ids = np.array(graph.vs["name"])
     else:
@@ -185,11 +192,36 @@ def find_balanced_cut_ig(
                 cnt = _nb_collect_subtree(np.int32(v), _nb_bfsq, tail,
                                           _nb_par, _nb_insub, _nb_res)
                 subtree_nodes = _nb_res[:cnt]
-                if one_sided and not (min_pop <= _nb_stp[v] <= max_pop):
+                carved_is_complement = (
+                    one_sided and not (min_pop <= _nb_stp[v] <= max_pop)
+                )
+                if carved_is_complement:
                     mask = np.ones(n, dtype=np.bool_)
                     mask[subtree_nodes] = False
-                    return node_ids[mask].tolist()
-                return node_ids[subtree_nodes].tolist()
+                    carved_sub_idx = np.flatnonzero(mask).astype(np.int32)
+                    result = node_ids[mask].tolist()
+                else:
+                    carved_sub_idx = subtree_nodes.astype(np.int32, copy=True)
+                    result = node_ids[subtree_nodes].tolist()
+                if out_state is not None:
+                    # _nb_par/_nb_bfsq/_nb_stp are stack-local to this call; the
+                    # dict reference keeps them alive after we return. A second
+                    # find_balanced_cut_ig invocation allocates its own fresh
+                    # buffers, so there's no aliasing risk.
+                    out_state.update(
+                        carved_sub_idx=carved_sub_idx,
+                        v_cut=v,
+                        carved_is_complement=carved_is_complement,
+                        parent=_nb_par,
+                        bfs_q=_nb_bfsq,
+                        tail=int(tail),
+                        subtree_pops=_nb_stp,
+                        root=int(root),
+                        n=n,
+                        node_ids=node_ids,
+                        total_pop=float(total_pop),
+                    )
+                return result
 
         else:
             # ── Pure-Python fallback: igraph spanning_tree + list BFS ─────────
@@ -242,15 +274,146 @@ def find_balanced_cut_ig(
 
             valid_indices = np.flatnonzero(valid)
             if len(valid_indices) > 0:
-                v = valid_indices[0]
+                v = int(valid_indices[0])
                 subtree_nodes = _get_subtree_nodes_fast(v, children, n)
-                if one_sided and not (min_pop <= subtree_pops[v] <= max_pop):
+                carved_is_complement = (
+                    one_sided and not (min_pop <= subtree_pops[v] <= max_pop)
+                )
+                if carved_is_complement:
                     mask = np.ones(n, dtype=np.bool_)
                     mask[subtree_nodes] = False
-                    return node_ids[mask].tolist()
-                return node_ids[subtree_nodes].tolist()
+                    carved_sub_idx = np.flatnonzero(mask).astype(np.int32)
+                    result = node_ids[mask].tolist()
+                else:
+                    carved_sub_idx = subtree_nodes.astype(np.int32, copy=True)
+                    result = node_ids[subtree_nodes].tolist()
+                if out_state is not None:
+                    # parent/subtree_pops are local to this call; the dict keeps
+                    # them alive. bfs_queue needs an np conversion regardless.
+                    out_state.update(
+                        carved_sub_idx=carved_sub_idx,
+                        v_cut=v,
+                        carved_is_complement=carved_is_complement,
+                        parent=parent,
+                        bfs_q=np.asarray(bfs_queue, dtype=np.int32),
+                        tail=len(bfs_queue),
+                        subtree_pops=subtree_pops,
+                        root=int(root),
+                        n=n,
+                        node_ids=node_ids,
+                        total_pop=float(total_pop),
+                    )
+                return result
 
     return None
+
+
+def try_residual_balanced_cut(
+    state: dict,
+    target_pop: float,
+    tolerance: float,
+) -> list | None:
+    """Try to find a balanced bipartition in the residual of state's MST.
+
+    "Residual" = the parent MST with `state["carved_sub_idx"]` removed. Always a
+    valid spanning tree of the residual region (removing any subtree from a tree
+    leaves a tree on what's left). One shot — no retry, no new MST built.
+
+    Returns a list of original node IDs forming the carved district on success,
+    or None if no balanced cut exists in this residual. On None, caller should
+    fall back to building a fresh MST on the 2-region subgraph.
+
+    Algorithm:
+      Case A — carved = subtree(v_cut): residual rooted at original root.
+        For node x in residual: subtree(x) pop in residual =
+          subtree_pops[x]                     if x is NOT an ancestor of v_cut
+          subtree_pops[x] - subtree_pops[v_cut]   if x IS an ancestor of v_cut
+
+      Case B — carved = complement of subtree(v_cut): residual = subtree(v_cut).
+        For node x in residual (x != v_cut): subtree(x) pop in residual =
+          subtree_pops[x]   (the carved is outside this branch, no adjustment)
+    """
+    v_cut: int = state["v_cut"]
+    parent: np.ndarray = state["parent"]
+    subtree_pops: np.ndarray = state["subtree_pops"]
+    bfs_q: np.ndarray = state["bfs_q"]
+    tail: int = state["tail"]
+    root: int = state["root"]
+    n: int = state["n"]
+    carved_sub_idx: np.ndarray = state["carved_sub_idx"]
+    carved_is_complement: bool = state["carved_is_complement"]
+    node_ids: np.ndarray = state["node_ids"]
+    total_pop: float = state["total_pop"]
+
+    if carved_is_complement:
+        carved_pop = total_pop - float(subtree_pops[v_cut])
+    else:
+        carved_pop = float(subtree_pops[v_cut])
+    total_residual = total_pop - carved_pop
+
+    min_pop = target_pop * (1.0 - tolerance)
+    max_pop = target_pop * (1.0 + tolerance)
+
+    in_carved = np.zeros(n, dtype=np.bool_)
+    in_carved[carved_sub_idx] = True
+
+    if carved_is_complement:
+        side_a = subtree_pops
+        side_b = total_residual - subtree_pops
+        valid = ((side_a >= min_pop) & (side_a <= max_pop) &
+                 (side_b >= min_pop) & (side_b <= max_pop))
+        valid[in_carved] = False
+        valid[v_cut] = False  # v_cut is the residual's root — no parent edge to cut
+    else:
+        # Mark ancestors of v_cut (path from v_cut to original root).
+        is_ancestor = np.zeros(n, dtype=np.bool_)
+        u = int(parent[v_cut])
+        while u >= 0:
+            is_ancestor[u] = True
+            u = int(parent[u])
+
+        adjusted = subtree_pops.copy()
+        adjusted[is_ancestor] -= subtree_pops[v_cut]
+        other = total_residual - adjusted
+
+        valid = ((adjusted >= min_pop) & (adjusted <= max_pop) &
+                 (other >= min_pop) & (other <= max_pop))
+        valid[in_carved] = False
+        valid[root] = False  # original root has no parent edge to cut
+
+    valid_indices = np.flatnonzero(valid)
+    if len(valid_indices) == 0:
+        return None
+
+    x = int(valid_indices[0])
+
+    # Collect subtree(x) in T (not residual) via the existing kernel, then mask
+    # carved nodes. Case A (x ancestor of v_cut): subtree(x) in T strictly
+    # contains the carved subtree, post-filter removes it. Case B and
+    # non-ancestor x in Case A: post-filter is a no-op (subtree disjoint from
+    # carved). Either way, result matches the explicit-skip Python loop.
+    if _NUMBA_OK:
+        in_sub = np.zeros(n, dtype=np.bool_)
+        result_buf = np.zeros(n, dtype=np.int32)
+        cnt = _nb_collect_subtree(np.int32(x), bfs_q, np.int32(tail),
+                                  parent, in_sub, result_buf)
+        subtree_in_T = result_buf[:cnt]
+    else:
+        in_sub = np.zeros(n, dtype=np.bool_)
+        in_sub[x] = True
+        collected = [x]
+        for i in range(tail):
+            node = int(bfs_q[i])
+            par = int(parent[node])
+            if node != x and par >= 0 and in_sub[par]:
+                in_sub[node] = True
+                collected.append(node)
+        subtree_in_T = np.asarray(collected, dtype=np.int32)
+
+    subtree_in_residual = subtree_in_T[~in_carved[subtree_in_T]]
+    if len(subtree_in_residual) == 0:
+        return None
+    return node_ids[subtree_in_residual].tolist()
 
 
 def _get_subtree_nodes_fast(root: int, children: list, n: int) -> np.ndarray:
