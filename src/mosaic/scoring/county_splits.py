@@ -10,13 +10,17 @@ Algorithm:
   clean_districts = districts whose precincts are all in one county
   max_clean       = sum_counties floor(county_pop / min_district_pop)
 
-  total = count_penalty + (max_clean - clean_districts)
+  total = SCORE_SCALE * (count_penalty + (max_clean - clean_districts))
+
+  SCORE_SCALE = 10 keeps this competitive with other scores at typical weights.
 """
 
 from __future__ import annotations
 
 from typing import Optional
 import numpy as np
+
+_SCORE_SCALE = 10.0
 
 
 def score_county_splits(
@@ -75,4 +79,5 @@ def score_county_splits(
     n_co_per_dist   = (co_di_pop > 0).sum(axis=0)   # (n_districts,)
     clean_districts = int((n_co_per_dist == 1).sum())
 
-    return count_penalty + float(max_clean - clean_districts), int(excess.sum()), clean_districts
+    raw = count_penalty + float(max_clean - clean_districts)
+    return _SCORE_SCALE * raw, int(excess.sum()), clean_districts
