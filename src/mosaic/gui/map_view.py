@@ -25,6 +25,7 @@ Overlay modes (instance flags):
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
 import geopandas as gpd
@@ -32,6 +33,12 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 import dearpygui.dearpygui as dpg
+
+# District-label font: bundled Inter SemiBold; fall back to Arial then default.
+_LABEL_FONT_PATH = (
+    Path(__file__).resolve().parent.parent / "assets" / "fonts" / "inter"
+    / "Inter-SemiBold.ttf"
+)
 
 # Original classic Mosaic 50-colour district palette (from graphics.R)
 _HEX = [
@@ -155,6 +162,8 @@ class MapView:
         self._pixel_map: Optional[np.ndarray] = None   # (H, W) int32; -1 = bg
         self._n_precincts: int = 0
         self._loaded: bool = False
+        # Background color used outside polygon pixels; theme can override.
+        self._bg_color: np.ndarray = _BG_COLOR.copy()
         self._county_array: Optional[np.ndarray] = None
         self._dem_votes: Optional[np.ndarray] = None
         self._gop_votes: Optional[np.ndarray] = None
@@ -173,6 +182,7 @@ class MapView:
         self.compactness_view: bool = False          # colour each district by Polsby-Popper score
         self.pop_dev_view: bool = False              # colour each district by population deviation
         self.show_labels: bool = False               # show district number labels
+        self.fast_labels: bool = False               # True: cheap centroid; False: pole-of-inaccessibility
 
     # ── Load (thread-safe, no DPG) ────────────────────────────────────────────
 
@@ -265,7 +275,7 @@ class MapView:
         idx = np.clip(idx, 0, len(_PARTISAN_RGBA) - 1)
         lut = np.zeros((n + 1, 4), dtype=np.uint8)
         lut[:n] = _PARTISAN_RGBA[idx]
-        lut[n] = _BG_COLOR
+        lut[n] = self._bg_color
         return lut
 
     def _build_district_partisan_lut(
@@ -286,7 +296,7 @@ class MapView:
         idx_d = np.clip(idx_d, 0, len(_PARTISAN_RGBA) - 1)
         lut = np.zeros((n + 1, 4), dtype=np.uint8)
         lut[:n] = _PARTISAN_RGBA[idx_d[assignment]]
-        lut[n] = _BG_COLOR
+        lut[n] = self._bg_color
         return lut
 
     def _build_compactness_lut(self, assignment: np.ndarray, n_districts: int) -> np.ndarray:
@@ -311,7 +321,7 @@ class MapView:
         lut = np.zeros((n + 1, 4), dtype=np.uint8)
         lut[:n, :3] = colors_d[assignment]
         lut[:n, 3]  = 255
-        lut[n] = _BG_COLOR
+        lut[n] = self._bg_color
         return lut
 
     def _build_pop_dev_lut(self, assignment: np.ndarray, n_districts: int) -> np.ndarray:
@@ -327,7 +337,7 @@ class MapView:
         lut = np.zeros((n + 1, 4), dtype=np.uint8)
         lut[:n, :3] = colors_d[assignment]
         lut[:n, 3]  = 255
-        lut[n] = _BG_COLOR
+        lut[n] = self._bg_color
         return lut
 
     def _county_border_mask(self, pm: np.ndarray) -> np.ndarray:
@@ -352,7 +362,7 @@ class MapView:
             return
         n = self._n_precincts
         lut = np.full((n + 1, 4), _BLANK_COLOR, dtype=np.uint8)
-        lut[n] = _BG_COLOR
+        lut[n] = self._bg_color
         rgba = self._colorise(lut)
         dpg.set_value(self._ttag, self._to_dpg(rgba))
 
@@ -392,7 +402,7 @@ class MapView:
             for pi in range(n):
                 r, g, b = DISTRICT_COLORS[int(ci[pi]) % nc]
                 lut[pi] = (r, g, b, 255)
-            lut[n] = _BG_COLOR
+            lut[n] = self._bg_color
 
         rgba = self._colorise(lut).copy()
 
@@ -451,23 +461,50 @@ class MapView:
                     # Use the stable color index as the label (1-indexed for display)
                     dist_to_label[d] = int(stable_colors[mask][0]) + 1
 
-            # Compute district centroids as mean of precinct centroids
+            # Label placement is the hot path while annealing runs (the map
+            # re-renders every accepted step).  We have two modes:
+            #   fast_labels=True  -> cheap mean of precinct centroids per
+            #     district.  Can drift outside a concave district but is
+            #     microseconds, so safe to run every frame.
+            #   fast_labels=False -> pole of inaccessibility via per-district
+            #     scipy distance transform.  Guaranteed on-surface even for
+            #     U-shaped districts, but costs ~10-100ms per render.  Used
+            #     when the algorithm is paused/idle and the user is actually
+            #     inspecting the map.
             district_centers = []
-            for d in range(n_districts):
-                mask = assignment == d
-                if mask.any():
-                    cx = self._precinct_centroids[mask, 0].mean()
-                    cy = self._precinct_centroids[mask, 1].mean()
+            if self.fast_labels:
+                pc = self._precinct_centroids
+                for d in range(n_districts):
+                    mask = assignment == d
+                    if not mask.any():
+                        continue
+                    cx, cy = pc[mask].mean(axis=0)
                     label = str(dist_to_label.get(d, d + 1))
-                    district_centers.append((d, cx, cy, label))
+                    district_centers.append((d, float(cx), float(cy), label))
+            else:
+                from scipy.ndimage import distance_transform_edt
+                pm = self._pixel_map
+                pm_valid = pm >= 0
+                # Per-pixel district id (only meaningful where pm_valid)
+                pm_safe = np.where(pm_valid, pm, 0)
+                pixel_district = assignment[pm_safe]
+
+                for d in range(n_districts):
+                    d_mask = pm_valid & (pixel_district == d)
+                    if not d_mask.any():
+                        continue
+                    dist = distance_transform_edt(d_mask)
+                    cy, cx = np.unravel_index(int(dist.argmax()), dist.shape)
+                    label = str(dist_to_label.get(d, d + 1))
+                    district_centers.append((d, float(cx), float(cy), label))
 
             # Sort by approximate area (larger districts first for priority)
             areas = np.bincount(assignment, minlength=n_districts)
             district_centers.sort(key=lambda x: -areas[x[0]])
 
             # Greedy collision avoidance
-            font_h = 10
-            char_w = 6
+            font_h = 14
+            char_w = 8
             placed_boxes = []
             labels_to_draw = []
 
@@ -492,17 +529,32 @@ class MapView:
             if labels_to_draw:
                 img = Image.fromarray(rgba, mode="RGBA")
                 draw = ImageDraw.Draw(img)
-                try:
-                    font = ImageFont.truetype("arial.ttf", font_h)
-                    use_anchor = True
-                except OSError:
-                    font = ImageFont.load_default()
-                    use_anchor = False
+                font = None
+                use_anchor = False
+                if _LABEL_FONT_PATH.exists():
+                    try:
+                        font = ImageFont.truetype(str(_LABEL_FONT_PATH), font_h)
+                        use_anchor = True
+                    except OSError:
+                        font = None
+                if font is None:
+                    try:
+                        font = ImageFont.truetype("arial.ttf", font_h)
+                        use_anchor = True
+                    except OSError:
+                        font = ImageFont.load_default()
+                        use_anchor = False
+
+                # 8-direction outline at 1px radius -> full ring around glyph
+                _outline_offsets = [
+                    (-1, -1), (0, -1), (1, -1),
+                    (-1,  0),          (1,  0),
+                    (-1,  1), (0,  1), (1,  1),
+                ]
 
                 for px, py, text in labels_to_draw:
                     if use_anchor:
-                        # TrueType font supports anchor
-                        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                        for dx, dy in _outline_offsets:
                             draw.text((px + dx, py + dy), text,
                                       fill=(0, 0, 0, 255), font=font, anchor="mm")
                         draw.text((px, py), text,
@@ -512,7 +564,7 @@ class MapView:
                         bbox = draw.textbbox((0, 0), text, font=font)
                         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
                         tx, ty = px - tw // 2, py - th // 2
-                        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                        for dx, dy in _outline_offsets:
                             draw.text((tx + dx, ty + dy), text,
                                       fill=(0, 0, 0, 255), font=font)
                         draw.text((tx, ty), text,
