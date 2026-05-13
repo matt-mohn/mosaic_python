@@ -49,6 +49,9 @@ gifs/
 .DS_Store
 Thumbs.db
 
-# Graph cache
-cache/
+# Graph and PP geometry caches.  Regenerated on first load; the NC
+# sample's caches ship pre-built so first launch is instant.
+cache/*
+!cache/North_Carolina_Simplified.pkl
+!cache/North_Carolina_Simplified.pp.pkl
 .claude/
