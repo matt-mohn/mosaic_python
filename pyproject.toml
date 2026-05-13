@@ -45,7 +45,7 @@ dev = [
     "mypy>=1.0",
 ]
 
-[project.scripts]
+[project.gui-scripts]
 mosaic = "mosaic:main"
 
 [project.urls]
@@ -54,6 +54,15 @@ Repository = "https://github.com/matt-mohn/mosaic_python"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+mosaic = [
+    "assets/fonts/**/*.ttf",
+    "assets/fonts/**/*.otf",
+    "assets/fonts/**/LICENSE*",
+    "assets/*.png",
+    "assets/*.ico",
+]
 
 [tool.ruff]
 line-length = 100

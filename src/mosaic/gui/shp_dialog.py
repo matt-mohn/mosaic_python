@@ -13,12 +13,13 @@ from typing import Callable, Optional
 
 import dearpygui.dearpygui as dpg
 
+from mosaic.gui.theme import ThemeManager
 from mosaic.io.inspect import ShapefileConfig, ShapefileInspection
 
 log = logging.getLogger("mosaic")
 
 _W = 580
-_H = 620
+_H = 760
 
 
 class ShapefileDialog:
@@ -28,9 +29,11 @@ class ShapefileDialog:
         self,
         confirm_cb: Callable[[ShapefileInspection, ShapefileConfig], None],
         cancel_cb: Callable[[], None],
+        theme: ThemeManager,
     ):
         self._confirm_cb = confirm_cb
         self._cancel_cb = cancel_cb
+        self.theme = theme
         self._inspection: Optional[ShapefileInspection] = None
 
         # Election row tracking: monotonic index + list of active indices
@@ -65,91 +68,90 @@ class ShapefileDialog:
         ):
             # ── File / integrity header ───────────────────────────────────────
             self._file_text = dpg.add_text("No file selected")
-            self._status_text = dpg.add_text("", color=(150, 150, 150))
+            self._status_text = self.theme.text("", "muted")
             dpg.add_separator()
 
             # ── Required columns ─────────────────────────────────────────────
-            dpg.add_text("Required Columns", color=(200, 200, 100))
+            self.theme.text("Required Columns", "heading")
             dpg.add_spacer(height=4)
 
             with dpg.group(horizontal=True):
-                dpg.add_text("Population:  ", color=(180, 180, 180))
+                self.theme.text("Population:  ", "secondary")
                 self._pop_combo = dpg.add_combo(
                     items=[], default_value="",
                     width=260,
                     callback=self._on_pop_change,
                 )
-            self._pop_info = dpg.add_text(
+            self._pop_info = self.theme.text(
                 "Select a numeric population column",
-                color=(130, 130, 130), indent=14,
+                "dialog_muted", indent=14,
             )
 
             dpg.add_spacer(height=6)
 
             with dpg.group(horizontal=True):
-                dpg.add_text("Precinct ID: ", color=(180, 180, 180))
+                self.theme.text("Precinct ID: ", "secondary")
                 self._id_combo = dpg.add_combo(
                     items=[], default_value="",
                     width=260,
                     callback=self._on_id_change,
                 )
-            self._id_info = dpg.add_text(
+            self._id_info = self.theme.text(
                 "Select the unique precinct identifier column",
-                color=(130, 130, 130), indent=14,
+                "dialog_muted", indent=14,
             )
 
             dpg.add_separator()
 
             # ── Optional ─────────────────────────────────────────────────────
-            dpg.add_text("Optional", color=(200, 200, 100))
+            self.theme.text("Optional", "heading")
             dpg.add_spacer(height=4)
 
             with dpg.group(horizontal=True):
-                dpg.add_text("County:      ", color=(180, 180, 180))
+                self.theme.text("County:      ", "secondary")
                 self._county_combo = dpg.add_combo(
                     items=[], default_value="(none)",
                     width=260,
                     callback=self._on_county_change,
                 )
-            dpg.add_text(
+            self.theme.text(
                 "  Required for county splits scoring, county-edge bias, and county overlay",
-                color=(110, 110, 110), indent=14,
+                "disabled", indent=14,
             )
-            self._county_info = dpg.add_text("", color=(130, 130, 130), indent=14)
+            self._county_info = self.theme.text("", "dialog_muted", indent=14)
 
             dpg.add_separator()
 
             # ── Elections ────────────────────────────────────────────────────
-            dpg.add_text("Elections", color=(200, 200, 100))
-            dpg.add_text(
+            self.theme.text("Elections", "heading")
+            self.theme.text(
                 "  Required for partisan scoring (Mean-Median, Efficiency Gap, etc.)",
-                color=(110, 110, 110),
+                "disabled",
             )
             dpg.add_spacer(height=4)
-            with dpg.child_window(
-                tag="shp_elections_scroll", height=90, border=True,
-            ):
-                dpg.add_text(
-                    "No elections added.",
-                    tag="shp_no_elections_text",
-                    color=(130, 130, 130),
+            with dpg.group(tag="shp_elections_scroll"):
+                self.theme.track(
+                    dpg.add_text(
+                        "No elections added.",
+                        tag="shp_no_elections_text",
+                    ),
+                    "dialog_muted",
                 )
-            dpg.add_button(
-                tag="shp_add_election_btn",
-                label="+ Add Election",
-                callback=self._on_add_election,
-                width=130,
-            )
-            dpg.add_text(
-                "(one election supported)",
-                color=(110, 110, 110),
-            )
+            dpg.add_spacer(height=2)
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    tag="shp_add_election_btn",
+                    label="+ Add Election",
+                    callback=self._on_add_election,
+                    width=130,
+                )
+                self.theme.text("  (one election supported)", "disabled")
 
             dpg.add_separator()
 
             # ── Footer ───────────────────────────────────────────────────────
             dpg.add_spacer(height=2)
-            self._confirm_err = dpg.add_text("", color=(220, 80, 80))
+            self._confirm_err = self.theme.text("", "error")
             dpg.add_spacer(height=4)
             with dpg.group(horizontal=True):
                 dpg.add_button(
@@ -185,22 +187,22 @@ class ShapefileDialog:
         if inspection.load_error:
             dpg.set_value(self._status_text,
                           f"Error: {inspection.load_error}")
-            dpg.configure_item(self._status_text, color=(220, 80, 80))
+            self.theme.retoken(self._status_text, "error")
             dpg.configure_item("shp_dialog", show=True)
             return
 
         if inspection.geometry_invalid == 0:
             status_str = (f"{inspection.n_precincts:,} precincts loaded  |  "
                           f"all geometries valid")
-            status_col = (90, 200, 90)
+            status_token = "ok"
         else:
             status_str = (f"{inspection.n_precincts:,} precincts  |  "
                           f"{inspection.geometry_invalid} invalid geometr"
                           + ("y" if inspection.geometry_invalid == 1 else "ies"))
-            status_col = (220, 180, 60)
+            status_token = "warning"
 
         dpg.set_value(self._status_text, status_str)
-        dpg.configure_item(self._status_text, color=status_col)
+        self.theme.retoken(self._status_text, status_token)
 
         # ── Populate combos ───────────────────────────────────────────────────
         cols = inspection.columns
@@ -244,12 +246,12 @@ class ShapefileDialog:
             return
         if not info.is_numeric:
             dpg.set_value(self._pop_info, f"  Warning: '{col}' is not numeric (dtype: {info.dtype})")
-            dpg.configure_item(self._pop_info, color=(220, 160, 60))
+            self.theme.retoken(self._pop_info, "warning")
         else:
             pop_total = info.col_sum or 0.0
             null_str = f"  |  {info.n_null} null values" if info.n_null else ""
             dpg.set_value(self._pop_info, f"  Total population: {pop_total:,.0f}{null_str}")
-            dpg.configure_item(self._pop_info, color=(130, 200, 130))
+            self.theme.retoken(self._pop_info, "ok")
 
     def _on_id_change(self, sender, app_data) -> None:
         col = app_data
@@ -262,13 +264,13 @@ class ShapefileDialog:
         if info.n_unique == n:
             dpg.set_value(self._id_info,
                           f"  {info.n_unique:,} unique values (all unique)")
-            dpg.configure_item(self._id_info, color=(130, 200, 130))
+            self.theme.retoken(self._id_info, "ok")
         else:
             dupes = n - info.n_unique
             dpg.set_value(self._id_info,
                           f"  {info.n_unique:,} unique / {n:,} total — "
                           f"Warning: {dupes:,} duplicate value(s)")
-            dpg.configure_item(self._id_info, color=(220, 160, 60))
+            self.theme.retoken(self._id_info, "warning")
 
     def _on_county_change(self, sender, app_data) -> None:
         col = app_data
@@ -277,14 +279,14 @@ class ShapefileDialog:
         if not col or col == "(none)":
             dpg.set_value(self._county_info,
                           "  County splits, county bias, and county overlay will be disabled")
-            dpg.configure_item(self._county_info, color=(130, 130, 130))
+            self.theme.retoken(self._county_info, "dialog_muted")
             return
         info = self._inspection.column_info.get(col)
         if info is None:
             return
         dpg.set_value(self._county_info,
                       f"  {info.n_unique:,} unique county values found")
-        dpg.configure_item(self._county_info, color=(130, 200, 130))
+        self.theme.retoken(self._county_info, "ok")
 
     # ── Election management ───────────────────────────────────────────────────
 
@@ -310,7 +312,10 @@ class ShapefileDialog:
         dpg.add_group(tag=row_tag, parent="shp_elections_scroll")
         dpg.add_group(tag=hrow_tag, parent=row_tag, horizontal=True)
 
-        dpg.add_text("DEM:", parent=hrow_tag, color=(130, 160, 255))
+        self.theme.track(
+            dpg.add_text("DEM:", parent=hrow_tag),
+            "dem",
+        )
         dpg.add_combo(
             tag=f"shp_elec_{i}_dem",
             items=cols, default_value="",
@@ -318,7 +323,10 @@ class ShapefileDialog:
             callback=self._on_election_change,
             user_data=i,
         )
-        dpg.add_text("  GOP:", parent=hrow_tag, color=(255, 130, 130))
+        self.theme.track(
+            dpg.add_text("  GOP:", parent=hrow_tag),
+            "gop",
+        )
         dpg.add_combo(
             tag=f"shp_elec_{i}_gop",
             items=cols, default_value="",
@@ -333,7 +341,10 @@ class ShapefileDialog:
             user_data=i,
             width=62,
         )
-        dpg.add_text("", tag=info_tag, parent=row_tag, color=(130, 130, 130))
+        self.theme.track(
+            dpg.add_text("", tag=info_tag, parent=row_tag),
+            "dialog_muted",
+        )
         dpg.add_spacer(height=3, parent=row_tag)
 
     def _on_remove_election(self, sender, app_data, user_data) -> None:
