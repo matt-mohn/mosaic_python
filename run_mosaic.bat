@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableDelayedExpansion
-title MosaicPy Demo
+title Mosaic
 
 :: Move to the folder containing this script
 cd /d "%~dp0"
@@ -37,7 +37,7 @@ if %errorlevel% neq 0 (
 )
 
 :launch
-echo Starting MosaicPy Demo...
+echo Starting Mosaic...
 echo (First launch downloads and installs dependencies -- this takes 2-3 minutes.)
 echo Subsequent launches are instant.
 echo.
@@ -46,6 +46,6 @@ uv run --link-mode copy python -m mosaic.gui.app
 
 if %errorlevel% neq 0 (
     echo.
-    echo MosaicPy exited with an error. See the messages above for details.
+    echo Mosaic exited with an error. See the messages above for details.
     pause
 )

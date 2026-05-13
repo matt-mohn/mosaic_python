@@ -22,7 +22,7 @@ if ! command -v uv &>/dev/null; then
     fi
 fi
 
-echo "Starting MosaicPy Demo..."
+echo "Starting Mosaic..."
 echo "(First launch downloads and installs dependencies -- this takes 2-3 minutes.)"
 echo "Subsequent launches are instant."
 echo ""
