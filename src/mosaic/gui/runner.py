@@ -22,9 +22,14 @@ from mosaic.graph import (
 )
 from mosaic.recom import create_initial_partition
 from mosaic.recom.recombination import recom_step_ig, recom_step_ig_n3, GraphContext
-from mosaic.recom.annealing import init_annealing, accept_proposal, cool_temperature
+from mosaic.recom.annealing import (
+    init_annealing, accept_proposal, cool_temperature, relaunch_temperature,
+)
 from mosaic.scoring import score_plan
 from mosaic.scoring.precompute import PPData, precompute_pp_data
+from mosaic.scoring.cache import (
+    get_pp_cache_path, load_cached_pp_data, save_cached_pp_data,
+)
 
 # Rolling window size for acceptance rate chart
 _ACCEPTANCE_WINDOW = 200
@@ -41,8 +46,8 @@ def _build_score_breakdown(ps, cfg) -> dict:
             result[name] = contrib / total * 100.0
     _add("Cut Edges",      cfg.weight_cut_edges * ps.cut_edges)
     _add("County Splits",  cfg.weight_county_splits * ps.county_splits)
-    _add("Compactness (PP)", cfg.weight_polsby_popper * ps.polsby_popper)
-    _add("Pop. Deviation", cfg.weight_pop_deviation * ps.pop_deviation)
+    _add("Compactness", cfg.weight_polsby_popper * ps.polsby_popper)
+    _add("Population Deviation", cfg.weight_pop_deviation * ps.pop_deviation)
     if cfg.weight_mean_median:
         _add("Mean-Median",    cfg.weight_mean_median *
              ((ps.mean_median - cfg.target_mean_median) * 100) ** 2)
@@ -206,9 +211,22 @@ class AlgorithmRunner:
             self.graph_ig = nx_to_igraph(self.graph)
             self.graph_ctx = GraphContext(self.graph_ig)
 
-            # Precompute geometry for scoring
-            self.state.update(status_message="Precomputing geometry data...")
-            self.pp_data = precompute_pp_data(gdf, self.graph)
+            # Geometry data for Polsby-Popper: try cache first, recompute on miss.
+            pp_cache_path = get_pp_cache_path(inspection.path)
+            self.pp_data = load_cached_pp_data(
+                pp_cache_path,
+                n_precincts=n,
+                n_edges=self.graph.number_of_edges(),
+            )
+            if self.pp_data is not None:
+                log.info(f"Loaded cached PP geometry from {pp_cache_path}")
+                self.state.update(status_message="Loaded cached geometry data")
+            else:
+                self.state.update(status_message="Precomputing geometry data...")
+                self.pp_data = precompute_pp_data(gdf, self.graph)
+                if self.pp_data is not None:
+                    save_cached_pp_data(self.pp_data, pp_cache_path)
+                    log.info(f"Saved PP geometry cache to {pp_cache_path}")
 
             n_edges = self.graph.number_of_edges()
             log.info(f"Load complete: {n} precincts, {n_edges} edges")
@@ -361,8 +379,27 @@ class AlgorithmRunner:
 
             (map_render_interval,) = self.state.get("map_render_interval")
             _last_map_time = 0.0
+            _launch_watch_fired = False
 
             for iteration in range(1, max_iterations + 1):
+                # Launch Watch: re-anchor temperature after the first N iters
+                # using the post-warmup current score rather than the initial.
+                if (
+                    ann is not None
+                    and annealing_config.launch_watch
+                    and not _launch_watch_fired
+                    and iteration > annealing_config.launch_watch_iter
+                ):
+                    remaining = max_iterations - iteration + 1
+                    relaunch_temperature(
+                        ann, current_ps.total, annealing_config, remaining,
+                    )
+                    _launch_watch_fired = True
+                    log.info(
+                        f"Launch Watch (iter {iteration}): re-anchored temp "
+                        f"to {ann.initial_temp:.3f}, "
+                        f"cooling_rate={ann.cooling_rate:.6f}"
+                    )
                 if self.state.check_should_stop():
                     log.info("Stopped by user")
                     self.state.update(

@@ -37,6 +37,14 @@ class AnnealingConfig:
     # Static mode: user-supplied fixed per-iteration multiplier
     cooling_rate: float = 0.9995
 
+    # Launch Watch: after N iterations, re-anchor temperature to factor x
+    # current score (rather than initial score). Helps when the score drops
+    # precipitously in the first few hundred iters (e.g. with county_splits
+    # and county-edge bias) and the initial-anchored temp becomes too hot
+    # to be useful by the time the score has stabilized.
+    launch_watch: bool = True
+    launch_watch_iter: int = 250
+
 
 @dataclass
 class AnnealingState:
@@ -92,6 +100,38 @@ def init_annealing(
 def cool_temperature(state: AnnealingState) -> None:
     """Apply one cooling step in-place."""
     state.temperature *= state.cooling_rate
+
+
+def relaunch_temperature(
+    state: AnnealingState,
+    current_score: float,
+    config: AnnealingConfig,
+    remaining_iterations: int,
+) -> None:
+    """Re-anchor temperature using ``current_score`` (Launch Watch).
+
+    Recomputes initial_temp from ``initial_temp_factor x current_score`` (or
+    nominal) and, in GUIDED mode, recomputes ``cooling_rate`` so the schedule
+    targets ``target_temp`` at ``guide_fraction x remaining_iterations``.
+    STATIC mode keeps its user-set cooling_rate.
+    """
+    if config.temp_mode == "PROPORTIONAL":
+        new_initial = config.initial_temp_factor * current_score
+    else:
+        new_initial = config.initial_temp_factor
+    if new_initial <= 0:
+        new_initial = 1.0
+
+    if config.cooling_mode == "GUIDED" and remaining_iterations > 0:
+        guide = max(1, int(config.guide_fraction * remaining_iterations))
+        target = max(config.target_temp, 1e-9)
+        if target >= new_initial:
+            state.cooling_rate = 0.9999
+        else:
+            state.cooling_rate = (target / new_initial) ** (1.0 / guide)
+
+    state.temperature = new_initial
+    state.initial_temp = new_initial
 
 
 def accept_proposal(

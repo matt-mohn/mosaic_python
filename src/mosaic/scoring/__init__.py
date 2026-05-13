@@ -9,6 +9,9 @@ from mosaic.scoring.population import (
 )
 from mosaic.scoring.score import ScoreConfig, PlanScore, score_plan
 from mosaic.scoring.precompute import PPData, find_county_array, precompute_pp_data
+from mosaic.scoring.cache import (
+    get_pp_cache_path, load_cached_pp_data, save_cached_pp_data,
+)
 from mosaic.scoring.county_splits import score_county_splits
 from mosaic.scoring.polsby_popper import score_polsby_popper
 from mosaic.scoring.partisan import (
@@ -35,6 +38,9 @@ __all__ = [
     "PPData",
     "find_county_array",
     "precompute_pp_data",
+    "get_pp_cache_path",
+    "load_cached_pp_data",
+    "save_cached_pp_data",
     "score_county_splits",
     "score_polsby_popper",
     "district_dem_shares",
