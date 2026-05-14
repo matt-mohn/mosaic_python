@@ -579,6 +579,15 @@ def find_balanced_cut_fast(
 
     start_time = time.perf_counter() if timeout else None
 
+    # Sort merged_nodes ascending. ig.Graph.subgraph() reorders its input to
+    # ascending vertex-id order, so find_balanced_cut_ig's local indexing is
+    # always globally-sorted. We must match that here: without sorting, the
+    # local-index space differs between paths, weights[i] hits different
+    # edges, MSTs diverge, and valid_indices[0]'s deterministic first-pick
+    # acquires an A-side bias (since concat([nodes_a, nodes_b]) puts A nodes
+    # in the lower half of the index range) that drives stuck districts.
+    merged_nodes = np.sort(merged_nodes).astype(np.int32, copy=False)
+
     # Mark merged region + build global->local map. O(n_merged) touches; the
     # other (n_total - n_merged) entries of in_merged stay False from the last
     # finally-reset, so the extract kernel's `in_merged[u] & in_merged[v]` test
@@ -646,12 +655,15 @@ def find_balanced_cut_fast(
                 _uf_par, _uf_rank, _mst_eu, _mst_ev,
             ))
 
-            # Disconnected merged region is impossible per the caller's
-            # invariant, but bail defensively rather than feeding a partial
-            # forest into CSR.
-            if k < n - 1:
-                continue
-
+            # The "merged regions are connected" invariant fails when the
+            # parent adjacency graph has isolated vertices (e.g. island
+            # precincts with no neighbors). In that case Kruskal returns a
+            # partial spanning forest. find_balanced_cut_ig silently accepts
+            # this case (igraph.spanning_tree just spans the reachable
+            # component, the isolated vertex falls through to "the other
+            # side" via the total_pop - stp arithmetic), so we mirror that:
+            # build CSR on whatever edges Kruskal returned and let the BFS
+            # cover the connected component containing `root`.
             _nb_build_csr(_mst_eu[:k], _mst_ev[:k], n,
                           _nb_ptr, _nb_idx, _nb_deg, _nb_cur)
 
