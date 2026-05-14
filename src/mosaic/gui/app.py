@@ -155,6 +155,49 @@ _HINTS: dict[str, str] = {
         "drawing new districts, so counties stay whole more often. Higher "
         "multiplier = stronger preference for keeping counties intact."
     ),
+    "cut_edges": (
+        "Counts adjacent precinct-pairs that fall in different districts. "
+        "Lower means more natural, compact-graph boundaries."
+    ),
+    "county_splits": (
+        "Penalizes plans that split counties across multiple districts. "
+        "Encourages keeping counties whole or nearly so."
+    ),
+    "pop_deviation": (
+        "How far each district's population strays from the ideal (total / N). "
+        "Districts inside the safe-harbor band are unpenalized; the rest "
+        "contribute proportional to how far out they are."
+    ),
+    "compactness": (
+        "Polsby-Popper: ratio of district area to a circle with the same perimeter. "
+        "1.0 = perfectly round, lower means stretched or jagged. "
+        "Optimizer uses (1 - PP) as the penalty."
+    ),
+    "mean_median": (
+        "Gap between the mean and median Democratic vote share across districts. "
+        "A nonzero value signals partisan skew baked into the plan."
+    ),
+    "efficiency_gap": (
+        "Difference in wasted votes between parties, normalized by total votes. "
+        "Captures classic gerrymander signatures (packing and cracking). "
+        "0 = neutral; sign shows which party benefits."
+    ),
+    "competitiveness": (
+        "Counts districts within a competitive vote-share band (close to 50/50). "
+        "Penalty grows when too few districts are competitive."
+    ),
+    "dem_seats": (
+        "Expected number of Democratic-won districts under a partisan-swing model. "
+        "Penalty drives the plan toward a target seat count."
+    ),
+    "majority_chance": (
+        "Probability that the selected party wins a majority of seats under "
+        "the swing model. Useful when integer seat count is too coarse."
+    ),
+    "hinge": (
+        "Probability the selected party reaches a chosen seat threshold "
+        "(e.g. 2/3 supermajority). Targets minority-veto or override-proof seat counts."
+    ),
 }
 
 
@@ -264,6 +307,7 @@ class MosaicApp:
         self._build_help_popup()
         self._build_temperature_panel()
         self._build_score_contrib_panel()
+        self._build_ref_line_themes()
         self._build_county_splits_panel()
         self._build_partisanship_panel()
         self._build_win_chance_panel()
@@ -664,6 +708,7 @@ class MosaicApp:
                                 self._cut_lbl = self.theme.text(
                                     "Cut Edges", "accent_green",
                                 )
+                                self._hint(self._cut_lbl, "cut_edges")
                                 dpg.add_button(label="↗", width=24,
                                     callback=lambda: self._show_panel("panel_cut_edges", self._panel_cuts_item))
                             with dpg.group(tag="cut_edge_controls", show=False):
@@ -683,6 +728,7 @@ class MosaicApp:
                                 self._cs_lbl = self.theme.text(
                                     "County Splits and Bias", "disabled",
                                 )
+                                self._hint(self._cs_lbl, "county_splits")
                                 dpg.add_button(label="↗", width=24,
                                     callback=lambda: self._show_panel("panel_county_splits", self._panel_cs_item))
                             with dpg.group(tag="cs_controls", show=False):
@@ -715,8 +761,13 @@ class MosaicApp:
                                 self._popdev_lbl = self.theme.text(
                                     "Population Deviation", "secondary",
                                 )
+                                self._hint(self._popdev_lbl, "pop_deviation")
                                 dpg.add_button(label="↗", width=24,
                                     callback=lambda: self._show_panel("panel_popdev", self._panel_popdev_item))
+                                dpg.add_button(label="...", width=24,
+                                    callback=lambda: dpg.configure_item(
+                                        "popup_population",
+                                        show=not dpg.is_item_shown("popup_population")))
                             with dpg.group(tag="popdev_controls", show=False):
                                 self._w_pop_deviation = dpg.add_slider_float(
                                     label="Weight",
@@ -736,6 +787,7 @@ class MosaicApp:
                                 self._pp_lbl = self.theme.text(
                                     "Compactness (Polsby-Popper)", "accent_green",
                                 )
+                                self._hint(self._pp_lbl, "compactness")
                                 dpg.add_button(label="↗", width=24,
                                     callback=lambda: self._show_panel("panel_pp", self._panel_pp_item))
                             with dpg.group(tag="pp_controls", show=True):
@@ -756,6 +808,7 @@ class MosaicApp:
                                     "Mean-Median Difference",
                                     "disabled_deep",
                                 )
+                                self._hint(self._mm_lbl, "mean_median")
                                 dpg.add_button(label="↗", width=24,
                                     callback=lambda: self._show_panel("panel_mm", self._panel_mm_item))
                             with dpg.group(tag="mm_controls", show=False):
@@ -769,9 +822,9 @@ class MosaicApp:
                                     default_value=0.0, min_value=-0.15, max_value=0.15,
                                     format="%.3f", width=_SCORE_COL_W - 100,
                                 )
-                                self.theme.text(
-                                    "  - = D advantage  |  + = R advantage",
-                                    "disabled",
+                                self._tooltip(
+                                    self._target_mean_median,
+                                    "- = D advantage  |  + = R advantage",
                                 )
                             dpg.add_spacer(height=4)
 
@@ -785,6 +838,7 @@ class MosaicApp:
                                     "Efficiency Gap",
                                     "disabled_deep",
                                 )
+                                self._hint(self._eg_lbl, "efficiency_gap")
                                 dpg.add_button(label="↗", width=24,
                                     callback=lambda: self._show_panel("panel_eg", self._panel_eg_item))
                             with dpg.group(tag="eg_controls", show=False):
@@ -798,9 +852,9 @@ class MosaicApp:
                                     default_value=0.0, min_value=-0.35, max_value=0.35,
                                     format="%.3f", width=_SCORE_COL_W - 100,
                                 )
-                                self.theme.text(
-                                    "  - = D bias  |  + = R bias",
-                                    "disabled",
+                                self._tooltip(
+                                    self._target_efficiency_gap,
+                                    "- = D bias  |  + = R bias",
                                 )
 
                     # Col 3: outcome metrics
@@ -815,6 +869,7 @@ class MosaicApp:
                                     "Competitiveness",
                                     "disabled_deep",
                                 )
+                                self._hint(self._comp_lbl, "competitiveness")
                                 dpg.add_button(label="↗", width=24,
                                     callback=lambda: self._show_panel("panel_comp", self._panel_comp_item))
                             with dpg.group(tag="comp_controls", show=False):
@@ -835,6 +890,7 @@ class MosaicApp:
                                     "Expected Dem Seats",
                                     "disabled_deep",
                                 )
+                                self._hint(self._seats_lbl, "dem_seats")
                                 dpg.add_button(label="↗", width=24,
                                     callback=lambda: self._show_panel("panel_dem_seats", self._panel_seats_item))
                             with dpg.group(tag="seats_controls", show=False):
@@ -860,6 +916,7 @@ class MosaicApp:
                                     "Chance of Majority",
                                     "disabled_deep",
                                 )
+                                self._hint(self._majority_lbl, "majority_chance")
                                 dpg.add_button(label="↗", width=24,
                                     callback=lambda: self._show_panel("panel_majority", self._panel_majority_item))
                             with dpg.group(tag="majority_controls", show=False):
@@ -889,6 +946,7 @@ class MosaicApp:
                                     "Supermajority/Hinge",
                                     "disabled_deep",
                                 )
+                                self._hint(self._hinge_lbl, "hinge")
                                 dpg.add_button(label="↗", width=24,
                                     callback=lambda: self._show_panel("panel_hinge", self._panel_hinge_item))
                             with dpg.group(tag="hinge_controls", show=False):
@@ -930,30 +988,33 @@ class MosaicApp:
             label="Run Config -- Population",
             tag="popup_population", show=False,
             modal=True, no_close=True,
-            width=420, height=220,
-            pos=[(_VP_W - 420) // 2, (_VP_H - 220) // 2],
+            width=420, height=260,
+            pos=[(_VP_W - 420) // 2, (_VP_H - 260) // 2],
         ):
             self._tolerance = dpg.add_slider_float(
                 label="Population Tolerance",
-                default_value=0.05, min_value=0.001, max_value=0.10,
-                format="%.3f", width=260,
+                default_value=5.0, min_value=0.1, max_value=10.0,
+                format="%.1f %%", width=260,
             )
-            self.theme.text(
-                "  (e.g. 0.05 = 5% max deviation from ideal in either direction)",
-                "muted")
+            self._tooltip(
+                self._tolerance,
+                "Mosaic will only explore solutions where each district differs "
+                "from ideal by no more than this percentage in either direction.",
+            )
             dpg.add_spacer(height=10)
             dpg.add_separator()
             dpg.add_spacer(height=6)
             self.theme.text("Population Deviation Score - Safe Harbor", "heading")
             self._pop_dev_harbor = dpg.add_slider_float(
                 label="Safe Harbor",
-                default_value=0.0025, min_value=0.0, max_value=0.05,
-                format="%.4f", width=260,
+                default_value=0.25, min_value=0.0, max_value=5.0,
+                format="%.2f %%", width=260,
             )
-            self.theme.text(
-                "  Districts within this % of ideal are not penalized.\n"
-                "  Cannot exceed Population Tolerance (clamped on run).",
-                "muted",
+            self._tooltip(
+                self._pop_dev_harbor,
+                "Districts within this % of ideal are not penalized by the "
+                "population deviation score. Cannot exceed Population Tolerance "
+                "(clamped on run).",
             )
             dpg.add_spacer(height=8)
             dpg.add_button(
@@ -968,8 +1029,8 @@ class MosaicApp:
             label="Run Config -- Seed",
             tag="popup_seed", show=False,
             modal=True, no_close=True,
-            width=340, height=120,
-            pos=[(_VP_W - 340) // 2, (_VP_H - 120) // 2],
+            width=340, height=160,
+            pos=[(_VP_W - 340) // 2, (_VP_H - 160) // 2],
         ):
             self._seed = dpg.add_input_int(
                 label="Random Seed  (0 = random)",
@@ -987,8 +1048,8 @@ class MosaicApp:
             label="Optimization -- Annealing Settings",
             tag="popup_opt", show=False,
             modal=True, no_close=True,
-            width=460, height=440,
-            pos=[(_VP_W - 460) // 2, (_VP_H - 440) // 2],
+            width=460, height=460,
+            pos=[(_VP_W - 460) // 2, (_VP_H - 460) // 2],
         ):
             self._ann_enabled = dpg.add_checkbox(
                 label="Enable simulated annealing", default_value=True,
@@ -1002,8 +1063,10 @@ class MosaicApp:
                     default_value=0.2, min_value=0.01, max_value=2.0,
                     format="%.3f", width=260,
                 )
-                self.theme.text("  initial_temp = factor x initial_score",
-                                "muted")
+                self._tooltip(
+                    self._temp_factor,
+                    "initial_temp = factor x initial_score",
+                )
                 dpg.add_spacer(height=6)
 
                 dpg.add_text("Cooling mode:")
@@ -1021,16 +1084,18 @@ class MosaicApp:
                         default_value=0.9, min_value=0.5, max_value=1.0,
                         format="%.2f", width=200,
                     )
-                    self.theme.text("  fraction of iterations to cool over",
-                                    "muted")
+                    self._tooltip(
+                        self._guide_frac,
+                        "Fraction of iterations to cool over.",
+                    )
                     self._target_temp = dpg.add_input_float(
                         label="Target Temp",
                         default_value=1.0, min_value=0.001,
                         format="%.3f", width=120,
                     )
-                    self.theme.text(
-                        "  temperature at the guide point (absolute)",
-                        "muted",
+                    self._tooltip(
+                        self._target_temp,
+                        "Temperature at the guide point (absolute).",
                     )
 
                 with dpg.group(tag="static_controls", show=False):
@@ -1054,11 +1119,11 @@ class MosaicApp:
                         default_value=250, min_value=10, max_value=10_000,
                         step=50, width=120,
                     )
-                    self.theme.text(
-                        "  Once past this iteration, reset initial_temp to\n"
-                        "  factor x current_score (instead of initial_score).\n"
-                        "  Helps when scores nose-dive in the first ~250 steps.",
-                        "muted",
+                    self._tooltip(
+                        self._launch_watch_iter,
+                        "Once past this iteration, reset initial_temp to "
+                        "factor x current_score (instead of initial_score). "
+                        "Helps when scores nose-dive in the first ~250 steps.",
                     )
 
             dpg.add_spacer(height=10)
@@ -1070,11 +1135,11 @@ class MosaicApp:
                 default_value=5, min_value=0, max_value=25,
                 format="%d %%", width=200,
             )
-            self.theme.text(
-                "  Fraction of steps that merge 3 districts (vs 2) and re-split.\n"
-                "  Helps escape local minima at the cost of ~2.4x per-step time.\n"
-                "  Set to 0 for mass-generation runs (no overhead).",
-                "muted",
+            self._tooltip(
+                self._n3_pct,
+                "Fraction of steps that merge 3 districts (vs 2) and re-split. "
+                "Helps escape local minima at the cost of ~2.4x per-step time. "
+                "Set to 0 for mass-generation runs (no overhead).",
             )
 
             dpg.add_spacer(height=8)
@@ -1089,8 +1154,8 @@ class MosaicApp:
             label="Optimization -- Partisanship Settings",
             tag="popup_partisan", show=False,
             modal=True, no_close=True,
-            width=460, height=280,
-            pos=[(_VP_W - 460) // 2, (_VP_H - 280) // 2],
+            width=460, height=320,
+            pos=[(_VP_W - 460) // 2, (_VP_H - 320) // 2],
         ):
             self.theme.text(
                 "Applied when partisan metrics are enabled.",
@@ -1104,9 +1169,9 @@ class MosaicApp:
                 default_value=0.9, min_value=0.51, max_value=0.999,
                 format="%.3f", width=220,
             )
-            self.theme.text(
-                "  P(D wins district | D has 55% of two-party vote)",
-                "muted",
+            self._tooltip(
+                self._win_prob,
+                "P(D wins district | D has 55% of two-party vote)",
             )
             dpg.add_spacer(height=6)
 
@@ -1115,9 +1180,9 @@ class MosaicApp:
                 default_value=0.03, min_value=0.005, max_value=0.10,
                 format="%.3f", width=220,
             )
-            self.theme.text(
-                "  Std dev of partisan-environment swing shared across all districts",
-                "muted",
+            self._tooltip(
+                self._swing_sigma,
+                "Std dev of partisan-environment swing shared across all districts.",
             )
             dpg.add_spacer(height=8)
 
@@ -1127,9 +1192,9 @@ class MosaicApp:
                 default_value="Robust (recommended)",
                 horizontal=True,
             )
-            self.theme.text(
-                "  Robust EG integrates out both swing sigma and per-district noise",
-                "muted",
+            self._tooltip(
+                self._eg_mode,
+                "Robust EG integrates out both swing sigma and per-district noise.",
             )
             dpg.add_spacer(height=8)
 
@@ -1189,6 +1254,10 @@ class MosaicApp:
                             dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="cs_clean_x")
                             with dpg.plot_axis(dpg.mvYAxis, label="Count", tag="cs_clean_y"):
                                 dpg.add_line_series([], [], label="Single-County", tag="cs_clean_series")
+                                _cs_max = dpg.add_line_series(
+                                    [], [], label="##cs_max", tag="cs_clean_max",
+                                )
+                                dpg.bind_item_theme(_cs_max, self._partisan_ref_theme)
                 self.theme.track(
                     dpg.add_text("", tag="cs_max_clean_note"),
                     "success_soft",
@@ -1200,6 +1269,28 @@ class MosaicApp:
                 ),
                 "muted",
             )
+
+    def _build_ref_line_themes(self):
+        """Build the palette-aware reference-line themes used across panels
+        (50/50 guides, median guides, max-feasible line, etc.). Must run
+        BEFORE any panel that binds these themes."""
+        self._partisan_ref_themes: dict[str, int] = {}
+        for mode, rgba in (("dark",  (255, 255, 255, 140)),
+                           ("light", (0,   0,   0,   140))):
+            with dpg.theme() as t:
+                with dpg.theme_component(dpg.mvLineSeries):
+                    dpg.add_theme_color(
+                        dpg.mvPlotCol_Line, rgba,
+                        category=dpg.mvThemeCat_Plots,
+                    )
+                    dpg.add_theme_style(
+                        dpg.mvPlotStyleVar_LineWeight, 1.0,
+                        category=dpg.mvThemeCat_Plots,
+                    )
+            self._partisan_ref_themes[mode] = t
+        self._partisan_ref_theme = self._partisan_ref_themes[
+            self.theme.palette.name
+        ]
 
     def _build_partisanship_panel(self):
         # Create 12 themes for partisan color gradient (using map_view palette)
@@ -1214,18 +1305,6 @@ class MosaicApp:
                         category=dpg.mvThemeCat_Plots,
                     )
             self._partisan_bar_themes.append(t)
-
-        # Theme for reference lines: thin white semi-transparent
-        with dpg.theme() as self._partisan_ref_theme:
-            with dpg.theme_component(dpg.mvLineSeries):
-                dpg.add_theme_color(
-                    dpg.mvPlotCol_Line, (255, 255, 255, 140),
-                    category=dpg.mvThemeCat_Plots,
-                )
-                dpg.add_theme_style(
-                    dpg.mvPlotStyleVar_LineWeight, 1.0,
-                    category=dpg.mvThemeCat_Plots,
-                )
 
         with dpg.window(
             label="Partisanship", tag="panel_partisanship",
@@ -1381,12 +1460,12 @@ class MosaicApp:
                 with dpg.plot(height=240, width=-1):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="pp_x")
-                    with dpg.plot_axis(dpg.mvYAxis, label="Polsby-Popper (1 = circle)", tag="pp_y"):
+                    with dpg.plot_axis(dpg.mvYAxis, label="Polsby-Popper (100 = circle)", tag="pp_y"):
                         dpg.add_line_series([], [], label="PP", tag="pp_series")
-                self.theme.text(
-                    "Optimizer uses (1 - PP) as penalty; higher is more compact.",
-                    "disabled_subtle",
-                )
+            self._tooltip(
+                "pp_plot_grp",
+                "Optimizer uses (1 - PP) as penalty; higher is more compact.",
+            )
             self.theme.track(
                 dpg.add_text(
                     "Apply a score to use this panel.",
@@ -1394,7 +1473,7 @@ class MosaicApp:
                 ),
                 "muted",
             )
-        dpg.set_axis_limits("pp_y", 0.0, 1.0)
+        dpg.set_axis_limits("pp_y", 0.0, 100.0)
 
     def _build_popdev_panel(self):
         with dpg.window(
@@ -1414,10 +1493,10 @@ class MosaicApp:
                                             tag="popdev_mean_series")
                 # Constrain y-axis so pan/zoom can't go below 0; upper grows freely.
                 dpg.set_axis_limits_constraints("popdev_y", 0.0, float("inf"))
-                self.theme.text(
-                    "Max and mean absolute deviation from ideal population. Lower is better.",
-                    "disabled_subtle",
-                )
+            self._tooltip(
+                "popdev_plot_grp",
+                "Max and mean absolute deviation from ideal population. Lower is better.",
+            )
             self.theme.track(
                 dpg.add_text(
                     "Apply a score to use this panel.",
@@ -1665,7 +1744,7 @@ class MosaicApp:
             dpg.set_value(f"di_r{r}_pdev", f"{pop_dev_pct[d]:+.2f}%")
             dpg.set_value(
                 f"di_r{r}_pp",
-                f"{pp_per_dist[d]:.3f}" if pp_per_dist is not None else "—",
+                f"{pp_per_dist[d] * 100:.1f}" if pp_per_dist is not None else "—",
             )
             if dem_pct is not None and not np.isnan(dem_pct[d]):
                 dp = float(dem_pct[d])
@@ -2110,7 +2189,7 @@ class MosaicApp:
         self._buf_eg.add(_ed)
         self._buf_seats.add(_sed)
         self._buf_comp.add(_cod)
-        self._buf_pp.add(_pd)
+        self._buf_pp.add([v * 100.0 for v in _pd])
         self._buf_popdev.add(_pvd)
         self._buf_popdev_max.add(_pvd_max)
         self._buf_popdev_mean.add(_pvd_mean)
@@ -2183,19 +2262,26 @@ class MosaicApp:
                     _, w = self._buf_cs_excess.plot_data(limit)
                     hi = max(1, int(max(w)))
                     dpg.set_axis_limits("cs_excess_y", 0, hi + 1)
-                if self._buf_cs_clean.ys:
-                    _, w = self._buf_cs_clean.plot_data(limit)
-                    hi = int(max(w)) + 1
-                    dpg.set_axis_limits("cs_clean_y", 0, hi)
+            max_clean = None
             if (self.runner is not None and self.runner.county_pops is not None
                     and self.runner.populations is not None):
                 n_dist = dpg.get_value(self._num_districts)
-                tol = dpg.get_value(self._tolerance)
+                tol = dpg.get_value(self._tolerance) / 100.0
                 ideal_pop = float(self.runner.populations.sum()) / n_dist if n_dist > 0 else 1.0
                 min_dp = max(ideal_pop * (1.0 - tol), 1.0)
                 max_clean = int(np.floor(self.runner.county_pops / min_dp).sum())
                 dpg.set_value("cs_max_clean_note",
                               f"Maximum feasible single-county districts: {max_clean:,}")
+            if cs_on and self._buf_cs_clean.ys:
+                xs, w = self._buf_cs_clean.plot_data(limit)
+                hi = int(max(w))
+                if max_clean is not None:
+                    hi = max(hi, max_clean)
+                dpg.set_axis_limits("cs_clean_y", 0, hi + 1)
+                # Horizontal reference line spanning the current x-range.
+                if max_clean is not None and xs:
+                    dpg.set_value("cs_clean_max",
+                                  [[xs[0], xs[-1]], [max_clean, max_clean]])
 
         pp_on    = dpg.get_value(self._pp_enabled)
 
@@ -2375,6 +2461,13 @@ class MosaicApp:
             "maj_x", "maj_y", "hinge_x", "hinge_y",
         ):
             dpg.set_axis_limits_auto(ax)
+        # Re-pin axes whose ranges should always be locked (probability bands).
+        # Without this, set_axis_limits_auto above releases them and the next
+        # render auto-fits to whatever the data happens to be, causing the
+        # axis to "stick" at a small range like [0, 0.1].
+        dpg.set_axis_limits("pp_y",    0.0, 100.0)
+        dpg.set_axis_limits("maj_y",   0.0, 100.0)
+        dpg.set_axis_limits("hinge_y", 0.0, 1.0)
         for s in self._partisan_bar_series:
             dpg.set_value(s, empty)
         for s in self._win_chance_bar_series:
@@ -2606,6 +2699,11 @@ class MosaicApp:
         with dpg.tooltip(parent=widget, delay=delay):
             dpg.add_text(text, wrap=320)
 
+    def _tooltip(self, widget: int | str, text: str, delay: float = 0.4) -> None:
+        """Attach a hover tooltip with literal ``text`` (no _HINTS lookup)."""
+        with dpg.tooltip(parent=widget, delay=delay):
+            dpg.add_text(text, wrap=320)
+
     def _show_panel(self, panel_tag: str, menu_item) -> None:
         visible = dpg.is_item_shown(panel_tag)
         dpg.set_value(menu_item, not visible)
@@ -2676,6 +2774,19 @@ class MosaicApp:
         choice = dpg.get_value(self._theme_radio)
         self.theme.apply("dark" if choice == "Dark" else "light")
         self._sync_map_bg_to_theme()
+        self._sync_ref_lines_to_theme()
+
+    def _sync_ref_lines_to_theme(self):
+        """Rebind the partisan/win-chance 50/50 and median guide lines so
+        they stay readable on the current plot background (white guides on
+        dark mode, black on light)."""
+        t = self._partisan_ref_themes[self.theme.palette.name]
+        self._partisan_ref_theme = t
+        for tag in ("partisan_ref", "partisan_median",
+                    "win_chance_ref", "win_chance_median",
+                    "cs_clean_max"):
+            if dpg.does_item_exist(tag):
+                dpg.bind_item_theme(tag, t)
 
     def _sync_map_bg_to_theme(self):
         """Push the theme's child_bg into the map view and refresh the texture."""
@@ -2935,8 +3046,8 @@ class MosaicApp:
         w_pd   = (dpg.get_value(self._w_pop_deviation)
                   if dpg.get_value(self._popdev_enabled) else 0.0)
         # Safe harbor cannot exceed population tolerance
-        _tol    = dpg.get_value(self._tolerance)
-        _harbor = min(dpg.get_value(self._pop_dev_harbor), _tol)
+        _tol    = dpg.get_value(self._tolerance) / 100.0
+        _harbor = min(dpg.get_value(self._pop_dev_harbor) / 100.0, _tol)
 
         n_dist_run = dpg.get_value(self._num_districts)
         raw_target_seats = dpg.get_value(self._target_dem_seats)
@@ -2988,7 +3099,7 @@ class MosaicApp:
 
         self.state.update(
             num_districts=dpg.get_value(self._num_districts),
-            pop_tolerance=dpg.get_value(self._tolerance),
+            pop_tolerance=_tol,
             max_iterations=dpg.get_value(self._iterations),
             seed=seed,
             score_config=score_cfg,
