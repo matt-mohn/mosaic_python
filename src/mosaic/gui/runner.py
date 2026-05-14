@@ -381,6 +381,17 @@ class AlgorithmRunner:
             _last_map_time = 0.0
             _launch_watch_fired = False
 
+            # Competitive district count carries across iterations; refreshed
+            # only on accepted proposals (assignment is unchanged on reject).
+            comp_count = 0
+            if self.election_arrays:
+                _dem, _gop = self.election_arrays[0]
+                _dem_d = np.bincount(assignment, weights=_dem.astype(np.float64), minlength=num_districts)
+                _gop_d = np.bincount(assignment, weights=_gop.astype(np.float64), minlength=num_districts)
+                _tot_d = _dem_d + _gop_d
+                _shares = np.where(_tot_d > 0, _dem_d / _tot_d, 0.5)
+                comp_count = int((np.abs(_shares - 0.5) < 0.05).sum())
+
             for iteration in range(1, max_iterations + 1):
                 # Launch Watch: re-anchor temperature after the first N iters
                 # using the post-warmup current score rather than the initial.
@@ -486,19 +497,15 @@ class AlgorithmRunner:
                         successful_steps=self.state.successful_steps + 1,
                         score_breakdown=_build_score_breakdown(current_ps, score_config),
                     )
+                    if self.election_arrays:
+                        _dem, _gop = self.election_arrays[0]
+                        _dem_d = np.bincount(assignment, weights=_dem.astype(np.float64), minlength=num_districts)
+                        _gop_d = np.bincount(assignment, weights=_gop.astype(np.float64), minlength=num_districts)
+                        _tot_d = _dem_d + _gop_d
+                        _shares = np.where(_tot_d > 0, _dem_d / _tot_d, 0.5)
+                        comp_count = int((np.abs(_shares - 0.5) < 0.05).sum())
                 else:
                     self.state.update(current_iteration=iteration)
-
-                # ── History bookkeeping (before best check so lengths are accurate)
-                # Competitive district count (|share - 0.5| < 0.05) — computed outside lock
-                comp_count = 0
-                if self.election_arrays:
-                    _dem, _gop = self.election_arrays[0]
-                    _dem_d = np.bincount(assignment, weights=_dem.astype(np.float64), minlength=num_districts)
-                    _gop_d = np.bincount(assignment, weights=_gop.astype(np.float64), minlength=num_districts)
-                    _tot_d = _dem_d + _gop_d
-                    _shares = np.where(_tot_d > 0, _dem_d / _tot_d, 0.5)
-                    comp_count = int((np.abs(_shares - 0.5) < 0.05).sum())
 
                 n_score = n_temp = n_acc = 0
                 with self.state._lock:

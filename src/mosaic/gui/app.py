@@ -2022,9 +2022,64 @@ class MosaicApp:
         dpg.set_value(self._succ_txt,
                       f"Accepted steps: {snap['successful_steps']:,}")
 
+        # ── Plots & side panels ──────────────────────────────────────────────
+        self._update_plots_and_panels()
+
+        # Keep district-count-dependent sliders bounded
+        n_dist_val = dpg.get_value(self._num_districts)
+        dpg.configure_item(self._target_dem_seats, max_value=n_dist_val)
+        dpg.configure_item(self._hinge_threshold,  max_value=n_dist_val)
+
+        # ── Button states ─────────────────────────────────────────────────────
+        dpg.configure_item("menu_scores",    enabled=not is_busy)
+        dpg.configure_item(self._run_btn,    enabled=not is_busy)
+        dpg.configure_item(self._pause_btn,  enabled=is_running or is_paused or is_partitioning)
+        dpg.configure_item(self._pause_btn,
+                           label="Resume" if is_paused else "Pause")
+        dpg.configure_item(self._reset_btn,  enabled=True)
+        has_result = self.state.best_assignment is not None
+        dpg.configure_item(self._export_btn,
+                           enabled=has_result and not is_busy)
+        dpg.configure_item(self._metrics_btn,
+                           enabled=has_result and not is_busy)
+        can_revert = has_result and status in (
+            AlgorithmStatus.IDLE, AlgorithmStatus.PAUSED,
+            AlgorithmStatus.COMPLETED, AlgorithmStatus.ERROR,
+        )
+        dpg.configure_item(self._revert_btn, enabled=can_revert)
+
+        # ── Button nudge / anti-nudge themes ─────────────────────────────────
+        graph_ready = self.runner is not None and self.runner.graph is not None
+        dpg.bind_item_theme(
+            self._run_btn,
+            self.theme.nudge_theme if (not is_busy and graph_ready)
+            else self.theme.antinudge_theme,
+        )
+        dpg.bind_item_theme(
+            self._pause_btn,
+            self.theme.nudge_theme if (is_running or is_paused)
+            else self.theme.antinudge_theme,
+        )
+        dpg.bind_item_theme(self._reset_btn, self.theme.antinudge_theme)
+        dpg.bind_item_theme(
+            self._export_btn,
+            self.theme.nudge_theme if (has_result and not is_busy)
+            else self.theme.antinudge_theme,
+        )
+        dpg.bind_item_theme(
+            self._metrics_btn,
+            self.theme.nudge_theme if (has_result and not is_busy)
+            else self.theme.antinudge_theme,
+        )
+        dpg.bind_item_theme(
+            self._revert_btn,
+            self.theme.nudge_theme if can_revert else self.theme.antinudge_theme,
+        )
+
+    def _update_plots_and_panels(self) -> None:
+        """Per-frame plot redraws and side panel refreshes."""
         # ── Plots ─────────────────────────────────────────────────────────────
-        # One lock acquisition, copying only the delta since the last frame.
-        # At 1000 IPS / 60 fps that's ~17 new items regardless of run length.
+        # One lock acquisition, copying only the delta since the last call.
         with self.state._lock:
             _sd   = list(self.state.score_history[self._buf_score.read:])
             _ad   = list(self.state.acceptance_rate_history[self._buf_acc.read:])
@@ -2286,58 +2341,6 @@ class MosaicApp:
 
         # District Info table — per-district metrics for the current plan
         self._update_district_info_table()
-
-        # Keep district-count-dependent sliders bounded
-        n_dist_val = dpg.get_value(self._num_districts)
-        dpg.configure_item(self._target_dem_seats, max_value=n_dist_val)
-        dpg.configure_item(self._hinge_threshold,  max_value=n_dist_val)
-
-        # ── Button states ─────────────────────────────────────────────────────
-        dpg.configure_item("menu_scores",    enabled=not is_busy)
-        dpg.configure_item(self._run_btn,    enabled=not is_busy)
-        dpg.configure_item(self._pause_btn,  enabled=is_running or is_paused or is_partitioning)
-        dpg.configure_item(self._pause_btn,
-                           label="Resume" if is_paused else "Pause")
-        dpg.configure_item(self._reset_btn,  enabled=True)
-        has_result = self.state.best_assignment is not None
-        dpg.configure_item(self._export_btn,
-                           enabled=has_result and not is_busy)
-        dpg.configure_item(self._metrics_btn,
-                           enabled=has_result and not is_busy)
-        can_revert = has_result and status in (
-            AlgorithmStatus.IDLE, AlgorithmStatus.PAUSED,
-            AlgorithmStatus.COMPLETED, AlgorithmStatus.ERROR,
-        )
-        dpg.configure_item(self._revert_btn, enabled=can_revert)
-
-        # ── Button nudge / anti-nudge themes ─────────────────────────────────
-        graph_ready = self.runner is not None and self.runner.graph is not None
-        dpg.bind_item_theme(
-            self._run_btn,
-            self.theme.nudge_theme if (not is_busy and graph_ready)
-            else self.theme.antinudge_theme,
-        )
-        dpg.bind_item_theme(
-            self._pause_btn,
-            self.theme.nudge_theme if (is_running or is_paused)
-            else self.theme.antinudge_theme,
-        )
-        dpg.bind_item_theme(self._reset_btn, self.theme.antinudge_theme)
-        dpg.bind_item_theme(
-            self._export_btn,
-            self.theme.nudge_theme if (has_result and not is_busy)
-            else self.theme.antinudge_theme,
-        )
-        dpg.bind_item_theme(
-            self._metrics_btn,
-            self.theme.nudge_theme if (has_result and not is_busy)
-            else self.theme.antinudge_theme,
-        )
-        dpg.bind_item_theme(
-            self._revert_btn,
-            self.theme.nudge_theme if can_revert else self.theme.antinudge_theme,
-        )
-
 
     def _clear_all_series(self) -> None:
         """Clear local history buffers and blank all DPG plot series."""
@@ -2999,7 +3002,7 @@ class MosaicApp:
         self.state.reset_run()
 
         self.algorithm_thread = threading.Thread(
-            target=self.runner.run_algorithm, daemon=True,
+            target=self.runner.run_algorithm, daemon=True, name="algo",
         )
         self.algorithm_thread.start()
 

@@ -4,7 +4,13 @@ import numpy as np
 import igraph as ig
 from typing import Optional, Tuple
 
-from mosaic.recom.tree import find_balanced_cut_ig, try_residual_balanced_cut
+from mosaic.recom.tree import (
+    FbcScratch,
+    find_balanced_cut_fast,
+    find_balanced_cut_ig,
+    try_residual_balanced_cut,
+    _NUMBA_OK,
+)
 
 
 class GraphContext:
@@ -12,9 +18,10 @@ class GraphContext:
     Precomputed static arrays derived from an igraph Graph.
 
     Build once, pass to every recom_step_ig call to avoid recomputing
-    edge endpoint arrays on each iteration.
+    edge endpoint arrays on each iteration. Also owns the persistent scratch
+    buffers for the Numba fast path (find_balanced_cut_fast).
     """
-    __slots__ = ('graph', 'edge_u', 'edge_v', 'n_nodes', 'n_edges')
+    __slots__ = ('graph', 'edge_u', 'edge_v', 'n_nodes', 'n_edges', 'scratch')
 
     def __init__(self, graph: ig.Graph):
         self.graph = graph
@@ -28,6 +35,7 @@ class GraphContext:
         else:
             self.edge_u = np.empty(0, dtype=np.int32)
             self.edge_v = np.empty(0, dtype=np.int32)
+        self.scratch = FbcScratch.allocate(self.n_nodes, self.n_edges)
 
     def compute_cut_edges(self, assignment: np.ndarray) -> np.ndarray:
         """Vectorised cut-edge detection. Returns indices into edge_u/edge_v
@@ -83,12 +91,18 @@ def recom_step_ig(
 
     # Both districts are connected (invariant maintained by construction) and the
     # selected cut edge bridges them, so the merged region is always connected.
-    subgraph = ctx.graph.subgraph(merged_nodes)
-
-    subset = find_balanced_cut_ig(
-        subgraph, populations, ideal_pop, tolerance, max_attempts=100,
-        county_array=county_array, county_bias=county_bias,
-    )
+    if _NUMBA_OK:
+        subset = find_balanced_cut_fast(
+            ctx.edge_u, ctx.edge_v, ctx.scratch, merged_nodes,
+            populations, ideal_pop, tolerance, max_attempts=100,
+            county_array=county_array, county_bias=county_bias,
+        )
+    else:
+        subgraph = ctx.graph.subgraph(merged_nodes)
+        subset = find_balanced_cut_ig(
+            subgraph, populations, ideal_pop, tolerance, max_attempts=100,
+            county_array=county_array, county_bias=county_bias,
+        )
 
     if subset is None:
         return assignment, False, cut_edge_indices
@@ -205,16 +219,25 @@ def recom_step_ig_n3(
 
     # Merged region is connected: A∪B via the picked cut edge, C joined via the
     # cut edge selected by _pick_third_district.
-    subgraph_3 = ctx.graph.subgraph(merged_nodes)
-
     stage1_state: dict = {}
-    subset_a_new = find_balanced_cut_ig(
-        subgraph_3, populations, ideal_pop, tolerance,
-        max_attempts=max_attempts_per_stage,
-        one_sided=True,
-        county_array=county_array, county_bias=county_bias,
-        out_state=stage1_state,
-    )
+    if _NUMBA_OK:
+        subset_a_new = find_balanced_cut_fast(
+            ctx.edge_u, ctx.edge_v, ctx.scratch, merged_nodes,
+            populations, ideal_pop, tolerance,
+            max_attempts=max_attempts_per_stage,
+            one_sided=True,
+            county_array=county_array, county_bias=county_bias,
+            out_state=stage1_state,
+        )
+    else:
+        subgraph_3 = ctx.graph.subgraph(merged_nodes)
+        subset_a_new = find_balanced_cut_ig(
+            subgraph_3, populations, ideal_pop, tolerance,
+            max_attempts=max_attempts_per_stage,
+            one_sided=True,
+            county_array=county_array, county_bias=county_bias,
+            out_state=stage1_state,
+        )
     if subset_a_new is None:
         return assignment, False, cut_edge_indices
 
@@ -230,19 +253,28 @@ def recom_step_ig_n3(
     else:
         if _stats is not None:
             _stats["residual_misses"] = _stats.get("residual_misses", 0) + 1
-        # Fall back to a fresh 2-region subgraph + MST. node_ids is in subgraph
-        # vertex-index order (igraph.subgraph sorts inputs), so the carved mask
-        # from stage 1 maps directly onto it — avoids a full np.isin sort.
+        # Fall back to a fresh 2-region MST on the post-stage-1 remainder.
+        # node_ids is in local-index order matching carved_sub_idx, so the
+        # mask maps directly — no np.isin sort needed.
         keep = np.ones(stage1_state["n"], dtype=np.bool_)
         keep[stage1_state["carved_sub_idx"]] = False
-        remaining_nodes = stage1_state["node_ids"][keep]
-        subgraph_2 = ctx.graph.subgraph(remaining_nodes)
-        subset_b_new = find_balanced_cut_ig(
-            subgraph_2, populations, ideal_pop, tolerance,
-            max_attempts=max_attempts_per_stage,
-            one_sided=False,
-            county_array=county_array, county_bias=county_bias,
-        )
+        remaining_nodes = stage1_state["node_ids"][keep].astype(np.int32, copy=False)
+        if _NUMBA_OK:
+            subset_b_new = find_balanced_cut_fast(
+                ctx.edge_u, ctx.edge_v, ctx.scratch, remaining_nodes,
+                populations, ideal_pop, tolerance,
+                max_attempts=max_attempts_per_stage,
+                one_sided=False,
+                county_array=county_array, county_bias=county_bias,
+            )
+        else:
+            subgraph_2 = ctx.graph.subgraph(remaining_nodes)
+            subset_b_new = find_balanced_cut_ig(
+                subgraph_2, populations, ideal_pop, tolerance,
+                max_attempts=max_attempts_per_stage,
+                one_sided=False,
+                county_array=county_array, county_bias=county_bias,
+            )
         if subset_b_new is None:
             return assignment, False, cut_edge_indices
 

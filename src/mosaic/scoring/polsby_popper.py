@@ -34,13 +34,11 @@ def score_polsby_popper(
     Returns:
         float in [0, 100] — (1 - mean_PP) * 100, where 0 = perfectly compact
     """
-    # District areas and exterior perimeters (precincts summed by district)
     dist_area = np.bincount(assignment, weights=pp_data.areas,
                              minlength=n_districts).astype(np.float64)
     dist_perim = np.bincount(assignment, weights=pp_data.ext_perimeters,
                               minlength=n_districts).astype(np.float64)
 
-    # Add shared boundary lengths for cut edges (edges between different districts)
     eu, ev, elen = pp_data.edge_u, pp_data.edge_v, pp_data.edge_len
     if len(eu) > 0:
         eu_dist = assignment[eu]
@@ -48,12 +46,14 @@ def score_polsby_popper(
         is_cut = eu_dist != ev_dist
         if is_cut.any():
             cut_len = elen[is_cut]
-            np.add.at(dist_perim, eu_dist[is_cut], cut_len)
-            np.add.at(dist_perim, ev_dist[is_cut], cut_len)
+            # bincount is a fully-vectorized C scatter-add; np.add.at is a
+            # Python-level loop and is the historical bottleneck here.
+            dist_perim += np.bincount(eu_dist[is_cut], weights=cut_len,
+                                       minlength=n_districts)
+            dist_perim += np.bincount(ev_dist[is_cut], weights=cut_len,
+                                       minlength=n_districts)
 
-    # PP per district; guard against zero perimeters
     safe_perim = np.where(dist_perim > 0.0, dist_perim, 1.0)
     pp = _TWO_PI * dist_area / (safe_perim ** 2)
     pp = np.clip(pp, 0.0, 1.0)
-
     return float((1.0 - pp.mean()) * 100.0)

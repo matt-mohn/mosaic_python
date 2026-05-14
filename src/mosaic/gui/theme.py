@@ -531,12 +531,6 @@ class ThemeManager:
             return 0
         with dpg.font_registry():
             font_tag = dpg.add_font(str(typo.body_path), typo.body_size)
-            # Rasterize symbol ranges beyond DPG's default Latin-only set.
-            # Inter ships glyphs across these blocks; without the ranges,
-            # DPG draws fallback boxes for any non-ASCII codepoint.
-            dpg.add_font_range(0x2010, 0x206F, parent=font_tag)  # general punctuation
-            dpg.add_font_range(0x2190, 0x21FF, parent=font_tag)  # arrows
-            dpg.add_font_range(0x25A0, 0x25FF, parent=font_tag)  # geometric shapes
         return font_tag
 
     # ── Token lookup ──────────────────────────────────────────────────────────
