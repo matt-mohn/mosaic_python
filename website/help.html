@@ -97,9 +97,7 @@
         Mosaic
       </a>
       <nav class="text-sm text-ink-soft hidden sm:flex items-center gap-7">
-        <a href="index.html#features" class="hover:text-ink transition">Features</a>
-        <a href="index.html#screenshots" class="hover:text-ink transition">Screenshots</a>
-        <a href="index.html#install" class="hover:text-ink transition">Install</a>
+        <a href="install.html" class="hover:text-ink transition">Install</a>
         <a href="help.html" class="text-ink font-medium">Docs</a>
         <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub →</a>
       </nav>
@@ -134,7 +132,6 @@
     <aside class="hidden lg:block">
       <nav class="sticky top-24 text-sm text-ink-soft space-y-2">
         <div class="font-semibold text-ink uppercase tracking-wide text-xs mb-3">On this page</div>
-        <a href="#getting-started"  class="block hover:text-ink transition">Getting started</a>
         <a href="#shapefile"        class="block hover:text-ink transition">Loading a shapefile</a>
         <a href="#run-config"       class="block hover:text-ink transition">Run Config reference</a>
         <a href="#metrics"          class="block hover:text-ink transition">Metrics glossary</a>
@@ -149,36 +146,8 @@
     <!-- Content -->
     <main class="min-w-0">
 
-      <!-- Getting started ─────────────────────────────────────────────────── -->
-      <section id="getting-started" class="prose-block">
-        <h2 class="text-2xl font-bold tracking-tight">Getting started</h2>
-        <p>Mosaic runs on Python 3.10 or newer, on Windows 10+, macOS 12+, and Linux. There are two ways to install.</p>
-
-        <h3>Option 1 — One-click launcher (no Python setup required)</h3>
-        <ul>
-          <li><strong>Download the project.</strong> On the <a href="https://github.com/matt-mohn/mosaic_python">GitHub page</a>, click the green <em>Code</em> button and choose <em>Download ZIP</em>.</li>
-          <li><strong>Extract the ZIP.</strong> Right-click the file and choose <em>Extract All</em>.</li>
-          <li><strong>Run the launcher.</strong>
-            <ul>
-              <li><strong>Windows:</strong> double-click <code class="font-mono text-sm">run_mosaic.bat</code></li>
-              <li><strong>macOS / Linux:</strong> open a terminal in the folder and run <code class="font-mono text-sm">chmod +x run_mosaic.sh &amp;&amp; ./run_mosaic.sh</code></li>
-            </ul>
-          </li>
-        </ul>
-        <p>The launcher installs Python dependencies on first run (requires internet). After that, every double-click just opens the app.</p>
-
-        <h3>Option 2 — Install with pip</h3>
-        <div class="mt-3 rounded-xl border border-line bg-ink text-paper p-5 font-mono text-sm leading-relaxed">
-          <span class="text-ink-mute select-none">$ </span>pip install git+https://github.com/matt-mohn/mosaic_python<br>
-          <span class="text-ink-mute select-none">$ </span>mosaic
-        </div>
-
-        <h3>Sample data</h3>
-        <p>The <code class="font-mono text-sm">shapefiles/</code> folder ships with North Carolina precinct data, ready to load on first launch.</p>
-      </section>
-
       <!-- Loading a shapefile ─────────────────────────────────────────────── -->
-      <section id="shapefile" class="prose-block mt-16">
+      <section id="shapefile" class="prose-block">
         <h2 class="text-2xl font-bold tracking-tight">Loading a shapefile</h2>
         <p class="stub">Coming soon: required columns (population, party vote totals, county FIPS), the column-picker dialog, and notes on coordinate systems.</p>
       </section>
