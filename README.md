@@ -6,10 +6,23 @@
   <em>Redistricting for Python</em>
 </p>
 
+<p align="center">
+  <a href="https://matt-mohn.github.io/mosaic_python/"><strong>Website</strong></a> &middot;
+  <a href="https://matt-mohn.github.io/mosaic_python/help.html">Docs</a> &middot;
+  <a href="LICENSE">License</a>
+</p>
+
 ---
 
-Mosaic is a redistricting toolkit that uses recombination (ReCom) plus simulated annealing to generate and optimize district maps. A project of Matt Mohn ([@mattmxhn](https://x.com/mattmxhn)); the recombination algorithm is derived from the work of the MGGG Redistricting Lab.
+```bash
+pip install git+https://github.com/matt-mohn/mosaic_python
+mosaic
+```
 
-- **Install:** see the [install guide](https://matt-mohn.github.io/mosaic_python/install.html). Launcher scripts (`run_mosaic.bat` / `run_mosaic.sh`) handle Python and dependencies automatically — no Python knowledge required.
-- **Documentation:** [matt-mohn.github.io/mosaic_python](https://matt-mohn.github.io/mosaic_python/) — install, shapefile guide, scoring reference, troubleshooting.
-- **License:** MIT — see `LICENSE`.
+Prefer a one-click launcher? See [Getting started](https://matt-mohn.github.io/mosaic_python/help.html#getting-started).
+
+Python 3.10+ on Windows, macOS, or Linux. Sample North Carolina shapefiles included.
+
+---
+
+MIT &mdash; ReCom derived from the [MGGG Redistricting Lab](https://mggg.org/). A Python port of [Mosaic for R](https://github.com/matt-mohn/Mosaic).
