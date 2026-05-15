@@ -136,8 +136,36 @@
       wildly; the cleaned sources above are usually less work.
     </p>
 
+    <!-- ── Bonus pre-prepared state files ─────────────────────────────── -->
+    <h2 id="bonus">Bonus Mosaic-ready state shapefiles</h2>
     <p>
-      Just want to try Mosaic? The bundled North Carolina sample
+      Ten US states pre-joined and ready to load directly into Mosaic: TIGER/Line
+      VTD geometries, 2020 population + race/age VAP breakdowns, and 2016 / 2020
+      / 2024 presidential vote totals. Each zip extracts to a single
+      <code>.shp</code> set; pick it in Mosaic's load dialog and the auto-detect
+      should pre-fill the population and county columns for you.
+    </p>
+    <p>
+      Available states: Arizona, Georgia, Illinois, Louisiana, Massachusetts,
+      New York, Ohio, South Carolina, Texas, Wisconsin (5.7&ndash;45.6 MB each).
+    </p>
+    <a class="src-card" href="https://github.com/matt-mohn/mosaic_shapefiles_extra"
+       style="display:block; padding:1.25rem 1.5rem;">
+      <h3>Browse and download on GitHub &rarr;</h3>
+      <p>Click any <code>_DRA_Mosaic.zip</code> file on the repo, then the
+        download icon to save it.</p>
+    </a>
+    <div class="mt-4 rounded-xl border border-line bg-paper-2 p-4 text-sm text-ink-soft">
+      <strong>License:</strong> these files inherit
+      <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC&nbsp;BY-SA&nbsp;4.0</a>
+      from <a href="https://davesredistricting.org">Dave's Redistricting</a>,
+      with DRA's explicit <strong>no-sale restriction</strong>. Distinct from
+      Mosaic itself, which is MIT. Full attribution and schema notes:
+      <a href="https://github.com/matt-mohn/mosaic_shapefiles_extra/blob/main/DATA_LICENSE.md">DATA_LICENSE.md</a>.
+    </div>
+
+    <p class="mt-8">
+      Just want to try Mosaic without picking a state? The bundled North Carolina sample
       (<code>shapefiles/North_Carolina_Simplified.shp</code> in the extracted
       folder) is ready to load with no setup.
     </p>
