@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Install Mosaic</title>
+  <meta name="description" content="Step-by-step install for Mosaic on Windows and Mac.">
+  <link rel="icon" href="mosaic_logo.png">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+          colors: {
+            ink:         '#1a1f2c',
+            'ink-soft':  '#4a5263',
+            'ink-mute':  '#7c8497',
+            paper:       '#fafbfc',
+            'paper-2':   '#f1f3f7',
+            navy:        '#1d4180',
+            'navy-soft': '#e6ecf6',
+            gold:        '#f4b631',
+            line:        '#e3e7ef',
+          },
+          boxShadow: {
+            'card': '0 1px 2px rgba(20, 28, 48, 0.04), 0 8px 24px rgba(20, 28, 48, 0.06)',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    html { scroll-behavior: smooth; }
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  </style>
+</head>
+<body class="bg-paper text-ink">
+
+  <!-- ── Top bar ───────────────────────────────────────────────────────────── -->
+  <header class="border-b border-line bg-paper/80 backdrop-blur sticky top-0 z-10">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center justify-between">
+      <a href="index.html" class="flex items-center gap-2.5 font-semibold tracking-tight text-lg">
+        <img src="mosaic_logo.png" alt="" class="w-7 h-7">
+        Mosaic
+      </a>
+      <nav class="text-sm text-ink-soft hidden sm:flex items-center gap-7">
+        <a href="index.html" class="hover:text-ink transition">Home</a>
+        <a href="help.html" class="hover:text-ink transition">Docs</a>
+        <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub →</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto px-6 py-14">
+
+    <h1 class="text-4xl font-bold tracking-tight leading-tight">Install Mosaic</h1>
+    <p class="mt-3 text-ink-soft text-lg">
+      About five minutes from download to a running map. No Python knowledge required.
+    </p>
+
+    <!-- ── What you'll need ───────────────────────────────────────────────── -->
+    <section class="mt-10 rounded-xl border border-line bg-white p-6">
+      <h2 class="text-lg font-semibold">Before you start</h2>
+      <ul class="mt-3 space-y-1.5 text-sm text-ink-soft">
+        <li>&bull; A Windows 10 / 11 PC, or a Mac running macOS 12 or newer</li>
+        <li>&bull; An internet connection (first launch downloads about 200&nbsp;MB)</li>
+        <li>&bull; About 5 minutes of patience for the first launch</li>
+      </ul>
+      <p class="mt-3 text-sm text-ink-soft">
+        You do <em>not</em> need to install Python yourself. Mosaic ships with a
+        launcher that sets everything up the first time you run it.
+      </p>
+    </section>
+
+    <!-- ── Download ───────────────────────────────────────────────────────── -->
+    <section class="mt-10">
+      <h2 class="text-2xl font-bold tracking-tight">1. Download Mosaic</h2>
+      <p class="mt-3 text-ink-soft">
+        Download the zipped repository from GitHub.
+      </p>
+      <a href="https://github.com/matt-mohn/mosaic_python/archive/refs/heads/main.zip"
+         class="mt-5 inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-ink text-paper font-medium hover:bg-ink-soft transition">
+        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        Download mosaic_python.zip
+      </a>
+      <p class="mt-3 text-xs text-ink-mute">
+        About 50&nbsp;MB. Saved to your usual Downloads folder.
+      </p>
+    </section>
+
+    <!-- ── Extract ────────────────────────────────────────────────────────── -->
+    <section class="mt-10">
+      <h2 class="text-2xl font-bold tracking-tight">2. Extract the zip</h2>
+      <p class="mt-3 text-ink-soft">
+        Find the downloaded <code class="font-mono text-sm bg-paper-2 px-1.5 py-0.5 rounded">mosaic_python-main.zip</code>
+        in your Downloads folder.
+      </p>
+      <ul class="mt-3 space-y-1.5 text-sm text-ink-soft">
+        <li><strong>Windows:</strong> right-click the file &rarr; <em>Extract All&hellip;</em> &rarr; pick a place you'll remember (Desktop or Documents is fine) &rarr; <em>Extract</em>.</li>
+        <li><strong>Mac:</strong> double-click the file. Finder will create a folder next to the zip with the same name.</li>
+      </ul>
+      <p class="mt-3 text-sm text-ink-soft">
+        You should now have a folder called <code class="font-mono text-sm bg-paper-2 px-1.5 py-0.5 rounded">mosaic_python-main</code>.
+      </p>
+    </section>
+
+    <!-- ── Run it ─────────────────────────────────────────────────────────── -->
+    <section class="mt-10">
+      <h2 class="text-2xl font-bold tracking-tight">3. Run Mosaic</h2>
+
+      <!-- Windows -->
+      <div class="mt-6 rounded-xl border border-line bg-white p-6">
+        <h3 class="text-base font-semibold">On Windows</h3>
+        <ol class="mt-3 space-y-2 text-sm text-ink-soft list-decimal list-inside">
+          <li>Open the <code class="font-mono bg-paper-2 px-1.5 py-0.5 rounded">mosaic_python-main</code> folder.</li>
+          <li>Double-click <strong><code class="font-mono bg-paper-2 px-1.5 py-0.5 rounded">run_mosaic.bat</code></strong>.</li>
+          <li>
+            If Windows shows a blue "Windows protected your PC" warning, click
+            <strong>More info</strong>, then <strong>Run anyway</strong>. This
+            warning appears because the launcher script downloads its own setup
+            tool (<code class="font-mono text-xs">uv</code>) on the first run;
+            no installer is "signed" yet.
+          </li>
+          <li>A black window opens and starts downloading dependencies. This takes 2&ndash;3 minutes the first time. Subsequent launches are instant.</li>
+          <li>When the Mosaic window appears, you're set. Leave the black window open while you use Mosaic; closing it closes the app.</li>
+        </ol>
+      </div>
+
+      <!-- Mac -->
+      <div class="mt-5 rounded-xl border border-line bg-white p-6">
+        <h3 class="text-base font-semibold">On Mac</h3>
+        <ol class="mt-3 space-y-2 text-sm text-ink-soft list-decimal list-inside">
+          <li>Open the <strong>Terminal</strong> app (Cmd+Space, type "Terminal", hit Return).</li>
+          <li>
+            Drag the <code class="font-mono bg-paper-2 px-1.5 py-0.5 rounded">mosaic_python-main</code>
+            folder onto the Terminal window. Terminal will paste in its path. Type
+            <code class="font-mono bg-paper-2 px-1.5 py-0.5 rounded">cd&nbsp;</code> first, then drag, so the
+            final line reads <code class="font-mono bg-paper-2 px-1.5 py-0.5 rounded">cd /path/to/mosaic_python-main</code>.
+            Hit Return.
+          </li>
+          <li>Type <code class="font-mono bg-paper-2 px-1.5 py-0.5 rounded">chmod +x run_mosaic.sh</code> and hit Return.</li>
+          <li>Type <code class="font-mono bg-paper-2 px-1.5 py-0.5 rounded">./run_mosaic.sh</code> and hit Return.</li>
+          <li>First launch downloads dependencies for 2&ndash;3 minutes; the Mosaic window appears when it's done. Keep the Terminal window open while using Mosaic.</li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ── Try a sample ───────────────────────────────────────────────────── -->
+    <section class="mt-10">
+      <h2 class="text-2xl font-bold tracking-tight">4. Try the bundled sample</h2>
+      <p class="mt-3 text-ink-soft">
+        Inside the folder you extracted, the <code class="font-mono text-sm bg-paper-2 px-1.5 py-0.5 rounded">shapefiles/</code>
+        subfolder contains a ready-to-use North Carolina precinct map. In Mosaic,
+        choose <strong>Load shapefile</strong> and pick
+        <code class="font-mono text-sm bg-paper-2 px-1.5 py-0.5 rounded">shapefiles/North_Carolina_Simplified.shp</code>.
+        Hit <strong>Run</strong> and watch the map redraw each iteration.
+      </p>
+    </section>
+
+    <!-- ── Troubleshooting ────────────────────────────────────────────────── -->
+    <section class="mt-12 rounded-xl border border-line bg-paper-2 p-6">
+      <h2 class="text-lg font-semibold">If something doesn't work</h2>
+
+      <details class="mt-4 border-t border-line pt-3">
+        <summary class="cursor-pointer font-medium text-sm">Windows says "Windows protected your PC"</summary>
+        <p class="mt-2 text-sm text-ink-soft">
+          Click <strong>More info</strong>, then <strong>Run anyway</strong>.
+          Mosaic is an unsigned app distributed as source code; SmartScreen
+          flags every unsigned launcher on first run, regardless of what it does.
+        </p>
+      </details>
+
+      <details class="mt-3 border-t border-line pt-3">
+        <summary class="cursor-pointer font-medium text-sm">Mac says "operation not permitted" or "cannot be opened"</summary>
+        <p class="mt-2 text-sm text-ink-soft">
+          You're using Finder to double-click the <code class="font-mono text-xs">.sh</code> file. That doesn't work
+          for unsigned shell scripts. Use Terminal as described in step 3.
+        </p>
+      </details>
+
+      <details class="mt-3 border-t border-line pt-3">
+        <summary class="cursor-pointer font-medium text-sm">"python: command not found" or similar</summary>
+        <p class="mt-2 text-sm text-ink-soft">
+          The launcher handles Python itself via <code class="font-mono text-xs">uv</code>. If you see this error, the
+          launcher's network call probably failed. Check your internet connection,
+          delete the <code class="font-mono text-xs">.venv</code> folder if one was created inside
+          <code class="font-mono text-xs">mosaic_python-main</code>, and run the launcher again.
+        </p>
+      </details>
+
+      <details class="mt-3 border-t border-line pt-3">
+        <summary class="cursor-pointer font-medium text-sm">First launch is stuck at "Installing dependencies"</summary>
+        <p class="mt-2 text-sm text-ink-soft">
+          The first run downloads about 200&nbsp;MB of scientific Python
+          packages. On a slow connection this can take 5&ndash;10 minutes.
+          Watch the black window (Windows) or Terminal (Mac) for progress;
+          if it has been completely silent for more than 15 minutes,
+          something is wrong. Close the window and try again.
+        </p>
+      </details>
+
+      <details class="mt-3 border-t border-line pt-3">
+        <summary class="cursor-pointer font-medium text-sm">It crashed after I loaded my own shapefile</summary>
+        <p class="mt-2 text-sm text-ink-soft">
+          Mosaic writes a crash log to a <code class="font-mono text-xs">crashes/</code> folder next to the launcher.
+          That file plus a description of what you did is what to include
+          when filing a bug report on GitHub.
+        </p>
+      </details>
+    </section>
+
+    <p class="mt-10 text-sm text-ink-soft">
+      Still stuck? Open an issue on
+      <a class="underline hover:text-ink" href="https://github.com/matt-mohn/mosaic_python/issues">GitHub</a>
+      and include the crash log if you have one.
+    </p>
+
+  </main>
+
+  <!-- ── Footer ────────────────────────────────────────────────────────────── -->
+  <footer class="border-t border-line bg-paper-2">
+    <div class="max-w-5xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-ink-soft">
+      <div class="flex items-center gap-2">
+        <img src="mosaic_logo.png" alt="" class="w-5 h-5">
+        Mosaic &middot; MIT &middot; Matt Mohn
+      </div>
+      <div class="flex items-center gap-5">
+        <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub</a>
+        <a href="https://github.com/matt-mohn/mosaic_python/blob/main/LICENSE" class="hover:text-ink transition">License</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
