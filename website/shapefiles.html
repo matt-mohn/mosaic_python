@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shapefiles for Mosaic</title>
+  <meta name="description" content="Where to get shapefiles and what Mosaic needs them to look like.">
+  <link rel="icon" href="mosaic_logo.png">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+          colors: {
+            ink:         '#1a1f2c',
+            'ink-soft':  '#4a5263',
+            'ink-mute':  '#7c8497',
+            paper:       '#fafbfc',
+            'paper-2':   '#f1f3f7',
+            navy:        '#1d4180',
+            'navy-soft': '#e6ecf6',
+            gold:        '#f4b631',
+            line:        '#e3e7ef',
+          },
+          boxShadow: {
+            'card': '0 1px 2px rgba(20, 28, 48, 0.04), 0 8px 24px rgba(20, 28, 48, 0.06)',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    html { scroll-behavior: smooth; }
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .prose-block h2 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.01em; margin-top: 2.5rem; }
+    .prose-block h3 { font-size: 1.05rem; font-weight: 600; margin-top: 1.5rem; }
+    .prose-block p, .prose-block li { color: #4a5263; line-height: 1.7; }
+    .prose-block p { margin-top: 0.75rem; }
+    .prose-block code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.875em; background: #f1f3f7; padding: 0.1em 0.35em; border-radius: 0.25rem; }
+    .prose-block ul { margin-top: 0.75rem; padding-left: 1.25rem; list-style: disc; }
+    .prose-block li { margin-top: 0.35rem; }
+    .prose-block a { color: #1d4180; text-decoration: underline; text-underline-offset: 2px; }
+    .prose-block a:hover { color: #1a1f2c; }
+    .src-card { display: block; padding: 1rem 1.25rem; border: 1px solid #e3e7ef; border-radius: 0.75rem; background: white; transition: all 0.15s; }
+    .src-card:hover { border-color: #1d4180; box-shadow: 0 4px 16px rgba(20,28,48,0.06); }
+    .src-card h3 { margin: 0; font-size: 1rem; font-weight: 600; color: #1a1f2c; }
+    .src-card p { margin-top: 0.35rem; font-size: 0.875rem; color: #4a5263; line-height: 1.55; }
+  </style>
+</head>
+<body class="bg-paper text-ink">
+
+  <!-- ── Top bar ───────────────────────────────────────────────────────────── -->
+  <header class="border-b border-line bg-paper/80 backdrop-blur sticky top-0 z-10">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center justify-between">
+      <a href="index.html" class="flex items-center gap-2.5 font-semibold tracking-tight text-lg">
+        <img src="mosaic_logo.png" alt="" class="w-7 h-7">
+        Mosaic
+      </a>
+      <nav class="text-sm text-ink-soft hidden sm:flex items-center gap-7">
+        <a href="install.html" class="hover:text-ink transition">Install</a>
+        <a href="help.html" class="hover:text-ink transition">Docs</a>
+        <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub →</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto px-6 py-14 prose-block">
+
+    <h1 class="text-4xl font-bold tracking-tight leading-tight">Shapefiles for Mosaic</h1>
+    <p class="mt-3 text-ink-soft text-lg">
+      Where to find one, what Mosaic needs it to look like, and what to do
+      when it complains.
+    </p>
+
+    <!-- ── Where to get a shapefile ──────────────────────────────────────── -->
+    <h2 id="sources">Where do I get a shapefile?</h2>
+    <p>
+      Mosaic does not include a built-in data fetcher; you bring your own
+      shapefile. These are the cleanest sources for redistricting work:
+    </p>
+
+    <div class="mt-5 grid sm:grid-cols-2 gap-4">
+
+      <a class="src-card" href="https://redistrictingdatahub.org/">
+        <h3>Redistricting Data Hub &rarr;</h3>
+        <p>The most user-friendly start. Pre-cleaned precinct shapefiles with
+          population and election totals, organised by state and election year.
+          Free with registration.</p>
+      </a>
+
+      <a class="src-card" href="https://dataverse.harvard.edu/dataverse/electionscience">
+        <h3>VEST (Harvard Dataverse) &rarr;</h3>
+        <p>The Voting and Election Science Team's precinct shapefiles with
+          election results joined in. Strong for partisan-scoring runs. Format
+          and column naming are very consistent across states.</p>
+      </a>
+
+      <a class="src-card" href="https://github.com/mggg-states">
+        <h3>MGGG-states &rarr;</h3>
+        <p>Academic-grade shapefiles curated by the Metric Geometry and
+          Gerrymandering Group. Each state repo includes documentation of
+          columns and known caveats. Designed for redistricting research.</p>
+      </a>
+
+      <a class="src-card" href="https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html">
+        <h3>Census TIGER/Line &rarr;</h3>
+        <p>The official boundary files for counties, congressional districts,
+          tracts, and block groups. No population or vote data attached &mdash;
+          you would need to join those yourself.</p>
+      </a>
+
+    </div>
+
+    <p class="mt-5">
+      You can also grab a shapefile from your state's GIS portal. Quality varies
+      wildly; the cleaned sources above are usually less work.
+    </p>
+
+    <p>
+      Just want to try Mosaic? The bundled North Carolina sample
+      (<code>shapefiles/North_Carolina_Simplified.shp</code> in the extracted
+      folder) is ready to load with no setup.
+    </p>
+
+    <!-- ── What Mosaic needs ─────────────────────────────────────────────── -->
+    <h2 id="requirements">What Mosaic needs the shapefile to look like</h2>
+
+    <h3>Geometry</h3>
+    <p>
+      Polygons (or multipolygons), one per precinct. Mosaic will refuse to load
+      a shapefile of points or lines, or one where some rows have null geometry.
+    </p>
+
+    <h3>Required columns</h3>
+    <ul>
+      <li>
+        <strong>Population</strong> &mdash; numeric, no missing values, no negatives,
+        positive total. Mosaic auto-detects common names: <code>POP</code>,
+        <code>TOTPOP</code>, <code>population</code>, <code>POP100</code>, and the
+        census <code>P0010001</code>. If yours uses something else you can pick it
+        in the column-picker dialog after load.
+      </li>
+      <li>
+        <strong>Precinct ID</strong> &mdash; any column that uniquely identifies
+        each row, used when Mosaic writes the assignments CSV. Common names:
+        <code>GEOID</code>, <code>GEOID20</code>, <code>VTDID</code>.
+      </li>
+    </ul>
+
+    <h3>Optional columns</h3>
+    <ul>
+      <li>
+        <strong>County</strong> &mdash; required only if you want to score
+        county splits, county-edge bias, or use the county overlay. Common names:
+        <code>CTY</code>, <code>COUNTY</code>, <code>COUNTYFP</code>.
+      </li>
+      <li>
+        <strong>Vote totals</strong> &mdash; one pair (Democratic, Republican)
+        per election. Required for partisan scores (mean-median, efficiency gap,
+        expected seats, etc.). Mosaic supports one election per run.
+      </li>
+    </ul>
+
+    <h3>Coordinate system (CRS)</h3>
+    <p>
+      Mosaic works with any CRS the file declares, but Polsby-Popper compactness
+      is computed from polygon area &mdash; so a geographic CRS (degrees of
+      latitude / longitude) gives misleadingly low scores. For honest
+      compactness, project your shapefile to an equal-area CRS first. For the
+      continental US, <code>EPSG:5070</code> (USA Contiguous Albers Equal Area)
+      is a safe default.
+    </p>
+    <p>
+      The Redistricting Data Hub, VEST, and MGGG sources above already ship in
+      projected CRSs.
+    </p>
+
+    <!-- ── Worked example ────────────────────────────────────────────────── -->
+    <h2 id="example">Worked example: loading the bundled sample</h2>
+    <ol class="mt-3 list-decimal list-inside space-y-2">
+      <li>Open Mosaic.</li>
+      <li>Click <strong>Load shapefile</strong> and pick
+        <code>shapefiles/North_Carolina_Simplified.shp</code> from the folder
+        you extracted.</li>
+      <li>
+        The column-picker dialog opens. Mosaic auto-fills <strong>Population</strong>
+        with <code>POP</code>, <strong>Precinct ID</strong> with
+        <code>GEOID20</code>, and <strong>County</strong> with <code>CTY</code>.
+        Confirm.
+      </li>
+      <li>Set district count to 13 (NC's congressional total), tolerance to 2%,
+        and run.</li>
+    </ol>
+
+    <!-- ── About the cache ───────────────────────────────────────────────── -->
+    <h2 id="cache">About the cache folder</h2>
+    <p>
+      The first time you load a shapefile, Mosaic builds an adjacency graph
+      and saves a pickled copy under <code>cache/&lt;shapefile-stem&gt;.pkl</code>
+      so subsequent loads of the same file skip the build step (typically
+      saving 5&ndash;30 seconds, longer for big files).
+    </p>
+    <p>
+      The cache is keyed by the shapefile's filename and a content hash of its
+      <code>.shp</code> / <code>.dbf</code> bytes, so editing the shapefile
+      invalidates the cache automatically. You can delete the <code>cache/</code>
+      folder any time; it rebuilds on next load.
+    </p>
+
+    <!-- ── If Mosaic refuses to load ─────────────────────────────────────── -->
+    <h2 id="problems">If Mosaic refuses to load your shapefile</h2>
+    <p>
+      Mosaic does a few strict checks at load time. If any fail, it tells you
+      why in the status bar (or inline in the column-picker dialog) and refuses
+      to proceed.
+    </p>
+
+    <h3>"N of M rows have null or empty geometry"</h3>
+    <p>
+      Some rows have no polygon. Remove them in QGIS or your GIS tool and reload.
+      Mosaic cannot build adjacency for rows with no geometry.
+    </p>
+
+    <h3>"N of M rows are not Polygon / MultiPolygon"</h3>
+    <p>
+      The shapefile contains points or lines. Mosaic needs polygons. You probably
+      grabbed the wrong file &mdash; for example, a precinct *centroids* file
+      instead of a precinct *boundaries* file.
+    </p>
+
+    <h3>"Population column has N null / NaN value(s)"</h3>
+    <p>
+      Population must be present on every row. Clean the data in your GIS tool
+      (set blanks to 0 if you really want, but understand 0-pop districts get
+      treated as empty) and reload.
+    </p>
+
+    <h3>"Adjacency graph has N disconnected components"</h3>
+    <p>
+      Your shapefile contains islands or exclaves &mdash; physically separate
+      regions that don't touch the mainland. Common in coastal states (HI, AK,
+      Outer Banks, barrier islands). ReCom requires a connected graph, so for
+      now the only fix is to remove those features from the shapefile manually
+      and reload. The error message lists the row indices to remove.
+    </p>
+
+    <p class="mt-10">
+      Still stuck? Open an issue on
+      <a href="https://github.com/matt-mohn/mosaic_python/issues">GitHub</a>
+      with a description of the data you tried to load and the error message
+      you got.
+    </p>
+
+  </main>
+
+  <!-- ── Footer ────────────────────────────────────────────────────────────── -->
+  <footer class="border-t border-line bg-paper-2">
+    <div class="max-w-5xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-ink-soft">
+      <div class="flex items-center gap-2">
+        <img src="mosaic_logo.png" alt="" class="w-5 h-5">
+        Mosaic &middot; MIT &middot; Matt Mohn
+      </div>
+      <div class="flex items-center gap-5">
+        <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub</a>
+        <a href="https://github.com/matt-mohn/mosaic_python/blob/main/LICENSE" class="hover:text-ink transition">License</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
