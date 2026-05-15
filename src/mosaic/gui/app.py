@@ -1723,8 +1723,8 @@ class MosaicApp:
         # Stable district -> displayed label (matches map labelling)
         d_to_label = {}
         if initial is not None and len(initial) == len(assignment):
-            from mosaic.gui.map_view import _stable_color_mapping
-            stable_colors = _stable_color_mapping(assignment, initial, n_dist)
+            from mosaic.gui.map_view import stable_color_mapping
+            stable_colors = stable_color_mapping(assignment, initial, n_dist)
             for d in range(n_dist):
                 mask = assignment == d
                 if mask.any():
@@ -3191,6 +3191,25 @@ class MosaicApp:
         if self.map_view is not None and self.map_view._loaded:
             self.map_view.draw_blank()
 
+    def _stable_labeled_best_assignment(self) -> "np.ndarray | None":
+        """Best assignment relabeled to match the live map / District Info labels.
+
+        ReCom internally renumbers districts over the course of a run; the GUI
+        uses ``stable_color_mapping`` against the initial partition to keep the
+        same physical region under the same number across iterations. CSV
+        exports must apply the same permutation, otherwise users see one label
+        in Mosaic and a different one in their spreadsheet.
+        """
+        best = self.state.best_assignment
+        if best is None:
+            return None
+        initial = self.state.initial_assignment
+        n_dist = self.state.num_districts or int(best.max()) + 1
+        if initial is not None and len(initial) == len(best):
+            from mosaic.gui.map_view import stable_color_mapping
+            return stable_color_mapping(best, initial, n_dist)
+        return best
+
     def _on_export(self):
         if self.runner is None or self.state.best_assignment is None:
             return
@@ -3209,7 +3228,7 @@ class MosaicApp:
                 id_col_name = col
 
         save_assignments(
-            self.state.best_assignment,
+            self._stable_labeled_best_assignment(),
             output_path,
             precinct_ids=precinct_ids,
             id_col_name=id_col_name,
@@ -3232,7 +3251,7 @@ class MosaicApp:
         gop = self.runner.election_arrays[0][1] if self.runner.election_arrays else None
 
         save_metrics(
-            self.state.best_assignment,
+            self._stable_labeled_best_assignment(),
             output_path,
             populations=self.runner.populations,
             ideal_pop=ideal_pop,

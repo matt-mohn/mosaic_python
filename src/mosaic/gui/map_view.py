@@ -115,14 +115,14 @@ def _interp_palette(stops: np.ndarray, rgb: np.ndarray, t: np.ndarray) -> np.nda
     return np.stack([r, g, b], axis=-1).clip(0, 255).astype(np.uint8)
 
 
-def _stable_color_mapping(
+def stable_color_mapping(
     current: np.ndarray,
     initial: np.ndarray,
     k: int,
 ) -> np.ndarray:
     """
     Map current district indices to stable colour indices that best match the
-    initial assignment (ported from calculate_stable_color_mapping in
+    initial assignment (ported from calculatestable_color_mapping in
     original Classic Mosaic graphics.R).
 
     Returns per-precinct array of colour indices in [0, k).
@@ -394,7 +394,7 @@ class MapView:
             lut = self._build_pop_dev_lut(assignment, n_districts)
         else:
             if initial is not None and len(initial) == len(assignment):
-                ci = _stable_color_mapping(assignment, initial, n_districts)
+                ci = stable_color_mapping(assignment, initial, n_districts)
             else:
                 ci = assignment
             nc = len(DISTRICT_COLORS)
@@ -449,7 +449,7 @@ class MapView:
         if self.show_labels and self._precinct_centroids is not None:
             # Compute stable label numbers (matching color assignment)
             if initial is not None and len(initial) == len(assignment):
-                stable_colors = _stable_color_mapping(assignment, initial, n_districts)
+                stable_colors = stable_color_mapping(assignment, initial, n_districts)
             else:
                 stable_colors = assignment
 
