@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use Mosaic in academic, journalistic, or court-related work, please cite it as below."
+title: "Mosaic"
+abstract: >-
+  A redistricting toolkit that uses recombination (ReCom) with simulated
+  annealing and a live Dear PyGui interface.
+type: software
+authors:
+  - given-names: "Matt"
+    family-names: "Mohn"
+version: "0.1.0"
+date-released: "2026-05-15"
+url: "https://github.com/matt-mohn/mosaic_python"
+repository-code: "https://github.com/matt-mohn/mosaic_python"
+license: MIT
+keywords:
+  - redistricting
+  - recombination
+  - ReCom
+  - simulated-annealing
+  - GIS
+  - political-science

@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mosaic — docs</title>
+  <meta name="description" content="Getting started, run-config reference, metrics glossary, and FAQ for Mosaic.">
+  <link rel="icon" href="mosaic_logo.png">
+
+  <meta property="og:type"        content="website">
+  <meta property="og:title"       content="Mosaic — docs">
+  <meta property="og:description" content="Getting started, run-config reference, metrics glossary, and FAQ for Mosaic.">
+  <meta property="og:image"       content="mosaic_logo.png">
+  <meta name="twitter:card"        content="summary">
+  <meta name="twitter:title"       content="Mosaic — docs">
+  <meta name="twitter:description" content="Getting started, run-config reference, metrics glossary, and FAQ for Mosaic.">
+  <meta name="twitter:image"       content="mosaic_logo.png">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
+          },
+          colors: {
+            ink:         '#1a1f2c',
+            'ink-soft':  '#4a5263',
+            'ink-mute':  '#7c8497',
+            paper:       '#fafbfc',
+            'paper-2':   '#f1f3f7',
+            navy:        '#1d4180',
+            'navy-soft': '#e6ecf6',
+            gold:        '#f4b631',
+            line:        '#e3e7ef',
+          },
+          boxShadow: {
+            'card': '0 1px 2px rgba(20, 28, 48, 0.04), 0 8px 24px rgba(20, 28, 48, 0.06)',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    html { scroll-behavior: smooth; }
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .prose-block h3 { font-size: 1.05rem; font-weight: 600; color: #1a1f2c; margin-top: 1.75rem; }
+    .prose-block p  { color: #4a5263; line-height: 1.65; margin-top: 0.75rem; }
+    .prose-block ul { color: #4a5263; line-height: 1.65; margin-top: 0.75rem; padding-left: 1.25rem; list-style: disc; }
+    .prose-block li { margin-top: 0.25rem; }
+    .prose-block dl { color: #4a5263; line-height: 1.65; margin-top: 0.75rem; }
+    .prose-block dt { color: #1a1f2c; margin-top: 1.5rem; font-size: 1.05rem; }
+    .prose-block dd { margin-top: 0.5rem; margin-left: 0; }
+    .prose-block code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.9em; background: #f1f3f7; padding: 0.05rem 0.3rem; border-radius: 3px; }
+    .meta {
+      margin-top: 0.65rem;
+      background: #f1f3f7;
+      border-left: 3px solid #1d4180;
+      border-radius: 0.4rem;
+      padding: 0.6rem 1rem 0.6rem 1.5rem;
+      font-size: 0.9rem;
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .meta th {
+      text-align: left;
+      font-weight: 600;
+      color: #1a1f2c;
+      padding: 0.2rem 1rem 0.2rem 0.25rem;
+      vertical-align: top;
+      white-space: nowrap;
+      width: 7rem;
+    }
+    .meta td { padding: 0.2rem 0; vertical-align: top; }
+    .meta td ul { margin-top: 0.25rem; padding-left: 1.1rem; list-style: disc; }
+    .meta td ul li { margin-top: 0.2rem; }
+    .meta td ul li:first-child { margin-top: 0; }
+    .meta .gui { color: #1d4180; font-weight: 500; }
+    .prose-block a  { color: #1d4180; text-decoration: underline; text-underline-offset: 2px; }
+    .prose-block a:hover { color: #1a1f2c; }
+    .stub { color: #7c8497; font-style: italic; }
+  </style>
+</head>
+<body class="bg-paper text-ink">
+
+  <!-- ── Top bar ───────────────────────────────────────────────────────────── -->
+  <header class="border-b border-line bg-paper/80 backdrop-blur sticky top-0 z-10">
+    <div class="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
+      <a href="index.html" class="flex items-center gap-2.5 font-semibold tracking-tight text-lg">
+        <img src="mosaic_logo.png" alt="" class="w-7 h-7">
+        Mosaic
+      </a>
+      <nav class="text-sm text-ink-soft hidden sm:flex items-center gap-7">
+        <a href="index.html#features" class="hover:text-ink transition">Features</a>
+        <a href="index.html#screenshots" class="hover:text-ink transition">Screenshots</a>
+        <a href="index.html#install" class="hover:text-ink transition">Install</a>
+        <a href="help.html" class="text-ink font-medium">Docs</a>
+        <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub →</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ── Page header ───────────────────────────────────────────────────────── -->
+  <section class="border-b border-line">
+    <div class="max-w-6xl mx-auto px-6 py-12">
+      <h1 class="text-4xl font-bold tracking-tight">Documentation</h1>
+      <p class="mt-3 text-ink-soft">Everything you need to install Mosaic, configure a run, and read the output.</p>
+      <div class="mt-6 relative max-w-xl">
+        <input
+          id="help-search"
+          type="search"
+          placeholder="Search the docs — try &quot;polsby&quot;, &quot;seed&quot;, &quot;safe-harbor&quot;..."
+          class="w-full px-4 py-2.5 rounded-lg border border-line bg-paper text-ink placeholder:text-ink-mute focus:outline-none focus:border-navy focus:ring-2 focus:ring-navy-soft transition"
+          autocomplete="off"
+        >
+        <span id="help-search-count" class="hidden absolute right-3 top-1/2 -translate-y-1/2 text-xs text-ink-mute"></span>
+      </div>
+    </div>
+  </section>
+  <div id="help-no-results" class="hidden max-w-6xl mx-auto px-6 py-12 text-center text-ink-soft">
+    <p>No matches. Try a shorter term, or <button id="help-search-clear" class="underline text-navy hover:text-ink">clear the search</button>.</p>
+  </div>
+
+  <!-- ── Layout: TOC + content ─────────────────────────────────────────────── -->
+  <div class="max-w-6xl mx-auto px-6 py-12 grid lg:grid-cols-[220px_1fr] gap-12">
+
+    <!-- TOC -->
+    <aside class="hidden lg:block">
+      <nav class="sticky top-24 text-sm text-ink-soft space-y-2">
+        <div class="font-semibold text-ink uppercase tracking-wide text-xs mb-3">On this page</div>
+        <a href="#getting-started"  class="block hover:text-ink transition">Getting started</a>
+        <a href="#shapefile"        class="block hover:text-ink transition">Loading a shapefile</a>
+        <a href="#run-config"       class="block hover:text-ink transition">Run Config reference</a>
+        <a href="#metrics"          class="block hover:text-ink transition">Metrics glossary</a>
+        <a href="#charts"           class="block hover:text-ink transition">Reading the charts</a>
+        <a href="#export"           class="block hover:text-ink transition">Exporting results</a>
+        <a href="#faq"              class="block hover:text-ink transition">FAQ</a>
+        <a href="#about"            class="block hover:text-ink transition">About &amp; methodology</a>
+        <a href="#license"          class="block hover:text-ink transition">License</a>
+      </nav>
+    </aside>
+
+    <!-- Content -->
+    <main class="min-w-0">
+
+      <!-- Getting started ─────────────────────────────────────────────────── -->
+      <section id="getting-started" class="prose-block">
+        <h2 class="text-2xl font-bold tracking-tight">Getting started</h2>
+        <p>Mosaic runs on Python 3.10 or newer, on Windows 10+, macOS 12+, and Linux. There are two ways to install.</p>
+
+        <h3>Option 1 — One-click launcher (no Python setup required)</h3>
+        <ul>
+          <li><strong>Download the project.</strong> On the <a href="https://github.com/matt-mohn/mosaic_python">GitHub page</a>, click the green <em>Code</em> button and choose <em>Download ZIP</em>.</li>
+          <li><strong>Extract the ZIP.</strong> Right-click the file and choose <em>Extract All</em>.</li>
+          <li><strong>Run the launcher.</strong>
+            <ul>
+              <li><strong>Windows:</strong> double-click <code class="font-mono text-sm">run_mosaic.bat</code></li>
+              <li><strong>macOS / Linux:</strong> open a terminal in the folder and run <code class="font-mono text-sm">chmod +x run_mosaic.sh &amp;&amp; ./run_mosaic.sh</code></li>
+            </ul>
+          </li>
+        </ul>
+        <p>The launcher installs Python dependencies on first run (requires internet). After that, every double-click just opens the app.</p>
+
+        <h3>Option 2 — Install with pip</h3>
+        <div class="mt-3 rounded-xl border border-line bg-ink text-paper p-5 font-mono text-sm leading-relaxed">
+          <span class="text-ink-mute select-none">$ </span>pip install git+https://github.com/matt-mohn/mosaic_python<br>
+          <span class="text-ink-mute select-none">$ </span>mosaic
+        </div>
+
+        <h3>Sample data</h3>
+        <p>The <code class="font-mono text-sm">shapefiles/</code> folder ships with North Carolina precinct data, ready to load on first launch.</p>
+      </section>
+
+      <!-- Loading a shapefile ─────────────────────────────────────────────── -->
+      <section id="shapefile" class="prose-block mt-16">
+        <h2 class="text-2xl font-bold tracking-tight">Loading a shapefile</h2>
+        <p class="stub">Coming soon: required columns (population, party vote totals, county FIPS), the column-picker dialog, and notes on coordinate systems.</p>
+      </section>
+
+      <!-- Run Config ──────────────────────────────────────────────────────── -->
+      <section id="run-config" class="prose-block mt-16">
+        <h2 class="text-2xl font-bold tracking-tight">Run Config reference</h2>
+        <p>Mosaic groups its knobs into four popups in the Run Config panel.</p>
+
+        <h3>ReCom</h3>
+        <p class="stub">Coming soon: number of districts, max iterations, contiguity checks.</p>
+
+        <h3>Population</h3>
+        <p class="stub">Coming soon: population tolerance (shown as a percent), safe-harbor band, and how Mosaic reacts to deviation.</p>
+
+        <h3>Annealing</h3>
+        <p class="stub">Coming soon: GUIDED vs STATIC cooling schedules, initial / final temperature, when to use which.</p>
+
+        <h3>Scoring weights</h3>
+        <p>Each enabled metric is multiplied by its weight and summed into <code>PlanScore.total</code>, which the optimizer minimizes. Weight 0 disables the metric; the computation is skipped, reducing per-iteration cost. Per-metric contribution formulas are in the <a href="#metrics">Metrics glossary</a>.</p>
+
+        <h3>Partisan calibration</h3>
+        <p>Set in the Partisanship popup. Applied when any of Efficiency Gap (Robust), Expected Seats, Competitiveness, Chance of Majority, or Hinge is enabled.</p>
+        <dl>
+          <dt><strong><code>election_win_prob_at_55</code></strong> — default 0.9</dt>
+          <dd>Calibration anchor: P(D wins | D share = 0.55). Inverted to <code>σ_district = 0.05 / Φ⁻¹(p)</code>. Higher values yield sharper per-district win probabilities.</dd>
+
+          <dt><strong><code>election_swing_sigma</code></strong> — default 0.03 (3pp)</dt>
+          <dd>Standard deviation of a shared partisan-environment swing added to every district before computing win probability. Higher values widen the partisan metric distributions.</dd>
+        </dl>
+        <p>Combined as <code>σ_combined = √(σ_swing² + σ_district²)</code>. For point-estimate behavior, set <code>election_swing_sigma</code> to its minimum and disable Robust EG (Partisanship popup &rarr; Efficiency Gap mode &rarr; Static).</p>
+      </section>
+
+      <!-- Metrics ─────────────────────────────────────────────────────────── -->
+      <section id="metrics" class="prose-block mt-16">
+        <h2 class="text-2xl font-bold tracking-tight">Metrics glossary</h2>
+        <p>Each metric appears on a score row in the GUI. Entries below give a definition followed by a meta card listing the unit, optimization direction, contribution to <code>PlanScore.total</code>, and any tunable parameters with their GUI location. Metrics are internally rescaled to comparable magnitudes; weights and formulas appear in the meta card.</p>
+
+        <p>Five metrics (Efficiency Gap in Robust mode, Expected Seats, Competitiveness, Chance of Majority, Hinge) model each district's Dem share as a Gaussian variable. Two parameters set the spread and are shared across these metrics: <code>election_win_prob_at_55</code> (anchors per-district noise via <code>σ_district = 0.05 / Φ⁻¹(p)</code>) and <code>election_swing_sigma</code> (standard deviation of a shared partisan-environment draw). They combine as <code>σ_combined = √(σ_swing² + σ_district²)</code>. Both are set in the Partisanship popup; see <a href="#run-config">Run Config &gt; Partisan calibration</a> for details.</p>
+
+        <dl>
+          <dt><strong>Cut Edges</strong></dt>
+          <dd>
+            <p>Number of precinct-pair adjacencies whose endpoints are in different districts.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>integer count</td></tr>
+              <tr><th>Direction</th><td>lower is better</td></tr>
+              <tr><th>Contribution</th><td><code>cut_edges</code> (no internal rescale)</td></tr>
+            </table>
+          </dd>
+
+          <dt><strong>County Splits</strong></dt>
+          <dd>
+            <p>Penalty on splitting counties across districts. Two terms: <em>excess splits</em> beyond the minimum forced by county population, plus the shortfall in <em>clean districts</em> (districts whose precincts all lie within one county).</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>weighted score</td></tr>
+              <tr><th>Direction</th><td>lower is better</td></tr>
+              <tr><th>Contribution</th><td><code>10 × (excess_splits + (max_clean − clean_districts))</code></td></tr>
+              <tr><th>Tunables</th><td>none directly. <code>max_clean</code> depends on the run-config Population Tolerance (Population popup &rarr; Population Tolerance).</td></tr>
+            </table>
+          </dd>
+
+          <dt><strong>Population Deviation</strong></dt>
+          <dd>
+            <p>Two-component imbalance penalty. Districts within the safe-harbor band contribute zero. Beyond it, the metric sums mean squared excess and max squared excess, so a single outlier cannot be masked by balanced averages.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>scaled sum of squares</td></tr>
+              <tr><th>Direction</th><td>lower is better; zero indicates all districts inside the safe-harbor</td></tr>
+              <tr><th>Contribution</th><td><code>(mean(excess²) + max(excess²)) × 50,000</code>, where <code>excess = max(0, |dev_frac| − safe_harbor)</code></td></tr>
+              <tr><th>Tunables</th><td><span class="gui">Population popup &rarr; Safe Harbor slider</span> (<code>pop_deviation_safe_harbor</code>, default 0.25%). Clamped at run start to not exceed Population Tolerance.</td></tr>
+            </table>
+          </dd>
+
+          <dt><strong>Polsby-Popper compactness</strong></dt>
+          <dd>
+            <p>Compactness penalty. Per-district <code>PP = 4π·area / perimeter²</code> ranges from 0 (elongated) to 1 (circle). The score chart displays <code>mean(PP)</code> directly; the optimizer minimizes <code>(1 − mean(PP)) × 100</code>.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>contribution [0, 100]; chart shows mean PP in [0, 1]</td></tr>
+              <tr><th>Direction</th><td>lower contribution is better</td></tr>
+              <tr><th>Contribution</th><td><code>(1 − mean(PP)) × 100</code></td></tr>
+            </table>
+          </dd>
+
+          <dt><strong>Mean-Median</strong></dt>
+          <dd>
+            <p><code>mean(district Dem share) − median(district Dem share)</code>. Non-zero values indicate the mean and median districts disagree on partisan balance. Sign: negative = D advantage, positive = R advantage.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>signed share difference (display); penalty in squared percentage points</td></tr>
+              <tr><th>Direction</th><td>distance from target</td></tr>
+              <tr><th>Contribution</th><td><code>((raw − target) × 100)²</code></td></tr>
+              <tr><th>Tunables</th><td><span class="gui">Score panel &rarr; Mean-Median row &rarr; Target MM slider</span> (<code>target_mean_median</code>, default 0.000; negative aims at a D-favoring plan, positive at R)</td></tr>
+            </table>
+          </dd>
+
+          <dt><strong>Efficiency Gap</strong></dt>
+          <dd>
+            <p><code>(wasted Dem votes − wasted Rep votes) / total votes</code>. Wasted votes are losing-side votes plus winning-side votes above 50%. Robust mode integrates the gap over a Gaussian swing in closed form; Static mode evaluates at the input shares only. Sign: negative = D bias, positive = R bias.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>signed share (display); penalty in squared percentage points</td></tr>
+              <tr><th>Direction</th><td>distance from target</td></tr>
+              <tr><th>Contribution</th><td><code>((raw − target) × 100)²</code></td></tr>
+              <tr><th>Tunables</th><td>
+                <ul>
+                  <li><span class="gui">Score panel &rarr; Efficiency Gap row &rarr; Target EG slider</span> (<code>target_efficiency_gap</code>, default 0.000; negative aims D, positive R)</li>
+                  <li><span class="gui">Partisanship popup &rarr; Efficiency Gap mode radio</span> (<code>use_robust_eg</code>, default Robust)</li>
+                  <li>Shared partisan calibration when Robust is selected</li>
+                </ul>
+              </td></tr>
+            </table>
+          </dd>
+
+          <dt><strong>Competitiveness</strong></dt>
+          <dd>
+            <p>Mean non-competitiveness across districts. A district contributes 0 at a 50% win probability and 1 at certainty.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>raw in [0, 1] (display); contribution in [0, 100]</td></tr>
+              <tr><th>Direction</th><td>lower is better</td></tr>
+              <tr><th>Contribution</th><td><code>raw × 100</code></td></tr>
+              <tr><th>Tunables</th><td>shared partisan calibration</td></tr>
+            </table>
+          </dd>
+
+          <dt><strong>Expected Seats</strong></dt>
+          <dd>
+            <p>Sum of per-district P(D wins) under the swing model. Penalized by squared distance from target, rescaled by 100 to align with the other partisan metrics.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>real-valued seat count (display)</td></tr>
+              <tr><th>Direction</th><td>distance from target</td></tr>
+              <tr><th>Contribution</th><td><code>(raw − target)² × 100</code></td></tr>
+              <tr><th>Tunables</th><td>
+                <ul>
+                  <li><span class="gui">Score panel &rarr; Expected Dem Seats row &rarr; Target S slider</span> (<code>target_dem_seats</code>, default 7)</li>
+                  <li>Shared partisan calibration</li>
+                </ul>
+              </td></tr>
+            </table>
+          </dd>
+
+          <dt><strong>Chance of Majority</strong></dt>
+          <dd>
+            <p>Probability that the selected party wins at least <code>⌈n/2⌉</code> districts, integrated over the partisan swing via Gauss-Hermite quadrature. D-majority and R-majority weights are independent.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>probability [0, 1] (display)</td></tr>
+              <tr><th>Direction</th><td>weighted party's probability pushed toward 1</td></tr>
+              <tr><th>Contribution</th><td><code>(1 − p)^1.5 × 100</code></td></tr>
+              <tr><th>Tunables</th><td>
+                <ul>
+                  <li><span class="gui">Score panel &rarr; Chance of Majority row &rarr; D / R checkboxes</span> (selects which party's probability is scored)</li>
+                  <li>Shared partisan calibration</li>
+                </ul>
+                Threshold is fixed at <code>⌈n/2⌉</code>; use Hinge for custom thresholds.
+              </td></tr>
+            </table>
+          </dd>
+
+          <dt><strong>Hinge</strong></dt>
+          <dd>
+            <p>Probability that the selected party wins at least <code>hinge_threshold</code> seats, under the swing model. Penalty curve matches Chance of Majority.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>probability [0, 1] (display)</td></tr>
+              <tr><th>Direction</th><td>probability pushed toward 1</td></tr>
+              <tr><th>Contribution</th><td><code>(1 − p)^1.5 × 100</code></td></tr>
+              <tr><th>Tunables</th><td>
+                <ul>
+                  <li><span class="gui">Score panel &rarr; Supermajority/Hinge row &rarr; Threshold slider</span> (<code>hinge_threshold</code>, default 1; clipped to <code>[1, n_districts]</code>)</li>
+                  <li><span class="gui">Score panel &rarr; Supermajority/Hinge row &rarr; D / R checkboxes</span> (<code>hinge_dem</code>)</li>
+                  <li>Shared partisan calibration</li>
+                </ul>
+              </td></tr>
+            </table>
+          </dd>
+        </dl>
+      </section>
+
+      <!-- Charts ──────────────────────────────────────────────────────────── -->
+      <section id="charts" class="prose-block mt-16">
+        <h2 class="text-2xl font-bold tracking-tight">Reading the charts</h2>
+        <p class="stub">Coming soon: score history panel, partisanship reference lines, the single-county max-feasible line, and what each axis represents.</p>
+      </section>
+
+      <!-- Export ──────────────────────────────────────────────────────────── -->
+      <section id="export" class="prose-block mt-16">
+        <h2 class="text-2xl font-bold tracking-tight">Exporting results</h2>
+        <p class="stub">Coming soon: the three CSV exports Mosaic produces — final assignments, score history, and per-district metrics.</p>
+      </section>
+
+      <!-- FAQ ─────────────────────────────────────────────────────────────── -->
+      <section id="faq" class="prose-block mt-16">
+        <h2 class="text-2xl font-bold tracking-tight">FAQ &amp; troubleshooting</h2>
+        <p class="stub">Coming soon: which shapefiles work, what the launcher actually installs, common load errors, and performance notes.</p>
+      </section>
+
+      <!-- About ───────────────────────────────────────────────────────────── -->
+      <section id="about" class="prose-block mt-16">
+        <h2 class="text-2xl font-bold tracking-tight">About &amp; methodology</h2>
+        <p>
+          Mosaic is a Python port of <a href="https://github.com/matt-mohn/Mosaic">Mosaic for R</a>, extended with a live Dear PyGui interface and a simulated-annealing layer on top of the underlying ReCom step.
+        </p>
+        <p>
+          The ReCom (recombination) algorithm itself is derived from the one developed by the
+          <a href="https://mggg.org/">MGGG Redistricting Lab</a>. At each step, Mosaic picks an edge that crosses two districts, merges those districts, draws a random spanning tree on the merged region, and cuts the tree to produce two new districts of balanced population. The simulated-annealing wrapper accepts or rejects each proposed step based on a weighted plan score plus a temperature schedule.
+        </p>
+        <p>
+          <strong>Relationship to canonical ReCom, MergeSplit, and GerryChain.</strong> Mosaic borrows the recombination proposal from ReCom but accepts each proposal under simulated annealing keyed to a weighted plan score, rather than under a Metropolis-Hastings rule designed to produce a known stationary distribution over valid partitions. That distinction matters: canonical ensemble samplers — ReCom in <a href="https://github.com/mggg/GerryChain">GerryChain</a> and the corrected MergeSplit variant in <a href="https://alarm-redist.org/redist/">redist</a> — are designed so that the distribution of accepted plans supports statistical inference (for example, "this enacted plan is an outlier compared to the distribution of valid plans"). Mosaic, with the simulated-annealing layer biasing the chain toward score improvements as it cools, instead produces an <em>optimized</em> plan under the user's weighted objectives. Mosaic runs should not be cited for ensemble-style outlier claims; use redist or GerryChain for that.
+        </p>
+        <p>
+          Some features from the R version are implemented differently here, and some are still in progress.
+        </p>
+      </section>
+
+      <!-- License ─────────────────────────────────────────────────────────── -->
+      <section id="license" class="prose-block mt-16">
+        <h2 class="text-2xl font-bold tracking-tight">License &amp; acknowledgments</h2>
+        <p>
+          Mosaic is released under the <a href="https://github.com/matt-mohn/mosaic_python/blob/main/LICENSE">MIT License</a>.
+        </p>
+        <p>
+          The ReCom algorithm is derived from work by the <a href="https://mggg.org/">MGGG Redistricting Lab</a>. The GUI is built on <a href="https://github.com/hoffstadt/DearPyGui">Dear PyGui</a>; graph operations use <a href="https://igraph.org/">igraph</a> and <a href="https://networkx.org/">NetworkX</a>; hot loops are accelerated with <a href="https://numba.pydata.org/">Numba</a>.
+        </p>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ── Footer ────────────────────────────────────────────────────────────── -->
+  <footer class="border-t border-line bg-paper-2">
+    <div class="max-w-6xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-ink-soft">
+      <div class="flex items-center gap-2">
+        <img src="mosaic_logo.png" alt="" class="w-5 h-5">
+        Mosaic &middot; MIT &middot; Matt Mohn
+      </div>
+      <div class="flex items-center gap-5">
+        <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub</a>
+        <a href="https://github.com/matt-mohn/mosaic_python/blob/main/LICENSE" class="hover:text-ink transition">License</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // Whole-page filter: hides sections / glossary entries whose text doesn't
+    // contain the query. Glossary <dt>/<dd> pairs are filtered as units;
+    // everything else hides at the section level. TOC links hide when their
+    // target section is hidden.
+    (function () {
+      const input = document.getElementById('help-search');
+      const counter = document.getElementById('help-search-count');
+      const noResults = document.getElementById('help-no-results');
+      const clearBtn = document.getElementById('help-search-clear');
+      const sections = Array.from(document.querySelectorAll('main section.prose-block'));
+      const tocLinks = Array.from(document.querySelectorAll('aside nav a[href^="#"]'));
+
+      function filter() {
+        const q = input.value.trim().toLowerCase();
+        let totalVisible = 0;
+
+        for (const section of sections) {
+          let sectionVisible = false;
+          const dl = section.querySelector('dl');
+
+          if (dl) {
+            // Filter glossary entries individually; section is visible if
+            // any entry matches (or if no query).
+            const dts = dl.querySelectorAll(':scope > dt');
+            for (const dt of dts) {
+              const dd = dt.nextElementSibling;
+              const text = (
+                dt.textContent + ' ' + (dd && dd.tagName === 'DD' ? dd.textContent : '')
+              ).toLowerCase();
+              const match = !q || text.includes(q);
+              dt.style.display = match ? '' : 'none';
+              if (dd && dd.tagName === 'DD') dd.style.display = match ? '' : 'none';
+              if (match) sectionVisible = true;
+            }
+            // Section also visible if non-glossary text matches (intro paragraphs).
+            if (!sectionVisible && q) {
+              const nonDlText = Array.from(section.children)
+                .filter(c => c.tagName !== 'DL')
+                .map(c => c.textContent)
+                .join(' ')
+                .toLowerCase();
+              if (nonDlText.includes(q)) sectionVisible = true;
+            }
+            if (!q) sectionVisible = true;
+          } else {
+            sectionVisible = !q || section.textContent.toLowerCase().includes(q);
+          }
+
+          section.style.display = sectionVisible ? '' : 'none';
+          if (sectionVisible) totalVisible++;
+        }
+
+        // TOC: hide links whose target is hidden.
+        for (const link of tocLinks) {
+          const target = document.querySelector(link.getAttribute('href'));
+          link.style.display = target && target.style.display !== 'none' ? '' : 'none';
+        }
+
+        // Counter + no-results.
+        if (q) {
+          counter.textContent = totalVisible + ' section' + (totalVisible === 1 ? '' : 's');
+          counter.classList.remove('hidden');
+        } else {
+          counter.classList.add('hidden');
+        }
+        noResults.classList.toggle('hidden', totalVisible > 0 || !q);
+      }
+
+      input.addEventListener('input', filter);
+      if (clearBtn) {
+        clearBtn.addEventListener('click', () => { input.value = ''; filter(); input.focus(); });
+      }
+    })();
+  </script>
+
+</body>
+</html>
