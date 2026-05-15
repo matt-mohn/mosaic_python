@@ -3,9 +3,13 @@
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from tkinter import filedialog
 from pathlib import Path
 from typing import Optional
+
+_DOCS_URL = "https://matt-mohn.github.io/mosaic_python/"
+_DOCS_SHAPEFILE_URL = "https://matt-mohn.github.io/mosaic_python/shapefiles.html"
 
 _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 _APP_ICON = _ASSETS_DIR / "mosaic_logo.ico"
@@ -1818,8 +1822,8 @@ class MosaicApp:
     def _build_help_popup(self):
         with dpg.window(
             label="Help", tag="popup_help",
-            show=False, width=580, height=680,
-            pos=[(_VP_W - 580) // 2, (_VP_H - 680) // 2],
+            show=False, width=460, height=400,
+            pos=[(_VP_W - 460) // 2, (_VP_H - 400) // 2],
         ):
             with dpg.child_window(height=-40, border=False):
                 self.theme.text(
@@ -1827,120 +1831,47 @@ class MosaicApp:
                     "title",
                 )
                 dpg.add_spacer(height=6)
+                dpg.add_text(
+                    "Mosaic uses simulated annealing plus recombination to generate "
+                    "redistricting plans. Cooling makes it more selective over time; "
+                    "recombination (merge two districts, draw a new boundary) is the "
+                    "edit it tries on each step.",
+                    wrap=420,
+                )
+                dpg.add_spacer(height=14)
 
-                self.theme.text("Overview", "heading")
+                self.theme.text("Basic usage", "heading")
                 dpg.add_separator()
                 dpg.add_text(
-                    "Mosaic uses simulated annealing and recombination to produce "
-                    "a mass of different redistricting plans that can meet certain "
-                    "criteria. Simulated annealing is an algorithmic technique that "
-                    "'cools' over time. At the start, Mosaic runs wildly across the "
-                    "map, making tons of edits - not all of which are improvements. "
-                    "As the temperature falls, Mosaic becomes more picky - a process "
-                    "that creates a more optimal map. The other part of Mosaic "
-                    "(recombination) is how Mosaic makes changes. Mosaic combines "
-                    "random pairs of touching districts hundreds of times a second, "
-                    "then divides them in a new way. This 'recombination' approach "
-                    "means that the entire map can be replaced or reconfigured in "
-                    "only a few increments of a second. The 'n=3 ReCom Mix' slider "
-                    "in Annealing Settings adds three-way recombinations to the mix - "
-                    "these help escape local minima at the cost of more time per step.",
-                    wrap=540,
+                    "1. Import a shapefile\n"
+                    "2. Map columns (population, county, votes) in the picker\n"
+                    "3. Set district count, iterations, and score weights\n"
+                    "4. Start - pause / reset / revert to best as needed\n"
+                    "5. Save Assignments writes a CSV",
+                    wrap=420,
+                )
+                dpg.add_spacer(height=14)
+
+                self.theme.text("Full documentation", "heading")
+                dpg.add_separator()
+                dpg.add_text(
+                    "The website has the complete reference: scoring formulas, "
+                    "shapefile sources and requirements, install steps, "
+                    "troubleshooting, and methodology notes.",
+                    wrap=420,
                 )
                 dpg.add_spacer(height=8)
-
-                self.theme.text("Shapefiles", "heading")
-                dpg.add_separator()
-                dpg.add_text(
-                    "Mosaic needs a shapefile (.shp) with precinct or voting district "
-                    "polygons. Your shapefile should include a population column, and "
-                    "optionally a county column (for county splits scoring) and "
-                    "Democratic/Republican vote columns (for partisan metrics). You "
-                    "can download precinct shapefiles from the U.S. Census TIGER/Line "
-                    "repository and join election data from Dave's Redistricting App. "
-                    "Mosaic runs faster on generalized (simplified) shapefiles.",
-                    wrap=540,
-                )
-                dpg.add_spacer(height=8)
-
-                self.theme.text("Configuration", "heading")
-                dpg.add_separator()
-                dpg.add_text(
-                    "Annealing settings are in Configuration > Annealing Settings. "
-                    "Population deviation tolerance is in Configuration > Population. "
-                    "Partisan metric settings are in Configuration > Partisanship Settings.",
-                    wrap=540,
-                )
-                dpg.add_spacer(height=8)
-
-                self.theme.text("Scores", "heading")
-                dpg.add_separator()
-                dpg.add_text(
-                    "Scores are set on the left side before annealing begins. To "
-                    "follow a specific score, check its panel in the Panels menu.",
-                    wrap=540,
-                )
-                self.theme.text(
-                    "  - Cut Edges: Fewer cut edges = more compact districts\n"
-                    "  - County Splits: Penalizes unnecessary county splits\n"
-                    "  - Compactness: Geometric compactness (circle = 1.0)\n"
-                    "  - Population Deviation: Penalizes districts outside the safe-harbor\n"
-                    "      band around ideal pop (default 0.25%, configurable in\n"
-                    "      Configuration > Population, alongside the overall\n"
-                    "      tolerance bound which defaults to 5%)\n"
-                    "  - Mean-Median: Partisan asymmetry (0 = balanced)\n"
-                    "  - Efficiency Gap: Wasted votes (0 = no advantage)\n"
-                    "  - Competitiveness: Lower = more competitive districts\n"
-                    "  - Expected Dem Seats: Probabilistic seat count\n"
-                    "  - Chance of Majority: P(a party wins a majority of seats)\n"
-                    "  - Supermajority/Hinge: P(a party wins >= a chosen seat threshold)",
-                    "secondary",
-                    wrap=540,
-                )
-                dpg.add_spacer(height=8)
-
-                self.theme.text("Map Views", "heading")
-                dpg.add_separator()
-                dpg.add_text(
-                    "Toggle the checkboxes below the District Map to overlay or "
-                    "switch views:",
-                    wrap=540,
-                )
-                self.theme.text(
-                    "  - County: outlines county boundaries\n"
-                    "  - Splits: highlights counties split across districts\n"
-                    "  - Precinct Results: colors precincts by partisan vote share\n"
-                    "  - District Results: colors districts by aggregate vote share\n"
-                    "  - Compactness: colors districts by Polsby-Popper score\n"
-                    "  - Population Deviation: colors districts by deviation from ideal\n"
-                    "  - Labels: numbers each district on the map",
-                    "secondary",
-                    wrap=540,
-                )
-                dpg.add_spacer(height=8)
-
-                self.theme.text("Basic Usage", "heading")
-                dpg.add_separator()
-                dpg.add_text(
-                    "1. Click 'Import Shapefile from File' to select and load a shapefile\n"
-                    "2. Map your columns in the picker (population, county, votes)\n"
-                    "3. Set districts, iterations, and enable desired scores\n"
-                    "4. Click Start to begin optimization\n"
-                    "5. Use Pause, Reset, or Revert to Best as needed\n"
-                    "6. Save Assignments exports your district map as CSV",
-                    wrap=540,
-                )
-                dpg.add_spacer(height=8)
-
-                self.theme.text("Exporting", "heading")
-                dpg.add_separator()
-                dpg.add_text(
-                    "Save Assignments exports a CSV mapping each precinct to its "
-                    "district. This file can be joined back to your shapefile in "
-                    "GIS software or uploaded to Dave's Redistricting App using "
-                    "their 'Color Map from File' feature.",
-                    wrap=540,
-                )
+                with dpg.group(horizontal=True):
+                    dpg.add_button(
+                        label="Open docs",
+                        callback=lambda: webbrowser.open(_DOCS_URL),
+                        width=110,
+                    )
+                    dpg.add_button(
+                        label="Shapefile guide",
+                        callback=lambda: webbrowser.open(_DOCS_SHAPEFILE_URL),
+                        width=140,
+                    )
             dpg.add_button(
                 label="Close",
                 callback=lambda: dpg.configure_item("popup_help", show=False),

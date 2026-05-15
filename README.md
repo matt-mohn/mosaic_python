@@ -8,44 +8,8 @@
 
 ---
 
-Mosaic is a redistricting toolkit using recombination (ReCom) algorithms with simulated annealing. It includes a live GUI for map visualization and optimization.
+Mosaic is a redistricting toolkit that uses recombination (ReCom) plus simulated annealing to generate and optimize district maps. A project of Matt Mohn ([@mattmxhn](https://x.com/mattmxhn)); the recombination algorithm is derived from the work of the MGGG Redistricting Lab.
 
-## Quick Start
-
-**Option 1: Run the launcher (no Python required)**
-
-1. **Download the project**: Click the green **Code** button at the top of this page, then select **Download ZIP**
-2. **Extract the ZIP**: Right-click the downloaded file and choose "Extract All"
-3. **Run the launcher**:
-   - **Windows**: Double-click `run_mosaic.bat`
-   - **Mac/Linux**: Open a terminal in the folder and run `chmod +x run_mosaic.sh && ./run_mosaic.sh`
-
-The launcher auto-installs dependencies on first run (requires internet).
-
-**Option 2: Install with pip**
-
-```bash
-pip install -e .
-mosaic
-```
-
-## Requirements
-
-- Python >= 3.10
-- Windows 10+ / macOS 12+ / Linux
-
-## Sample Data
-
-The `shapefiles/` folder includes North Carolina precinct data as a ready-to-use starting point.
-
-## Background
-
-This is a Python port of [Mosaic for R](https://github.com/matt-mohn/Mosaic). Some features are implemented differently or still in progress.
-
-## License
-
-MIT License - see [LICENSE](LICENSE)
-
----
-
-A project of Matt Mohn ([@mattmxhn](https://x.com/mattmxhn)). The ReCom algorithm is derived from the one developed by the MGGG Redistricting Lab.
+- **Install:** see the [install guide](https://matt-mohn.github.io/mosaic_python/install.html). Launcher scripts (`run_mosaic.bat` / `run_mosaic.sh`) handle Python and dependencies automatically — no Python knowledge required.
+- **Documentation:** [matt-mohn.github.io/mosaic_python](https://matt-mohn.github.io/mosaic_python/) — install, shapefile guide, scoring reference, troubleshooting.
+- **License:** MIT — see `LICENSE`.
