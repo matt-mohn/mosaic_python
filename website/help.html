@@ -97,6 +97,7 @@
         Mosaic
       </a>
       <nav class="text-sm text-ink-soft hidden sm:flex items-center gap-7">
+        <a href="index.html" class="hover:text-ink transition">Home</a>
         <a href="install.html" class="hover:text-ink transition">Install</a>
         <a href="help.html" class="text-ink font-medium">Docs</a>
         <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub →</a>
@@ -163,13 +164,32 @@
         <p>Mosaic groups its knobs into four popups in the Run Config panel.</p>
 
         <h3>ReCom</h3>
-        <p class="stub">Coming soon: number of districts, max iterations, contiguity checks.</p>
+        <dl>
+          <dt><strong>Number of Districts</strong></dt>
+          <dd>How many districts to draw. Set to the chamber size (e.g. 14 for NC's US House delegation, larger for state legislatures). Mosaic will refuse to start if the precinct count is too small to support the requested number of districts.</dd>
+          <dt><strong>Max Iterations</strong></dt>
+          <dd>Hard cap on the optimisation budget. The annealing schedule is sized against this number, so changing it changes the cooling trajectory, not just the stopping point.</dd>
+          <dt><strong>n=3 ReCom Mix</strong></dt>
+          <dd>Probability per step of attempting a three-way recombination (merge 3 adjacent districts and re-split into 3) instead of the default two-way step. Three-way moves are slower but escape local minima better; 0.0 disables it.</dd>
+        </dl>
 
         <h3>Population</h3>
-        <p class="stub">Coming soon: population tolerance (shown as a percent), safe-harbor band, and how Mosaic reacts to deviation.</p>
+        <dl>
+          <dt><strong>Population Tolerance</strong></dt>
+          <dd>Per-district deviation from the ideal population that Mosaic will accept as a valid plan. Any candidate that violates this is rejected at the recombination step (default 5%). Tighter is harder to satisfy and slower to converge.</dd>
+          <dt><strong>Safe Harbor</strong></dt>
+          <dd>The no-penalty band for the Population Deviation score (default 0.25%). Districts inside it contribute 0 to that metric; districts outside contribute <code>(excess²)</code>, summed as mean + max so a single outlier cannot be averaged away. Clamped at run-start to never exceed Population Tolerance.</dd>
+        </dl>
 
         <h3>Annealing</h3>
-        <p class="stub">Coming soon: GUIDED vs STATIC cooling schedules, initial / final temperature, when to use which.</p>
+        <dl>
+          <dt><strong>GUIDED cooling (recommended)</strong></dt>
+          <dd>Temperature drops fastest during an initial guide window (a fraction of max iterations) and tapers off afterward. The schedule self-tunes to acceptance rate, so the same settings work across very different shapefiles and weight mixes.</dd>
+          <dt><strong>STATIC cooling</strong></dt>
+          <dd>Temperature decays on a fixed geometric schedule from an initial to a final value. Useful when reproducing a published methodology or when you want fine control over the cooling curve. Requires more manual tuning to match GUIDED's quality.</dd>
+          <dt><strong>n=3 ReCom Mix slider</strong></dt>
+          <dd>Frozen at run start (see ReCom). Listed here too because the Annealing popup is where it lives in the GUI.</dd>
+        </dl>
 
         <h3>Scoring weights</h3>
         <p>Each enabled metric is multiplied by its weight and summed into <code>PlanScore.total</code>, which the optimizer minimizes. Weight 0 disables the metric; the computation is skipped, reducing per-iteration cost. Per-metric contribution formulas are in the <a href="#metrics">Metrics glossary</a>.</p>
@@ -330,19 +350,48 @@
       <!-- Charts ──────────────────────────────────────────────────────────── -->
       <section id="charts" class="prose-block mt-16">
         <h2 class="text-2xl font-bold tracking-tight">Reading the charts</h2>
-        <p class="stub">Coming soon: score history panel, partisanship reference lines, the single-county max-feasible line, and what each axis represents.</p>
+        <p>The left side of the GUI shows live charts you can toggle from the <strong>Panels</strong> menu. The most useful ones during a run:</p>
+        <dl>
+          <dt><strong>Score History</strong></dt>
+          <dd>Total <code>PlanScore.total</code> over iterations (lower is better). Trends down as annealing cools and the search becomes pickier.</dd>
+          <dt><strong>Per-metric panels</strong></dt>
+          <dd>One chart per enabled metric, plotted in its native units. Metrics with targets (Mean-Median, Efficiency Gap, Expected Seats) draw a horizontal target line for reference.</dd>
+          <dt><strong>Temperature</strong></dt>
+          <dd>The annealing temperature over time. In GUIDED mode the curve is non-linear by design; in STATIC mode it's a clean geometric decay.</dd>
+          <dt><strong>Entropy / Acceptance</strong></dt>
+          <dd>Fraction of recent proposals that were accepted. Falls as the temperature drops; useful diagnostic for whether the schedule is too aggressive (drops to near-zero too early) or too gentle (stays high throughout).</dd>
+        </dl>
+        <p>Most charts will downsample the displayed buffer once it exceeds about 10,000 points so the GUI stays responsive across long runs. The underlying data isn't lost — it just isn't all drawn.</p>
       </section>
 
       <!-- Export ──────────────────────────────────────────────────────────── -->
       <section id="export" class="prose-block mt-16">
         <h2 class="text-2xl font-bold tracking-tight">Exporting results</h2>
-        <p class="stub">Coming soon: the three CSV exports Mosaic produces — final assignments, score history, and per-district metrics.</p>
+        <p>Mosaic writes two CSVs from the toolbar buttons in the main panel. Both reflect the <em>best</em> plan seen during the run (lowest <code>PlanScore.total</code>), not the most recent one.</p>
+        <dl>
+          <dt><strong>Save Assignments &rarr; <code>output/assignments_YYYYMMDD_HHMMSS.csv</code></strong></dt>
+          <dd>One row per precinct: the precinct's ID (from whichever column you picked at load) and the district number. District numbers match the labels shown on the live map — same colours, same labels, no surprises.</dd>
+          <dt><strong>Save Metrics &rarr; <code>output/metrics_YYYYMMDD_HHMMSS.csv</code></strong></dt>
+          <dd>One row per district: population, deviation from ideal, optional vote totals and Dem/Rep percentages, optional Polsby-Popper compactness. Same district numbering as the assignments CSV.</dd>
+        </dl>
+        <p>Both files load directly into Dave's Redistricting App via its <strong>Color Map from File</strong> feature, or join back to your shapefile in QGIS / ArcGIS using the precinct ID column.</p>
       </section>
 
       <!-- FAQ ─────────────────────────────────────────────────────────────── -->
       <section id="faq" class="prose-block mt-16">
         <h2 class="text-2xl font-bold tracking-tight">FAQ &amp; troubleshooting</h2>
-        <p class="stub">Coming soon: which shapefiles work, what the launcher actually installs, common load errors, and performance notes.</p>
+        <dl>
+          <dt><strong>Mosaic crashed during a run. Where's the log?</strong></dt>
+          <dd>Top-level crashes are written to <code>crashes/YYYYMMDD-HHMMSS.log</code> next to where you launched from. The file includes the traceback, Mosaic version, platform, and any context the runner had (current iteration, shapefile path). Attach it when filing an issue.</dd>
+          <dt><strong>Mosaic won't load my shapefile.</strong></dt>
+          <dd>See the <a href="shapefiles.html">shapefile guide</a> &mdash; in particular the <a href="shapefiles.html#problems">"If Mosaic refuses to load"</a> section, which maps each error message to the fix in the source data.</dd>
+          <dt><strong>The launcher fails on first run.</strong></dt>
+          <dd>See the <a href="install.html">install page</a> troubleshooting section &mdash; SmartScreen on Windows, Gatekeeper on Mac, and a few common <code>uv</code> install failure modes.</dd>
+          <dt><strong>Why is the first iteration slow?</strong></dt>
+          <dd>Numba JIT-compiles the hot ReCom path on the first ReCom step (several seconds). Subsequent steps run at hundreds per second. The JIT cache persists across runs, so this only hurts once.</dd>
+          <dt><strong>Can I run multiple chains in parallel?</strong></dt>
+          <dd>Not yet from inside Mosaic. As a workaround, run multiple Mosaic instances in separate folders with different seeds.</dd>
+        </dl>
       </section>
 
       <!-- About ───────────────────────────────────────────────────────────── -->
