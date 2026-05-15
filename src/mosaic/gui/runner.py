@@ -1,6 +1,7 @@
 """Algorithm execution thread for the GUI."""
 
 import logging
+import random as _random
 import time
 from collections import deque
 from typing import Optional
@@ -185,7 +186,7 @@ class AlgorithmRunner:
 
             # Load or build adjacency graph
             cache_path = get_cache_path(inspection.path)
-            self.graph = load_cached_graph(cache_path, gdf)
+            self.graph = load_cached_graph(cache_path, inspection.path, gdf)
 
             if self.graph is not None:
                 log.info(f"Cached graph: {self.graph.number_of_nodes()} nodes, "
@@ -201,12 +202,24 @@ class AlgorithmRunner:
                     status_message="Building adjacency graph...",
                 )
                 self.graph = build_adjacency_graph(gdf)
-                save_cached_graph(self.graph, cache_path)
+                save_cached_graph(self.graph, cache_path, inspection.path)
                 log.info(f"Built graph: {self.graph.number_of_nodes()} nodes, "
                          f"{self.graph.number_of_edges()} edges")
                 self.state.update(
                     status_message=f"Built graph ({self.graph.number_of_edges():,} edges)",
                 )
+
+            from mosaic.io.validate import check_connectivity
+            conn_issues = check_connectivity(self.graph)
+            if conn_issues:
+                msg = conn_issues[0]
+                log.error(msg)
+                self.state.update(
+                    status=AlgorithmStatus.ERROR,
+                    error_message=msg,
+                    status_message=(msg[:80] + "...") if len(msg) > 80 else msg,
+                )
+                return False
 
             self.graph_ig = nx_to_igraph(self.graph)
             self.graph_ctx = GraphContext(self.graph_ig)
@@ -215,6 +228,7 @@ class AlgorithmRunner:
             pp_cache_path = get_pp_cache_path(inspection.path)
             self.pp_data = load_cached_pp_data(
                 pp_cache_path,
+                inspection.path,
                 n_precincts=n,
                 n_edges=self.graph.number_of_edges(),
             )
@@ -225,7 +239,7 @@ class AlgorithmRunner:
                 self.state.update(status_message="Precomputing geometry data...")
                 self.pp_data = precompute_pp_data(gdf, self.graph)
                 if self.pp_data is not None:
-                    save_cached_pp_data(self.pp_data, pp_cache_path)
+                    save_cached_pp_data(self.pp_data, pp_cache_path, inspection.path)
                     log.info(f"Saved PP geometry cache to {pp_cache_path}")
 
             n_edges = self.graph.number_of_edges()
@@ -238,8 +252,16 @@ class AlgorithmRunner:
             return True
 
         except Exception as e:
+            from mosaic.crash import write_crash_log
+            crash_path = write_crash_log(
+                e,
+                context={
+                    "phase": "complete_load",
+                    "shapefile": str(getattr(inspection, "path", "?")),
+                },
+            )
             log.error(f"complete_load error: {e}", exc_info=True)
-            msg = f"{type(e).__name__}: {e}"
+            msg = f"{type(e).__name__}: {e}  (log: {crash_path})"
             self.state.update(
                 status=AlgorithmStatus.ERROR,
                 error_message=msg,
@@ -264,6 +286,17 @@ class AlgorithmRunner:
             "county_bias_enabled", "county_bias",
             "n3_probability", "n3_max_attempts_per_stage",
         )
+
+        # If user supplied a seed, seed BOTH RNGs the algorithm touches:
+        # np.random (tree weights, recom edge picks) and Python's random
+        # (annealing Metropolis accept). seed=None (GUI value 0) means
+        # "fresh random run" -- leave RNG state alone so reruns differ.
+        if seed is not None:
+            np.random.seed(seed)
+            _random.seed(seed)
+            log.info(f"Run seed: {seed}")
+        else:
+            log.info("Run seed: random (no seed set)")
 
         ideal_pop = self.populations.sum() / num_districts
         ctx = self.graph_ctx
@@ -575,5 +608,17 @@ class AlgorithmRunner:
             )
 
         except Exception as e:
+            from mosaic.crash import write_crash_log
+            crash_path = write_crash_log(
+                e,
+                context={
+                    "phase": "run_algorithm",
+                    "iteration": locals().get("iteration", "?"),
+                    "max_iterations": locals().get("max_iterations", "?"),
+                },
+            )
             log.error(f"Algorithm error: {e}", exc_info=True)
-            self.state.update(status=AlgorithmStatus.ERROR, error_message=str(e))
+            self.state.update(
+                status=AlgorithmStatus.ERROR,
+                error_message=f"{type(e).__name__}: {e}  (log: {crash_path})",
+            )

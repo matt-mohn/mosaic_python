@@ -1,5 +1,6 @@
 """Shapefile loading utilities."""
 
+import hashlib
 import geopandas as gpd
 import pandas as pd
 from pathlib import Path
@@ -45,3 +46,24 @@ def load_shapefile(path: str | Path) -> gpd.GeoDataFrame:
         )
 
     return gdf
+
+
+def shapefile_fingerprint(shapefile_path: str | Path) -> dict:
+    """SHA-256 + size of the .shp and .dbf bytes.
+
+    Used by the graph and PP caches to detect that a shapefile's *contents*
+    changed even when its filename did not. Returns an empty dict if either
+    sidecar is missing — callers treat that as "do not cache."
+    """
+    p = Path(shapefile_path)
+    out: dict = {}
+    for label, path in (("shp", p), ("dbf", p.with_suffix(".dbf"))):
+        if not path.exists():
+            return {}
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+        out[label] = h.hexdigest()
+        out[f"{label}_size"] = path.stat().st_size
+    return out

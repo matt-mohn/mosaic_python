@@ -1036,6 +1036,15 @@ class MosaicApp:
                 label="Random Seed  (0 = random)",
                 default_value=0, min_value=0, width=120,
             )
+            self._tooltip(
+                self._seed,
+                "Set a non-zero seed to make a run reproducible. 0 leaves "
+                "the RNG random so each run differs.\n\n"
+                "Reproducibility is best-effort: identical results require the "
+                "same machine, same Mosaic version, and same shapefile. "
+                "Cross-machine or cross-version runs may diverge slightly due "
+                "to floating-point ordering in numpy/igraph.",
+            )
             dpg.add_spacer(height=8)
             dpg.add_button(
                 label="Close",
@@ -2045,10 +2054,19 @@ class MosaicApp:
 
         # ── Status / iteration ────────────────────────────────────────────────
         msg = snap["status_message"]
-        dpg.set_value(
-            self._status_txt,
-            "Status: " + status.value + (" -- " + msg if msg else ""),
-        )
+        if status == AlgorithmStatus.ERROR:
+            err = self.state.error_message or msg
+            dpg.set_value(
+                self._status_txt,
+                "ERROR — " + err if err else "ERROR",
+            )
+            self.theme.retoken(self._status_txt, "error")
+        else:
+            dpg.set_value(
+                self._status_txt,
+                "Status: " + status.value + (" -- " + msg if msg else ""),
+            )
+            self.theme.retoken(self._status_txt, "body")
         cur    = snap["current_iteration"]
         max_it = snap["max_iterations"]
         dpg.set_value(self._iter_txt, f"Iteration: {cur:,} / {max_it:,}")

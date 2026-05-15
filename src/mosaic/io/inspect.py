@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -28,6 +29,7 @@ class ColumnInfo:
     n_null: int
     is_numeric: bool
     col_sum: Optional[float] = None   # only for numeric columns
+    min_value: Optional[float] = None  # only for numeric columns; used for negative detection
 
 
 @dataclass
@@ -47,8 +49,12 @@ class ShapefileInspection:
     n_precincts: int
     columns: list[str]                     # non-geometry column names, in file order
     column_info: dict[str, ColumnInfo]
-    geometry_valid: int
-    geometry_invalid: int
+    geometry_valid: int                    # is_valid == True (informational only)
+    geometry_invalid: int                  # is_valid == False (informational only)
+    # Strict-blocker geometry counts — any > 0 means Mosaic can't honestly run:
+    geometry_null: int = 0                 # null or empty geom
+    geometry_wrong_type: int = 0           # not Polygon / MultiPolygon
+    geometry_zero_area: int = 0            # area == 0
     load_error: Optional[str] = None
     hint_pop_col: Optional[str] = None    # auto-detected suggestion
     hint_id_col: Optional[str] = None
@@ -180,10 +186,23 @@ def inspect_shapefile(path: str | Path) -> ShapefileInspection:
                 n_null=int(s.isna().sum()),
                 is_numeric=is_num,
                 col_sum=float(s.sum()) if is_num else None,
+                min_value=float(s.min()) if is_num and s.notna().any() else None,
             )
 
         valid_mask = gdf.geometry.is_valid
         n_valid = int(valid_mask.sum())
+
+        # Strict-blocker geometry breakdown.
+        null_mask = gdf.geometry.isna() | gdf.geometry.is_empty
+        types = gdf.geometry.geom_type
+        wrong_type_mask = ~types.isin(["Polygon", "MultiPolygon"]) & ~null_mask
+        # Zero-area only meaningful for polygon-typed, non-null rows.
+        # Suppress the geographic-CRS warning here; CRS handling is a separate
+        # workstream and ``area == 0`` still flags truly empty polygons either way.
+        polygonal_mask = types.isin(["Polygon", "MultiPolygon"]) & ~null_mask
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="Geometry is in a geographic CRS")
+            zero_area_mask = polygonal_mask & (gdf.geometry.area == 0)
 
         return ShapefileInspection(
             path=path,
@@ -193,6 +212,9 @@ def inspect_shapefile(path: str | Path) -> ShapefileInspection:
             column_info=col_info,
             geometry_valid=n_valid,
             geometry_invalid=n - n_valid,
+            geometry_null=int(null_mask.sum()),
+            geometry_wrong_type=int(wrong_type_mask.sum()),
+            geometry_zero_area=int(zero_area_mask.sum()),
             hint_pop_col=_hint(cols, _POP_HINTS, numeric_only=True, col_info=col_info),
             hint_id_col=_hint(cols, _ID_HINTS),
             hint_county_col=_hint(cols, _COUNTY_HINTS),

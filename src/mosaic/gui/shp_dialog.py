@@ -191,14 +191,29 @@ class ShapefileDialog:
             dpg.configure_item("shp_dialog", show=True)
             return
 
-        if inspection.geometry_invalid == 0:
+        strict_bad = (inspection.geometry_null
+                      + inspection.geometry_wrong_type
+                      + inspection.geometry_zero_area)
+        if strict_bad > 0:
+            parts: list[str] = []
+            if inspection.geometry_null:
+                parts.append(f"{inspection.geometry_null} null/empty")
+            if inspection.geometry_wrong_type:
+                parts.append(f"{inspection.geometry_wrong_type} non-polygon")
+            if inspection.geometry_zero_area:
+                parts.append(f"{inspection.geometry_zero_area} zero-area")
+            status_str = (f"{inspection.n_precincts:,} precincts  |  "
+                          f"blocking: {', '.join(parts)}")
+            status_token = "error"
+        elif inspection.geometry_invalid == 0:
             status_str = (f"{inspection.n_precincts:,} precincts loaded  |  "
                           f"all geometries valid")
             status_token = "ok"
         else:
             status_str = (f"{inspection.n_precincts:,} precincts  |  "
                           f"{inspection.geometry_invalid} invalid geometr"
-                          + ("y" if inspection.geometry_invalid == 1 else "ies"))
+                          + ("y" if inspection.geometry_invalid == 1 else "ies")
+                          + " (informational — does not block load)")
             status_token = "warning"
 
         dpg.set_value(self._status_text, status_str)
@@ -409,10 +424,19 @@ class ShapefileDialog:
             dpg.set_value(self._confirm_err, "Please select a Precinct ID column.")
             return
 
-        pop_info = insp.column_info.get(config.pop_col)
-        if pop_info and not pop_info.is_numeric:
-            dpg.set_value(self._confirm_err,
-                          f"'{config.pop_col}' is not numeric — choose a different column.")
+        from mosaic.io.validate import check_geometry, check_columns
+        geom_issues = check_geometry(insp)
+        if geom_issues:
+            dpg.set_value(self._confirm_err, geom_issues[0])
+            return
+        col_issues = check_columns(
+            insp,
+            pop_col=config.pop_col,
+            vote_cols=config.elections,
+            county_col=config.county_col,
+        )
+        if col_issues:
+            dpg.set_value(self._confirm_err, col_issues[0])
             return
 
         dpg.configure_item("shp_dialog", show=False)

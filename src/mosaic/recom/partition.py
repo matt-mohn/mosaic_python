@@ -71,6 +71,10 @@ def create_initial_partition(
     """
     if seed is not None:
         np.random.seed(seed)
+        # NOTE: runner.run_algorithm() seeds both np.random and Python's
+        # random before calling this. The dual-seed path is the source of
+        # truth; this fallback only fires when partition is invoked directly
+        # outside the GUI (tests, scripts).
 
     for restart in range(_MAX_RESTARTS):
         if should_cancel and should_cancel():
