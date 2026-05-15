@@ -219,10 +219,15 @@ class MosaicApp:
         # Stored after the user confirms the shapefile dialog
         self._loaded_config: Optional[ShapefileConfig] = None
 
-        # Map background-load tracking (app-local, no SharedState)
+        # Map background-load tracking (app-local, no SharedState).
+        # Tracking by (path, gdf id) so a re-import of the same path with
+        # edited content still triggers a fresh MapView load — otherwise the
+        # map keeps stale dimensions and render_assignment indexes past the
+        # new assignment array.
         self._map_loading: bool = False
         self._map_ready: bool = False
         self._map_loaded_path: str = ""
+        self._map_loaded_gdf_id: int = 0
 
         # Plot appearance toggle (app-local)
         self._limit_plots: int | str = ""   # DPG checkbox tag, set during setup
@@ -1914,16 +1919,21 @@ class MosaicApp:
 
         # ── Map: trigger background load when new shapefile is ready ──────────
         loaded_path = self.state.shapefile_path
+        loaded_gdf_id = (id(self.runner.gdf)
+                         if self.runner and self.runner.gdf is not None
+                         else 0)
         not_loading = status not in (AlgorithmStatus.LOADING,
                                      AlgorithmStatus.BUILDING_GRAPH)
         if (loaded_path
-                and loaded_path != self._map_loaded_path
+                and (loaded_path != self._map_loaded_path
+                     or loaded_gdf_id != self._map_loaded_gdf_id)
                 and not self._map_loading
                 and not_loading
                 and self.runner
                 and self.runner.gdf is not None):
             self._map_loading = True
             self._map_loaded_path = loaded_path
+            self._map_loaded_gdf_id = loaded_gdf_id
             gdf_ref = self.runner.gdf
             county_array_ref = self.runner.county_array
             dem_ref = (self.runner.election_arrays[0][0]

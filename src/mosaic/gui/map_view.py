@@ -25,6 +25,7 @@ Overlay modes (instance flags):
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -33,6 +34,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 import dearpygui.dearpygui as dpg
+
+log = logging.getLogger("mosaic")
 
 # District-label font: bundled Inter SemiBold; fall back to Arial then default.
 _LABEL_FONT_PATH = (
@@ -378,6 +381,20 @@ class MapView:
         GUI thread only.
         """
         if not self._loaded:
+            return
+
+        # Safety: if the assignment array length doesn't match what the
+        # MapView was loaded with, skip this render rather than indexing past
+        # the array. Hit when a re-import of the same shapefile path with
+        # edited content slipped past the reload trigger; the upstream fix
+        # tracks gdf identity, but this guard prevents an IndexError crash
+        # even when state goes out of sync.
+        if len(assignment) != self._n_precincts:
+            log.warning(
+                f"MapView render skipped: assignment length {len(assignment)} "
+                f"does not match loaded precincts {self._n_precincts}. "
+                "Map is stale; reload the shapefile."
+            )
             return
 
         pm = self._pixel_map
