@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Fork Mosaic
+    url: https://github.com/matt-mohn/mosaic_python/fork
+    about: Want to extend or modify Mosaic? Fork it — feature PRs are unlikely to be reviewed.
+  - name: Contributing & maintenance posture
+    url: https://github.com/matt-mohn/mosaic_python/blob/main/CONTRIBUTING.md
+    about: Mosaic is solo-maintained. See here for what kinds of contributions are welcome.

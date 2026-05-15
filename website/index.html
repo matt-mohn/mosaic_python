@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mosaic — redistricting via recombination</title>
+  <meta name="description" content="A desktop GUI for ReCom + simulated annealing redistricting.">
+  <link rel="icon" href="mosaic_logo.png">
+
+  <!-- Open Graph / social previews -->
+  <meta property="og:type"        content="website">
+  <meta property="og:title"       content="Mosaic — redistricting via recombination">
+  <meta property="og:description" content="A desktop GUI for ReCom + simulated annealing redistricting.">
+  <meta property="og:image"       content="mosaic_logo.png">
+  <meta name="twitter:card"        content="summary">
+  <meta name="twitter:title"       content="Mosaic — redistricting via recombination">
+  <meta name="twitter:description" content="A desktop GUI for ReCom + simulated annealing redistricting.">
+  <meta name="twitter:image"       content="mosaic_logo.png">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+          colors: {
+            ink:         '#1a1f2c',
+            'ink-soft':  '#4a5263',
+            'ink-mute':  '#7c8497',
+            paper:       '#fafbfc',
+            'paper-2':   '#f1f3f7',
+            navy:        '#1d4180',
+            'navy-soft': '#e6ecf6',
+            gold:        '#f4b631',
+            line:        '#e3e7ef',
+          },
+          boxShadow: {
+            'card': '0 1px 2px rgba(20, 28, 48, 0.04), 0 8px 24px rgba(20, 28, 48, 0.06)',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    html { scroll-behavior: smooth; }
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .dot-grid {
+      background-image: radial-gradient(circle, #d8dde8 1px, transparent 1px);
+      background-size: 22px 22px;
+    }
+  </style>
+</head>
+<body class="bg-paper text-ink">
+
+  <!-- ── Top bar ───────────────────────────────────────────────────────────── -->
+  <header class="border-b border-line bg-paper/80 backdrop-blur sticky top-0 z-10">
+    <div class="max-w-5xl mx-auto px-6 py-3 flex items-center justify-between">
+      <a href="#" class="flex items-center gap-2.5 font-semibold tracking-tight text-lg">
+        <img src="mosaic_logo.png" alt="" class="w-7 h-7">
+        Mosaic
+      </a>
+      <nav class="text-sm text-ink-soft hidden sm:flex items-center gap-7">
+        <a href="#features" class="hover:text-ink transition">Features</a>
+        <a href="#screenshots" class="hover:text-ink transition">Screenshots</a>
+        <a href="#install" class="hover:text-ink transition">Install</a>
+        <a href="help.html" class="hover:text-ink transition">Docs</a>
+        <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub →</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ── Hero ──────────────────────────────────────────────────────────────── -->
+  <section class="relative">
+    <div class="dot-grid absolute inset-0 opacity-60 pointer-events-none"></div>
+    <div class="relative max-w-5xl mx-auto px-6 pt-20 pb-12 text-center">
+      <img src="mosaic_logo.png" alt="Mosaic logo" class="mx-auto w-24 h-24 drop-shadow-md">
+      <h1 class="mt-6 text-5xl sm:text-6xl font-bold tracking-tight text-ink leading-[1.05]">Mosaic</h1>
+      <p class="mt-4 text-lg text-ink-soft">
+        Redistricting via Recombination, with Simulated Annealing.
+      </p>
+      <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
+        <a href="#install"
+           class="px-5 py-2.5 rounded-lg bg-ink text-paper font-medium hover:bg-ink-soft transition">
+          Get started
+        </a>
+        <a href="https://github.com/matt-mohn/mosaic_python"
+           class="px-5 py-2.5 rounded-lg border border-line text-ink hover:bg-paper-2 transition flex items-center gap-2">
+          <svg class="w-4 h-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 005.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          GitHub
+        </a>
+      </div>
+    </div>
+
+    <!-- Hero visual -->
+    <div class="relative max-w-5xl mx-auto px-6 pb-20 flex justify-center">
+      <img src="hero.gif"
+           alt="Mosaic running a redistricting plan, choropleth redrawing each iteration"
+           class="block max-h-[250px] w-auto rounded-lg border border-line shadow-card">
+    </div>
+  </section>
+
+  <!-- ── About ─────────────────────────────────────────────────────────────── -->
+  <section class="border-t border-line bg-white">
+    <div class="max-w-3xl mx-auto px-6 py-16">
+      <p class="text-lg text-ink leading-relaxed">
+        Mosaic is a desktop tool for ReCom + simulated annealing redistricting.
+        Load a shapefile, configure scoring, and watch each iteration redraw
+        the map and update the metrics in real time.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── Features ──────────────────────────────────────────────────────────── -->
+  <section id="features" class="border-t border-line">
+    <div class="max-w-5xl mx-auto px-6 py-16">
+      <h2 class="text-2xl font-bold tracking-tight">Features</h2>
+
+      <div class="mt-8 grid md:grid-cols-3 gap-6">
+
+        <div class="p-6 rounded-xl border border-line bg-white">
+          <div class="w-10 h-10 rounded-lg bg-navy-soft flex items-center justify-center">
+            <svg class="w-5 h-5 text-navy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/>
+              <line x1="8" y1="2" x2="8" y2="18"/>
+              <line x1="16" y1="6" x2="16" y2="22"/>
+            </svg>
+          </div>
+          <h3 class="mt-4 text-base font-semibold text-ink">Live map</h3>
+          <p class="mt-2 text-sm text-ink-soft leading-relaxed">
+            The choropleth redraws each iteration as ReCom merges and re-splits districts.
+          </p>
+        </div>
+
+        <div class="p-6 rounded-xl border border-line bg-white">
+          <div class="w-10 h-10 rounded-lg bg-navy-soft flex items-center justify-center">
+            <svg class="w-5 h-5 text-navy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/>
+              <line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/>
+              <line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/>
+              <line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/>
+              <line x1="17" y1="16" x2="23" y2="16"/>
+            </svg>
+          </div>
+          <h3 class="mt-4 text-base font-semibold text-ink">Weighted scoring</h3>
+          <p class="mt-2 text-sm text-ink-soft leading-relaxed">
+            Compactness, county splits, population deviation, mean-median, efficiency gap, and more.
+          </p>
+        </div>
+
+        <div class="p-6 rounded-xl border border-line bg-white">
+          <div class="w-10 h-10 rounded-lg bg-navy-soft flex items-center justify-center">
+            <svg class="w-5 h-5 text-navy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </div>
+          <h3 class="mt-4 text-base font-semibold text-ink">CSV export</h3>
+          <p class="mt-2 text-sm text-ink-soft leading-relaxed">
+            Save final assignments, score histories, and per-district metrics for further analysis.
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Screenshots ───────────────────────────────────────────────────────── -->
+  <section id="screenshots" class="border-t border-line bg-paper-2">
+    <div class="max-w-5xl mx-auto px-6 py-16">
+      <h2 class="text-2xl font-bold tracking-tight">Screenshots</h2>
+      <div class="mt-8 grid md:grid-cols-3 gap-6">
+        <figure class="rounded-xl overflow-hidden border border-line bg-white shadow-card">
+          <div class="aspect-[4/3] flex items-center justify-center bg-white p-4">
+            <img src="map_view.png"
+                 alt="Georgia congressional districts rendered as a choropleth in Mosaic, with nine districts in distinct colors."
+                 class="max-w-full max-h-full object-contain">
+          </div>
+          <figcaption class="px-5 py-3 border-t border-line text-sm text-ink-soft">
+            Mosaic can align districts with county boundaries to reduce splits.
+          </figcaption>
+        </figure>
+        <figure class="rounded-xl overflow-hidden border border-line bg-white shadow-card">
+          <div class="aspect-[4/3] flex items-center justify-center bg-white p-4">
+            <img src="scores.png"
+                 alt="Bar chart of Democratic vote share per district, sorted least to most Democratic, with a 50% reference line."
+                 class="max-w-full max-h-full object-contain">
+          </div>
+          <figcaption class="px-5 py-3 border-t border-line text-sm text-ink-soft">
+            Tracking partisanship allows Mosaic to draw maps that are fair, competitive, or neither.
+          </figcaption>
+        </figure>
+        <figure class="rounded-xl overflow-hidden border border-line bg-white shadow-card">
+          <div class="aspect-[4/3] flex items-center justify-center bg-white p-4">
+            <img src="gui.png"
+                 alt="The Mosaic GUI mid-run: Virginia districts on the live map, score history charts, and metric-weight controls."
+                 class="max-w-full max-h-full object-contain">
+          </div>
+          <figcaption class="px-5 py-3 border-t border-line text-sm text-ink-soft">
+            The Mosaic interface during a live run.
+          </figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Install ───────────────────────────────────────────────────────────── -->
+  <section id="install" class="border-t border-line">
+    <div class="max-w-3xl mx-auto px-6 py-16">
+      <h2 class="text-2xl font-bold tracking-tight">Install</h2>
+      <p class="mt-3 text-sm text-ink-soft">Python 3.10 or newer.</p>
+      <div class="mt-5 rounded-xl border border-line bg-ink text-paper p-5 font-mono text-sm leading-relaxed">
+        <span class="text-ink-mute select-none">$ </span>pip install git+https://github.com/matt-mohn/mosaic_python<br>
+        <span class="text-ink-mute select-none">$ </span>mosaic
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Footer ────────────────────────────────────────────────────────────── -->
+  <footer class="border-t border-line bg-paper-2">
+    <div class="max-w-5xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-ink-soft">
+      <div class="flex items-center gap-2">
+        <img src="mosaic_logo.png" alt="" class="w-5 h-5">
+        Mosaic &middot; MIT &middot; Matt Mohn
+      </div>
+      <div class="flex items-center gap-5">
+        <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub</a>
+        <a href="https://github.com/matt-mohn/mosaic_python/blob/main/LICENSE" class="hover:text-ink transition">License</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
