@@ -20,6 +20,7 @@ import pickle
 from pathlib import Path
 from typing import Optional
 
+from mosaic.io.shapefile import shapefile_fingerprint
 from mosaic.scoring.precompute import PPData
 
 log = logging.getLogger("mosaic")
@@ -31,10 +32,15 @@ def get_pp_cache_path(shapefile_path: str | Path, cache_dir: str | Path = "cache
     return Path(cache_dir) / f"{name}.pp.pkl"
 
 
-def save_cached_pp_data(pp_data: PPData, cache_path: str | Path) -> None:
+def save_cached_pp_data(
+    pp_data: PPData,
+    cache_path: str | Path,
+    shapefile_path: str | Path,
+) -> None:
     cache_path = Path(cache_path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
+        "fingerprint": shapefile_fingerprint(shapefile_path),
         "areas": pp_data.areas,
         "ext_perimeters": pp_data.ext_perimeters,
         "edge_u": pp_data.edge_u,
@@ -47,15 +53,15 @@ def save_cached_pp_data(pp_data: PPData, cache_path: str | Path) -> None:
 
 def load_cached_pp_data(
     cache_path: str | Path,
+    shapefile_path: str | Path,
     n_precincts: int,
     n_edges: int,
 ) -> Optional[PPData]:
-    """Load cached PPData if it exists and matches the current graph/gdf.
+    """Load cached PPData iff its fingerprint matches the live shapefile.
 
-    Returns None on any of: missing file, unreadable file, or size mismatch
-    (precinct count or edge count differs from the live graph). A mismatch
-    means the shapefile changed underneath us — better to recompute than
-    silently use stale geometry.
+    Returns None on: missing file, unreadable file, fingerprint mismatch, or
+    size mismatch (precinct/edge count differs from the live graph — defense
+    in depth in case the same shapefile produced a different graph).
     """
     cache_path = Path(cache_path)
     if not cache_path.exists():
@@ -63,13 +69,23 @@ def load_cached_pp_data(
     try:
         with open(cache_path, "rb") as f:
             payload = pickle.load(f)
-        pp = PPData(**payload)
     except Exception as exc:
         log.warning(f"PP cache unreadable at {cache_path}: {exc}. Recomputing.")
         return None
 
-    if len(pp.areas) != n_precincts or len(pp.edge_len) != n_edges:
+    live_fp = shapefile_fingerprint(shapefile_path)
+    if not live_fp or payload.get("fingerprint") != live_fp:
         log.info(
+            f"PP cache stale for {Path(shapefile_path).name} "
+            f"(fingerprint mismatch). Recomputing."
+        )
+        return None
+
+    pp_kwargs = {k: payload[k] for k in ("areas", "ext_perimeters", "edge_u", "edge_v", "edge_len")}
+    pp = PPData(**pp_kwargs)
+
+    if len(pp.areas) != n_precincts or len(pp.edge_len) != n_edges:
+        log.warning(
             f"PP cache size mismatch (cached {len(pp.areas)} precincts / "
             f"{len(pp.edge_len)} edges vs live {n_precincts}/{n_edges}). "
             "Recomputing."
