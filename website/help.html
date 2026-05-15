@@ -135,7 +135,9 @@
         <div class="font-semibold text-ink uppercase tracking-wide text-xs mb-3">On this page</div>
         <a href="#shapefile"        class="block hover:text-ink transition">Loading a shapefile</a>
         <a href="#run-config"       class="block hover:text-ink transition">Run Config reference</a>
+        <a href="#run-controls"     class="block hover:text-ink transition">Run controls</a>
         <a href="#metrics"          class="block hover:text-ink transition">Metrics glossary</a>
+        <a href="#map-overlays"     class="block hover:text-ink transition">Map overlays</a>
         <a href="#charts"           class="block hover:text-ink transition">Reading the charts</a>
         <a href="#export"           class="block hover:text-ink transition">Exporting results</a>
         <a href="#faq"              class="block hover:text-ink transition">FAQ</a>
@@ -186,9 +188,32 @@
           <dt><strong>GUIDED cooling (recommended)</strong></dt>
           <dd>Temperature drops fastest during an initial guide window (a fraction of max iterations) and tapers off afterward. The schedule self-tunes to acceptance rate, so the same settings work across very different shapefiles and weight mixes.</dd>
           <dt><strong>STATIC cooling</strong></dt>
-          <dd>Temperature decays on a fixed geometric schedule from an initial to a final value. Useful when reproducing a published methodology or when you want fine control over the cooling curve. Requires more manual tuning to match GUIDED's quality.</dd>
+          <dd>Temperature decays on a fixed geometric schedule. Useful when reproducing a published methodology or when you want fine control over the cooling curve. Requires more manual tuning to match GUIDED's quality.</dd>
+          <dt><strong>Initial Temperature factor &amp; mode</strong></dt>
+          <dd>
+            <code>PROPORTIONAL</code> (default) multiplies the factor by the initial plan's score: starting temp = <code>factor × initial_score</code> (default factor 0.2). This is the right mode when you don't know what magnitudes to expect from your weight mix — the temperature scales with whatever the score actually is.<br>
+            <code>NOMINAL</code> uses the factor as an absolute temperature. Use this when you have a calibrated target temperature in mind, e.g. when reproducing a specific run.
+          </dd>
+          <dt><strong>GUIDED — Guide Fraction &amp; Target Temperature</strong></dt>
+          <dd>The schedule is sized so that temperature reaches Target Temperature at <code>Guide Fraction × max_iterations</code>. Defaults: 0.9 and 1.0. Lowering Guide Fraction means faster cooling (more aggressive); lowering Target Temperature means a colder endpoint (less random late in the run).</dd>
+          <dt><strong>STATIC — Cooling Rate</strong></dt>
+          <dd>Per-iteration temperature multiplier (default 0.9995, meaning temp drops 0.05% per step). The total cooling over a run is <code>cooling_rate^max_iterations</code>; e.g. 0.9995 over 10,000 iterations leaves temperature at about 0.7% of initial.</dd>
+          <dt><strong>Launch Watch</strong></dt>
+          <dd>When enabled (default on, at iteration 250), Mosaic re-anchors the temperature to the current score after the first 250 iterations. Useful when score collapses early (common with County Splits and County-Edge Bias enabled) and the initial-anchored temperature would otherwise become too hot to be useful by the time the score has stabilized.</dd>
           <dt><strong>n=3 ReCom Mix slider</strong></dt>
           <dd>Frozen at run start (see ReCom). Listed here too because the Annealing popup is where it lives in the GUI.</dd>
+        </dl>
+
+        <h3>Seed</h3>
+        <dl>
+          <dt><strong>Random Seed</strong></dt>
+          <dd>Sets the RNG state at the start of the run. <code>0</code> (default) leaves the RNG random, so every run is different. Any non-zero integer makes a run reproducible <em>on the same machine, with the same Mosaic version, with the same shapefile</em>. Cross-machine or cross-version runs may diverge slightly due to floating-point ordering inside numpy / igraph; the seed buys you reproducibility, not bit-exactness across environments.</dd>
+        </dl>
+
+        <h3>County-Edge Bias</h3>
+        <dl>
+          <dt><strong>County-Edge Bias</strong> (enable + Multiplier slider)</dt>
+          <dd>Makes ReCom less likely to <em>propose</em> cut edges that cross county lines when generating new district boundaries. Higher multiplier = stronger preference for cuts along county borders. Distinct from the <strong>County Splits</strong> score: County Splits penalizes splits in the score function (post hoc), County-Edge Bias steers the proposal distribution (per step). The two work well together — County-Edge Bias keeps splits rare in proposals; County Splits cleans up the ones that do happen.</dd>
         </dl>
 
         <h3>Scoring weights</h3>
@@ -204,6 +229,22 @@
           <dd>Standard deviation of a shared partisan-environment swing added to every district before computing win probability. Higher values widen the partisan metric distributions.</dd>
         </dl>
         <p>Combined as <code>σ_combined = √(σ_swing² + σ_district²)</code>. For point-estimate behavior, set <code>election_swing_sigma</code> to its minimum and disable Robust EG (Partisanship popup &rarr; Efficiency Gap mode &rarr; Static).</p>
+      </section>
+
+      <!-- Run controls ────────────────────────────────────────────────────── -->
+      <section id="run-controls" class="prose-block mt-16">
+        <h2 class="text-2xl font-bold tracking-tight">Run controls</h2>
+        <p>Four buttons in the main panel drive a run.</p>
+        <dl>
+          <dt><strong>Start</strong></dt>
+          <dd>Begins (or resumes) optimisation with the current Run Config and score weights. Most settings are frozen at run start &mdash; including the n=3 mix probability and the annealing schedule &mdash; so changes to the popups during a run don't take effect until you Reset.</dd>
+          <dt><strong>Pause</strong></dt>
+          <dd>Stops the algorithm thread at the next clean iteration boundary. Charts and the map stay where they were. Click Start again to resume from the same iteration.</dd>
+          <dt><strong>Revert to Best</strong></dt>
+          <dd>Restores the current assignment to the best-scoring plan seen so far in this run, without resetting the iteration counter or temperature. Useful when the algorithm has wandered into a worse region and you want to continue annealing from a known-good point. The score history charts keep their full trace.</dd>
+          <dt><strong>Reset</strong></dt>
+          <dd>Discards the current run entirely. Clears the map, the iteration counter, the score history, and the annealing state. The loaded shapefile and column choices are kept. Use this when you want to try a fresh run with new weights or a new seed.</dd>
+        </dl>
       </section>
 
       <!-- Metrics ─────────────────────────────────────────────────────────── -->
@@ -330,7 +371,7 @@
 
           <dt><strong>Hinge</strong></dt>
           <dd>
-            <p>Probability that the selected party wins at least <code>hinge_threshold</code> seats, under the swing model. Penalty curve matches Chance of Majority.</p>
+            <p>Probability that the selected party wins at least <code>hinge_threshold</code> seats, under the swing model. Penalty curve matches Chance of Majority &mdash; in fact Chance of Majority is exactly Hinge with <code>hinge_threshold = ⌈n/2⌉</code>; Hinge is the generalisation that lets you pick a different seat threshold (supermajority, blocking minority, etc.).</p>
             <table class="meta">
               <tr><th>Unit</th><td>probability [0, 1] (display)</td></tr>
               <tr><th>Direction</th><td>probability pushed toward 1</td></tr>
@@ -344,6 +385,28 @@
               </td></tr>
             </table>
           </dd>
+        </dl>
+      </section>
+
+      <!-- Map overlays ────────────────────────────────────────────────────── -->
+      <section id="map-overlays" class="prose-block mt-16">
+        <h2 class="text-2xl font-bold tracking-tight">Map overlays</h2>
+        <p>Checkboxes under the live map switch what the map shows. Only one of the colouring modes can be active at a time; the others (county lines, labels) stack on top.</p>
+        <dl>
+          <dt><strong>County</strong></dt>
+          <dd>Draws grey lines along county boundaries on top of the current colouring. Useful for eyeballing how often district boundaries follow county lines.</dd>
+          <dt><strong>Splits</strong></dt>
+          <dd>Dims counties that lie entirely inside a single district, leaving split counties at full saturation. Quick visual diagnostic for the County Splits score: more colour = more splits.</dd>
+          <dt><strong>Precinct Results</strong></dt>
+          <dd>Colours each precinct by its Dem vs Rep share (Classic Mosaic red &harr; blue palette). Independent of district boundaries; shows the partisan terrain Mosaic is working over. Requires election columns at load.</dd>
+          <dt><strong>District Results</strong></dt>
+          <dd>Colours each district by its aggregate Dem share. The map view of the same data the Mean-Median, Efficiency Gap, and Competitiveness metrics summarise.</dd>
+          <dt><strong>Compactness</strong></dt>
+          <dd>Colours each district by its Polsby-Popper score (round = greener, elongated = redder). Spot the ugly district at a glance.</dd>
+          <dt><strong>Population Deviation</strong></dt>
+          <dd>Colours each district by signed deviation from ideal population. Underpopulated districts in one direction, overpopulated in the other.</dd>
+          <dt><strong>Labels</strong></dt>
+          <dd>Draws the district number at each district's interior. Number matches the labels in the District Info panel and the exported CSVs.</dd>
         </dl>
       </section>
 
@@ -391,6 +454,8 @@
           <dd>Numba JIT-compiles the hot ReCom path on the first ReCom step (several seconds). Subsequent steps run at hundreds per second. The JIT cache persists across runs, so this only hurts once.</dd>
           <dt><strong>Can I run multiple chains in parallel?</strong></dt>
           <dd>Not yet from inside Mosaic. As a workaround, run multiple Mosaic instances in separate folders with different seeds.</dd>
+          <dt><strong>Mosaic feels slow / the GUI is laggy.</strong></dt>
+          <dd>Two knobs in the View menu help. <strong>Limit plots</strong> trims the score-history buffer to keep chart rendering fast on long runs (the underlying score data isn't lost, just downsampled for display). <strong>Map render interval</strong> sets how often the map redraws during a run; raise it from the default to give the algorithm more CPU. The algorithm itself runs at the same speed either way; both knobs only affect rendering.</dd>
         </dl>
       </section>
 
