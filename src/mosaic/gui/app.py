@@ -2864,9 +2864,35 @@ class MosaicApp:
     # ── Action callbacks ──────────────────────────────────────────────────────
 
     def _on_import_shapefile(self):
-        # Mixing tkinter's Tk root with Dear PyGui crashes on macOS (both
-        # frameworks contend for the Cocoa main run loop). Use DPG's native
-        # file dialog instead.
+        # Platform split: tkinter's filedialog uses each OS's native picker
+        # (clean, what users expect) on Windows and Linux. On macOS, tkinter's
+        # Tk root and Dear PyGui both want to own the Cocoa main run loop and
+        # the combination crashes, so macOS falls back to DPG's own dialog.
+        import sys
+        if sys.platform == "darwin":
+            self._pick_shapefile_dpg()
+        else:
+            self._pick_shapefile_tk()
+
+    def _pick_shapefile_tk(self):
+        import tkinter as tk
+        from tkinter import filedialog
+        from mosaic.paths import shapefiles_dir, mosaic_data_dir
+        shp_dir = shapefiles_dir()
+        initialdir = str(shp_dir if shp_dir.is_dir() else mosaic_data_dir())
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        path = filedialog.askopenfilename(
+            title="Select Shapefile",
+            filetypes=[("Shapefiles", "*.shp"), ("All files", "*.*")],
+            initialdir=initialdir,
+        )
+        root.destroy()
+        if path:
+            self._on_shapefile_selected(None, {"file_path_name": path})
+
+    def _pick_shapefile_dpg(self):
         if dpg.does_item_exist("__shp_file_dialog"):
             dpg.delete_item("__shp_file_dialog")
         from mosaic.paths import shapefiles_dir, mosaic_data_dir
