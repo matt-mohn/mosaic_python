@@ -21,15 +21,20 @@ from pathlib import Path
 from typing import Optional
 
 from mosaic.io.shapefile import shapefile_fingerprint
+from mosaic.paths import cache_dir as _default_cache_dir
 from mosaic.scoring.precompute import PPData
 
 log = logging.getLogger("mosaic")
 
 
-def get_pp_cache_path(shapefile_path: str | Path, cache_dir: str | Path = "cache") -> Path:
+def get_pp_cache_path(
+    shapefile_path: str | Path,
+    cache_dir: str | Path | None = None,
+) -> Path:
     """Sidecar path next to the graph cache: ``cache/<stem>.pp.pkl``."""
+    cdir = Path(cache_dir) if cache_dir is not None else _default_cache_dir()
     name = Path(shapefile_path).stem
-    return Path(cache_dir) / f"{name}.pp.pkl"
+    return cdir / f"{name}.pp.pkl"
 
 
 def save_cached_pp_data(

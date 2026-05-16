@@ -1,0 +1,21 @@
+# Shell scripts must keep LF line endings — macOS / Linux refuse to run
+# them with CRLF (every other line errors as "command not found").
+*.sh         text eol=lf
+*.command    text eol=lf
+
+# Windows batch files prefer CRLF.
+*.bat        text eol=crlf
+*.cmd        text eol=crlf
+
+# Sensible defaults for everything else.
+*           text=auto
+*.png       binary
+*.ico       binary
+*.icns      binary
+*.pkl       binary
+*.shp       binary
+*.shx       binary
+*.dbf       binary
+*.prj       binary
+*.cpg       binary
+*.qpj       binary

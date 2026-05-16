@@ -8,17 +8,22 @@ import networkx as nx
 import geopandas as gpd
 
 from mosaic.io.shapefile import shapefile_fingerprint
+from mosaic.paths import cache_dir as _default_cache_dir
 
 log = logging.getLogger("mosaic")
 
 
-def get_cache_path(shapefile_path: str | Path, cache_dir: str | Path = "cache") -> Path:
+def get_cache_path(
+    shapefile_path: str | Path,
+    cache_dir: str | Path | None = None,
+) -> Path:
     """Cache file path keyed by shapefile stem.
 
     Filename is only the key; content changes are caught by the fingerprint
     stored inside the pickle, not by the filename.
     """
-    return Path(cache_dir) / f"{Path(shapefile_path).stem}.pkl"
+    cdir = Path(cache_dir) if cache_dir is not None else _default_cache_dir()
+    return cdir / f"{Path(shapefile_path).stem}.pkl"
 
 
 def save_cached_graph(

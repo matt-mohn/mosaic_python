@@ -21,30 +21,31 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from mosaic import __version__
-
-
-CRASH_DIR = Path("crashes")
+from mosaic.paths import crash_dir as _default_crash_dir
 
 
 def write_crash_log(
     exc: BaseException,
     context: Mapping[str, Any] | None = None,
-    crash_dir: Path | str = CRASH_DIR,
+    crash_dir: Path | str | None = None,
 ) -> Path:
-    """Write a crash log file and return its path.
+    """Write a crash log file and return its absolute path.
 
     Filename is ``YYYYMMDD-HHMMSS.log`` with a numeric suffix if a same-second
     crash already exists. Contents include Mosaic version, Python version,
     platform, optional caller-supplied context dict, and the full traceback.
+
+    If the log write itself fails the traceback is dumped to stderr so the
+    information is not silently lost.
     """
-    crash_dir = Path(crash_dir)
+    cdir = Path(crash_dir) if crash_dir is not None else _default_crash_dir()
     try:
-        crash_dir.mkdir(parents=True, exist_ok=True)
+        cdir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        path = crash_dir / f"{stamp}.log"
+        path = cdir / f"{stamp}.log"
         counter = 1
         while path.exists():
-            path = crash_dir / f"{stamp}-{counter}.log"
+            path = cdir / f"{stamp}-{counter}.log"
             counter += 1
 
         lines: list[str] = [
@@ -65,6 +66,12 @@ def write_crash_log(
         )
 
         path.write_text("\n".join(lines), encoding="utf-8")
-        return path
-    except Exception:
-        return crash_dir / "(crash log write failed)"
+        return path.resolve()
+    except Exception as log_exc:
+        print(
+            f"\n[mosaic] Could not write crash log to {cdir}: {log_exc}\n"
+            f"[mosaic] Original traceback follows:\n",
+            file=sys.stderr,
+        )
+        traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+        return cdir / "(crash log write failed)"
