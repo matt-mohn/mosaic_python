@@ -2,9 +2,7 @@
 
 import threading
 import time
-import tkinter as tk
 import webbrowser
-from tkinter import filedialog
 from pathlib import Path
 from typing import Optional
 
@@ -1944,11 +1942,32 @@ class MosaicApp:
             pop_ref      = self.runner.populations
             mv = self.map_view
             def _bg_load():
-                mv.load(gdf_ref, county_array=county_array_ref,
-                        dem_votes=dem_ref, gop_votes=gop_ref,
-                        pp_data=pp_data_ref, populations=pop_ref)
-                self._map_loading = False
-                self._map_ready = True
+                try:
+                    mv.load(gdf_ref, county_array=county_array_ref,
+                            dem_votes=dem_ref, gop_votes=gop_ref,
+                            pp_data=pp_data_ref, populations=pop_ref)
+                    self._map_ready = True
+                except Exception as exc:
+                    import sys as _sys
+                    from mosaic.crash import write_crash_log
+                    crash_path = write_crash_log(
+                        exc, context={"phase": "map_view_load"}
+                    )
+                    print(
+                        f"\n[mosaic] Map rendering failed.\n"
+                        f"        {type(exc).__name__}: {exc}\n"
+                        f"        Log: {crash_path}\n",
+                        file=_sys.stderr,
+                    )
+                    self.state.update(
+                        error_message=(
+                            f"Map render failed: {type(exc).__name__}: {exc}\n"
+                            f"Log: {crash_path}"
+                        ),
+                        status_message="Map render failed — see crash log",
+                    )
+                finally:
+                    self._map_loading = False
             threading.Thread(target=_bg_load, daemon=True).start()
 
         if self._map_ready:
@@ -2845,15 +2864,31 @@ class MosaicApp:
     # ── Action callbacks ──────────────────────────────────────────────────────
 
     def _on_import_shapefile(self):
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        path = filedialog.askopenfilename(
-            title="Select Shapefile",
-            filetypes=[("Shapefiles", "*.shp"), ("All files", "*.*")],
-            initialdir=Path.cwd() / "shapefiles",
-        )
-        root.destroy()
+        # Mixing tkinter's Tk root with Dear PyGui crashes on macOS (both
+        # frameworks contend for the Cocoa main run loop). Use DPG's native
+        # file dialog instead.
+        if dpg.does_item_exist("__shp_file_dialog"):
+            dpg.delete_item("__shp_file_dialog")
+        from mosaic.paths import shapefiles_dir, mosaic_data_dir
+        shp_dir = shapefiles_dir()
+        default_path = str(shp_dir if shp_dir.is_dir() else mosaic_data_dir())
+        with dpg.file_dialog(
+            directory_selector=False,
+            show=True,
+            modal=True,
+            callback=self._on_shapefile_selected,
+            cancel_callback=lambda *_: None,
+            default_path=default_path,
+            width=700,
+            height=450,
+            tag="__shp_file_dialog",
+            label="Select Shapefile",
+        ):
+            dpg.add_file_extension(".shp", color=(120, 220, 120, 255))
+            dpg.add_file_extension(".*")
+
+    def _on_shapefile_selected(self, sender, app_data):
+        path = app_data.get("file_path_name", "") if isinstance(app_data, dict) else ""
         if not path:
             return
         self.runner = AlgorithmRunner(self.state)

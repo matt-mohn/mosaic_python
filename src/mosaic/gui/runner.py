@@ -101,13 +101,40 @@ class AlgorithmRunner:
             status_message="Reading shapefile...",
             shapefile_path=path,
         )
-        insp = inspect_shapefile(path)
+        try:
+            insp = inspect_shapefile(path)
+        except Exception as exc:
+            # Without this catch the thread dies silently and the GUI sits on
+            # "Reading shapefile..." forever.
+            import sys as _sys
+            from mosaic.crash import write_crash_log
+            crash_path = write_crash_log(
+                exc, context={"phase": "start_inspection", "shapefile": path}
+            )
+            log.error(f"start_inspection error: {exc}", exc_info=True)
+            print(
+                f"\n[mosaic] Could not read shapefile {path}\n"
+                f"        {type(exc).__name__}: {exc}\n"
+                f"        Log: {crash_path}\n",
+                file=_sys.stderr,
+            )
+            self.state.update(
+                status=AlgorithmStatus.ERROR,
+                error_message=(
+                    f"Could not read shapefile.\n"
+                    f"{type(exc).__name__}: {exc}\n"
+                    f"Log: {crash_path}"
+                ),
+                status_message=f"Read failed: {type(exc).__name__} — see crash log",
+            )
+            return
         self._pending_inspection = insp
 
         if insp.load_error:
             self.state.update(
                 status=AlgorithmStatus.ERROR,
                 error_message=f"Could not read shapefile: {insp.load_error}",
+                status_message="Read failed — see error panel",
             )
         else:
             log.info(f"Inspected {path}: {insp.n_precincts} precincts, "
@@ -252,20 +279,27 @@ class AlgorithmRunner:
             return True
 
         except Exception as e:
+            import sys as _sys
             from mosaic.crash import write_crash_log
+            shp = str(getattr(inspection, "path", "?"))
             crash_path = write_crash_log(
                 e,
-                context={
-                    "phase": "complete_load",
-                    "shapefile": str(getattr(inspection, "path", "?")),
-                },
+                context={"phase": "complete_load", "shapefile": shp},
             )
             log.error(f"complete_load error: {e}", exc_info=True)
-            msg = f"{type(e).__name__}: {e}  (log: {crash_path})"
+            print(
+                f"\n[mosaic] Failed to load {shp}\n"
+                f"        {type(e).__name__}: {e}\n"
+                f"        Log: {crash_path}\n",
+                file=_sys.stderr,
+            )
             self.state.update(
                 status=AlgorithmStatus.ERROR,
-                error_message=msg,
-                status_message=msg,
+                error_message=(
+                    f"{type(e).__name__}: {e}\n"
+                    f"Log: {crash_path}"
+                ),
+                status_message=f"Load failed: {type(e).__name__} — see crash log",
             )
             return False
 
