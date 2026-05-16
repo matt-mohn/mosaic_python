@@ -41,7 +41,7 @@ class SharedState:
 
     # Run parameters (set by GUI before run)
     num_districts: int = 0
-    pop_tolerance: float = 0.05
+    pop_tolerance: float = 0.025
     max_iterations: int = 1000
     seed: Optional[int] = None
 

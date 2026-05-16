@@ -1000,7 +1000,7 @@ class MosaicApp:
         ):
             self._tolerance = dpg.add_slider_float(
                 label="Population Tolerance",
-                default_value=5.0, min_value=0.1, max_value=10.0,
+                default_value=2.5, min_value=0.1, max_value=10.0,
                 format="%.1f %%", width=260,
             )
             self._tooltip(
