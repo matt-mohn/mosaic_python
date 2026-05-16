@@ -181,7 +181,7 @@
         <h3>Population</h3>
         <dl>
           <dt><strong>Population Tolerance</strong></dt>
-          <dd>Per-district deviation from the ideal population that Mosaic will accept as a valid plan. Any candidate that violates this is rejected at the recombination step (default 5%). Tighter is harder to satisfy and slower to converge.</dd>
+          <dd>Per-district deviation from the ideal population that Mosaic will accept as a valid plan. Any candidate that violates this is rejected at the recombination step (default 2.5%). Tighter is harder to satisfy and slower to converge.</dd>
           <dt><strong>Safe Harbor</strong></dt>
           <dd>The no-penalty band for the Population Deviation score (default 0.25%). Districts inside it contribute 0 to that metric; districts outside contribute <code>(excess²)</code>, summed as mean + max so a single outlier cannot be averaged away. Clamped at run-start to never exceed Population Tolerance.</dd>
         </dl>
