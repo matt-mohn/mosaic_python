@@ -2484,7 +2484,7 @@ class MosaicApp:
             self._buf_score, self._buf_acc, self._buf_temp,
             self._buf_cs_score, self._buf_cs_excess, self._buf_cs_clean,
             self._buf_mm, self._buf_eg, self._buf_seats,
-            self._buf_comp, self._buf_pp, self._buf_popdev,
+            self._buf_comp, self._buf_pp, self._buf_reock, self._buf_popdev,
             self._buf_popdev_max, self._buf_popdev_mean, self._buf_cuts,
             self._buf_maj_dem, self._buf_maj_rep, self._buf_hinge,
         ):
