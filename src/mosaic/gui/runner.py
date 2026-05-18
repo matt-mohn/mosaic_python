@@ -272,6 +272,9 @@ class AlgorithmRunner:
                     save_cached_pp_data(self.pp_data, pp_cache_path, inspection.path)
                     log.info(f"Saved PP geometry cache to {pp_cache_path}")
 
+            # Reock directional-extrema precompute (not cached — fast enough to recompute)
+            self.reock_data = precompute_reock_data(gdf)
+
             n_edges = self.graph.number_of_edges()
             log.info(f"Load complete: {n} precincts, {n_edges} edges")
             self.state.update(
