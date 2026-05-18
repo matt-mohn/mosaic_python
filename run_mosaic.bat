@@ -5,6 +5,28 @@ title Mosaic
 :: Move to the folder containing this script
 cd /d "%~dp0"
 
+:: ── Check Microsoft VC++ Runtime (required by Dear PyGui) ─────────────────────
+:: On fresh Windows installs this is often missing and produces a cryptic
+:: "DLL load failed while importing _dearpygui" trace. Catch it here instead.
+if not exist "%SystemRoot%\System32\vcruntime140.dll" goto :need_vcrt
+if not exist "%SystemRoot%\System32\msvcp140.dll" goto :need_vcrt
+goto :find_uv
+
+:need_vcrt
+echo.
+echo Mosaic needs a small Microsoft system component (the VC++ Runtime)
+echo that is not installed on this PC. We'll open the download page now.
+echo.
+echo Steps:
+echo   1) Save and run VC_redist.x64.exe from the page that opens
+echo   2) Click Yes if Windows asks for permission
+echo   3) Close this window, then double-click run_mosaic.bat again
+echo.
+start "" "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+pause
+exit /b 1
+
+:find_uv
 :: ── Locate or install uv ──────────────────────────────────────────────────────
 where uv >nul 2>&1
 if %errorlevel% equ 0 goto :launch
@@ -42,7 +64,7 @@ echo (First launch downloads and installs dependencies -- this takes 2-3 minutes
 echo Subsequent launches are instant.
 echo.
 
-uv run --link-mode copy python -m mosaic.gui.app
+uv run python -m mosaic.gui.app
 
 if %errorlevel% neq 0 (
     echo.
