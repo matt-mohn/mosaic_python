@@ -259,6 +259,7 @@ class MosaicApp:
         self._buf_seats     = _SeriesBuffer()
         self._buf_comp      = _SeriesBuffer()
         self._buf_pp        = _SeriesBuffer()
+        self._buf_reock     = _SeriesBuffer()
         self._buf_popdev     = _SeriesBuffer()
         self._buf_popdev_max = _SeriesBuffer()
         self._buf_popdev_mean = _SeriesBuffer()
@@ -329,6 +330,7 @@ class MosaicApp:
         self._build_dem_seats_panel()
         self._build_comp_panel()
         self._build_pp_panel()
+        self._build_reock_panel()
         self._build_popdev_panel()
         self._build_cut_edges_panel()
         self._build_majority_panel()
@@ -421,6 +423,10 @@ class MosaicApp:
                     self._panel_pp_item = dpg.add_menu_item(
                         label="Compactness", check=True, default_value=False,
                         callback=self._on_panel_pp_toggle,
+                    )
+                    self._panel_reock_item = dpg.add_menu_item(
+                        label="Reock", check=True, default_value=False,
+                        callback=self._on_panel_reock_toggle,
                     )
                     self._panel_popdev_item = dpg.add_menu_item(
                         label="Population Deviation", check=True, default_value=False,
@@ -827,6 +833,8 @@ class MosaicApp:
                                     "Reock", "secondary",
                                 )
                                 self._hint(self._reock_lbl, "reock")
+                                dpg.add_button(label="↗", width=24,
+                                    callback=lambda: self._show_panel("panel_reock", self._panel_reock_item))
                             with dpg.group(tag="reock_controls", show=False):
                                 self._w_reock = dpg.add_slider_int(
                                     label="Weight",
@@ -1521,6 +1529,32 @@ class MosaicApp:
             )
         dpg.set_axis_limits("pp_y", 0.0, 100.0)
 
+    def _build_reock_panel(self):
+        with dpg.window(
+            label="Reock", tag="panel_reock",
+            show=False, width=500, height=295,
+            pos=[_LEFT_W + 80, 80],
+            on_close=lambda: dpg.set_value(self._panel_reock_item, False),
+        ):
+            with dpg.group(tag="reock_plot_grp"):
+                with dpg.plot(height=240, width=-1):
+                    dpg.add_plot_legend()
+                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="reock_x")
+                    with dpg.plot_axis(dpg.mvYAxis, label="Reock (100 = circle)", tag="reock_y"):
+                        dpg.add_line_series([], [], label="Reock", tag="reock_series")
+            self._tooltip(
+                "reock_plot_grp",
+                "Optimizer uses (1 - Reock) as penalty; higher is more compact.",
+            )
+            self.theme.track(
+                dpg.add_text(
+                    "Apply a score to use this panel.",
+                    tag="reock_inactive_lbl", show=False,
+                ),
+                "muted",
+            )
+        dpg.set_axis_limits("reock_y", 0.0, 100.0)
+
     def _build_popdev_panel(self):
         with dpg.window(
             label="Population Deviation", tag="panel_popdev",
@@ -2179,6 +2213,7 @@ class MosaicApp:
             _sed  = list(self.state.dem_seats_history[self._buf_seats.read:])
             _cod  = list(self.state.competitive_count_history[self._buf_comp.read:])
             _pd   = list(self.state.pp_history[self._buf_pp.read:])
+            _rd   = list(self.state.reock_history[self._buf_reock.read:])
             _pvd  = list(self.state.pop_deviation_history[self._buf_popdev.read:])
             _pvd_max  = list(self.state.pop_dev_max_history[self._buf_popdev_max.read:])
             _pvd_mean = list(self.state.pop_dev_mean_history[self._buf_popdev_mean.read:])
@@ -2198,6 +2233,7 @@ class MosaicApp:
         self._buf_seats.add(_sed)
         self._buf_comp.add(_cod)
         self._buf_pp.add([v * 100.0 for v in _pd])
+        self._buf_reock.add([v * 100.0 for v in _rd])
         self._buf_popdev.add(_pvd)
         self._buf_popdev_max.add(_pvd_max)
         self._buf_popdev_mean.add(_pvd_mean)
@@ -2329,6 +2365,12 @@ class MosaicApp:
             dpg.configure_item("pp_inactive_lbl", show=not pp_on)
             if pp_on:
                 _render(self._buf_pp, "pp_series", "pp_x", "pp_y")
+        if dpg.is_item_shown("panel_reock"):
+            reock_on = dpg.get_value(self._reock_enabled)
+            dpg.configure_item("reock_plot_grp",     show=reock_on)
+            dpg.configure_item("reock_inactive_lbl", show=not reock_on)
+            if reock_on:
+                _render(self._buf_reock, "reock_series", "reock_x", "reock_y")
         if dpg.is_item_shown("panel_popdev"):
             popdev_on = dpg.get_value(self._popdev_enabled)
             dpg.configure_item("popdev_plot_grp",     show=popdev_on)
@@ -2452,7 +2494,7 @@ class MosaicApp:
             "score_series", "acc_series", "panel_temp_series",
             "cs_score_series", "cs_excess_series", "cs_clean_series",
             "mm_series", "eg_series", "seats_series",
-            "comp_series", "pp_series",
+            "comp_series", "pp_series", "reock_series",
             "popdev_max_series", "popdev_mean_series", "cuts_series",
             "maj_dem_series", "maj_rep_series", "hinge_series",
         ):
@@ -2754,6 +2796,9 @@ class MosaicApp:
 
     def _on_panel_pp_toggle(self):
         dpg.configure_item("panel_pp", show=dpg.get_value(self._panel_pp_item))
+
+    def _on_panel_reock_toggle(self):
+        dpg.configure_item("panel_reock", show=dpg.get_value(self._panel_reock_item))
 
     def _on_panel_popdev_toggle(self):
         dpg.configure_item("panel_popdev", show=dpg.get_value(self._panel_popdev_item))
@@ -3061,7 +3106,7 @@ class MosaicApp:
         for buf in (
             self._buf_score, self._buf_cs_score, self._buf_cs_excess,
             self._buf_cs_clean, self._buf_mm, self._buf_eg,
-            self._buf_seats, self._buf_comp, self._buf_pp, self._buf_popdev,
+            self._buf_seats, self._buf_comp, self._buf_pp, self._buf_reock, self._buf_popdev,
             self._buf_popdev_max, self._buf_popdev_mean, self._buf_cuts,
             self._buf_maj_dem, self._buf_maj_rep,
         ):
