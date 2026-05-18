@@ -16,6 +16,7 @@ from typing import Optional
 import numpy as np
 
 from mosaic.scoring.precompute import PPData
+from mosaic.scoring.reock import ReockData
 
 
 @dataclass
@@ -24,6 +25,7 @@ class ScoreConfig:
     weight_cut_edges: float = 1.0
     weight_county_splits: float = 0.0
     weight_polsby_popper: float = 0.0
+    weight_reock: float = 0.0
     weight_pop_deviation: float = 0.0
     pop_deviation_safe_harbor: float = 0.0025   # fractional; 0.0025 = 0.25%
     # Partisan metrics (require election data; all off by default)
@@ -51,6 +53,7 @@ class PlanScore:
     cut_edges: int
     county_splits: float = 0.0
     polsby_popper: float = 0.0          # stored as 1 - mean_PP (penalty form)
+    reock: float = 0.0                  # stored as 1 - mean_Reock (penalty form)
     pop_deviation: float = 0.0          # mean squared excess dev × 10,000
     pop_dev_max: float = 0.0            # max |deviation| as % (display only)
     pop_dev_mean: float = 0.0           # mean |deviation| as % (display only)
@@ -76,6 +79,7 @@ def score_plan(
     ideal_pop: Optional[float] = None,
     tolerance: Optional[float] = None,
     pp_data: Optional[PPData] = None,
+    reock_data: Optional[ReockData] = None,
     county_data=None,
     n_districts: Optional[int] = None,
     dem_votes: Optional[np.ndarray] = None,
@@ -89,6 +93,7 @@ def score_plan(
     """
     from mosaic.scoring.county_splits import score_county_splits
     from mosaic.scoring.polsby_popper import score_polsby_popper
+    from mosaic.scoring.reock import score_reock
     from mosaic.scoring.population import score_pop_deviation
     from mosaic.scoring.precompute import CountyData
     from mosaic.scoring.partisan import (
@@ -100,7 +105,7 @@ def score_plan(
 
     cut_edges = len(cut_edge_indices)
     total = config.weight_cut_edges * cut_edges
-    cs_raw = pp_raw = pd_raw = 0.0
+    cs_raw = pp_raw = reock_raw = pd_raw = 0.0
     cs_excess = cs_clean = 0
     mm_raw = eg_raw = seats_raw = comp_raw = 0.0
     maj_d_raw = maj_r_raw = hinge_raw = 0.0
@@ -119,6 +124,11 @@ def score_plan(
             and pp_data is not None and n_districts is not None:
         pp_raw = score_polsby_popper(assignment, pp_data, n_districts)
         total += config.weight_polsby_popper * pp_raw
+
+    if config.weight_reock and assignment is not None \
+            and reock_data is not None and n_districts is not None:
+        reock_raw = score_reock(assignment, reock_data, n_districts)
+        total += config.weight_reock * reock_raw
 
     pd_max = pd_mean = 0.0
     if config.weight_pop_deviation and assignment is not None \
@@ -230,6 +240,7 @@ def score_plan(
         county_excess_splits=cs_excess,
         county_clean_districts=cs_clean,
         polsby_popper=pp_raw,
+        reock=reock_raw,
         pop_deviation=pd_raw,
         pop_dev_max=pd_max,
         pop_dev_mean=pd_mean,

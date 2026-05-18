@@ -300,6 +300,17 @@
             </table>
           </dd>
 
+          <dt><strong>Reock compactness</strong></dt>
+          <dd>
+            <p>Second compactness penalty, complementary to Polsby-Popper. Per-district <code>Reock = area / area(minimum bounding circle)</code> ranges from 0 (elongated) to 1 (circular). Polsby-Popper measures boundary smoothness; Reock measures how round the district is overall. A district can be smooth-edged but stretched thin (high PP, low Reock), or jagged but compact in extent (low PP, high Reock). Optimizing both together usually catches what either misses alone.</p>
+            <p>Mosaic uses a 16-direction approximation rather than the textbook minimum bounding circle, which is too slow to evaluate on every iteration. The approximation caches each precinct's 16 directional extreme vertices once at load, then computes the bounding diameter from those candidate points. Agreement with textbook Reock is within ~0.8 score points on a 0–100 penalty scale. The optimizer treats the approximation as a canonical deterministic score, identical to PP or any other component.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>contribution [0, 100]; chart shows mean Reock in [0, 1]</td></tr>
+              <tr><th>Direction</th><td>lower contribution is better</td></tr>
+              <tr><th>Contribution</th><td><code>(1 − mean(Reock)) × 100</code></td></tr>
+            </table>
+          </dd>
+
           <dt><strong>Mean-Median</strong></dt>
           <dd>
             <p><code>mean(district Dem share) − median(district Dem share)</code>. Non-zero values indicate the mean and median districts disagree on partisan balance. Sign: negative = D advantage, positive = R advantage.</p>
