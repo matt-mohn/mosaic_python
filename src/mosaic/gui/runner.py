@@ -28,6 +28,7 @@ from mosaic.recom.annealing import (
 )
 from mosaic.scoring import score_plan
 from mosaic.scoring.precompute import PPData, precompute_pp_data
+from mosaic.scoring.reock import ReockData, precompute_reock_data
 from mosaic.scoring.cache import (
     get_pp_cache_path, load_cached_pp_data, save_cached_pp_data,
 )
@@ -48,6 +49,7 @@ def _build_score_breakdown(ps, cfg) -> dict:
     _add("Cut Edges",      cfg.weight_cut_edges * ps.cut_edges)
     _add("County Splits",  cfg.weight_county_splits * ps.county_splits)
     _add("Compactness", cfg.weight_polsby_popper * ps.polsby_popper)
+    _add("Reock", cfg.weight_reock * ps.reock)
     _add("Population Deviation", cfg.weight_pop_deviation * ps.pop_deviation)
     if cfg.weight_mean_median:
         _add("Mean-Median",    cfg.weight_mean_median *
@@ -83,6 +85,7 @@ class AlgorithmRunner:
         self.county_array: Optional[np.ndarray] = None
         self.county_pops: Optional[np.ndarray] = None
         self.pp_data: Optional[PPData] = None
+        self.reock_data: Optional[ReockData] = None
         self.election_arrays: list[tuple[np.ndarray, np.ndarray]] = []
         self.id_col_name: str = "precinct_id"
 
@@ -351,6 +354,7 @@ class AlgorithmRunner:
             ideal_pop=ideal_pop,
             tolerance=tolerance,
             pp_data=self.pp_data,
+            reock_data=self.reock_data,
             n_districts=num_districts,
             dem_votes=self.election_arrays[0][0] if self.election_arrays else None,
             gop_votes=self.election_arrays[0][1] if self.election_arrays else None,
@@ -400,6 +404,7 @@ class AlgorithmRunner:
                 self.state.dem_seats_history.append(current_ps.dem_seats)
                 self.state.competitive_count_history.append(0)
                 self.state.pp_history.append(1.0 - current_ps.polsby_popper / 100.0)
+                self.state.reock_history.append(1.0 - current_ps.reock / 100.0)
                 self.state.pop_deviation_history.append(current_ps.pop_deviation)
                 self.state.pop_dev_max_history.append(current_ps.pop_dev_max)
                 self.state.pop_dev_mean_history.append(current_ps.pop_dev_mean)
@@ -585,6 +590,7 @@ class AlgorithmRunner:
                     self.state.dem_seats_history.append(current_ps.dem_seats)
                     self.state.competitive_count_history.append(comp_count)
                     self.state.pp_history.append(1.0 - current_ps.polsby_popper / 100.0)
+                    self.state.reock_history.append(1.0 - current_ps.reock / 100.0)
                     self.state.pop_deviation_history.append(current_ps.pop_deviation)
                     self.state.pop_dev_max_history.append(current_ps.pop_dev_max)
                     self.state.pop_dev_mean_history.append(current_ps.pop_dev_mean)

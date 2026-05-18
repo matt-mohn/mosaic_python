@@ -175,6 +175,12 @@ _HINTS: dict[str, str] = {
         "1.0 = perfectly round, lower means stretched or jagged. "
         "Optimizer uses (1 - PP) as the penalty."
     ),
+    "reock": (
+        "Reock: ratio of district area to its bounding-circle area. "
+        "1.0 = perfect circle, lower means stretched in extent. "
+        "Complementary to Polsby-Popper — PP measures boundary smoothness, Reock measures overall roundness. "
+        "Optimizer uses (1 - Reock) as the penalty."
+    ),
     "mean_median": (
         "Gap between the mean and median Democratic vote share across districts. "
         "A nonzero value signals partisan skew baked into the plan."
@@ -467,6 +473,12 @@ class MosaicApp:
                         callback=lambda: self._set_score_row_vis(
                             "score_row_pp", dpg.get_value(self._svis_pp),
                             self._pp_enabled, self._on_pp_toggle),
+                    )
+                    self._svis_reock = dpg.add_menu_item(
+                        label="Reock", check=True, default_value=False,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_reock", dpg.get_value(self._svis_reock),
+                            self._reock_enabled, self._on_reock_toggle),
                     )
                     self._svis_mm = dpg.add_menu_item(
                         label="Mean-Median", check=True, default_value=False,
@@ -799,6 +811,24 @@ class MosaicApp:
                                     callback=lambda: self._show_panel("panel_pp", self._panel_pp_item))
                             with dpg.group(tag="pp_controls", show=True):
                                 self._w_polsby_popper = dpg.add_slider_int(
+                                    label="Weight",
+                                    default_value=25, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 100,
+                                )
+                            dpg.add_spacer(height=4)
+
+                        with dpg.group(tag="score_row_reock", show=False):
+                            with dpg.group(horizontal=True):
+                                self._reock_enabled = dpg.add_checkbox(
+                                    default_value=False,
+                                    callback=self._on_reock_toggle,
+                                )
+                                self._reock_lbl = self.theme.text(
+                                    "Reock", "secondary",
+                                )
+                                self._hint(self._reock_lbl, "reock")
+                            with dpg.group(tag="reock_controls", show=False):
+                                self._w_reock = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=25, min_value=0, max_value=100,
                                     width=_SCORE_COL_W - 100,
@@ -2596,6 +2626,12 @@ class MosaicApp:
                            "accent_green" if en else "disabled")
         dpg.configure_item("pp_controls", show=en)
 
+    def _on_reock_toggle(self):
+        en = dpg.get_value(self._reock_enabled)
+        self.theme.retoken(self._reock_lbl,
+                           "accent_green" if en else "secondary")
+        dpg.configure_item("reock_controls", show=en)
+
     def _on_popdev_score_toggle(self):
         en = dpg.get_value(self._popdev_enabled)
         self.theme.retoken(self._popdev_lbl,
@@ -2950,6 +2986,7 @@ class MosaicApp:
             self.state.dem_seats_history = []
             self.state.competitive_count_history = []
             self.state.pp_history = []
+            self.state.reock_history = []
             self.state.pop_deviation_history = []
             self.state.pop_dev_max_history = []
             self.state.pop_dev_mean_history = []
@@ -3063,6 +3100,8 @@ class MosaicApp:
         w_cs   = dpg.get_value(self._w_county_splits) if cs_on else 0.0
         w_pp   = (dpg.get_value(self._w_polsby_popper)
                   if dpg.get_value(self._pp_enabled) else 0.0)
+        w_reock = (dpg.get_value(self._w_reock)
+                   if dpg.get_value(self._reock_enabled) else 0.0)
         w_pd   = (dpg.get_value(self._w_pop_deviation)
                   if dpg.get_value(self._popdev_enabled) else 0.0)
         # Safe harbor cannot exceed population tolerance
@@ -3077,6 +3116,7 @@ class MosaicApp:
             weight_cut_edges=w_cut,
             weight_county_splits=w_cs,
             weight_polsby_popper=w_pp,
+            weight_reock=w_reock,
             weight_pop_deviation=w_pd,
             pop_deviation_safe_harbor=_harbor,
             weight_mean_median=dpg.get_value(self._w_mean_median) if mm_on else 0.0,
@@ -3157,6 +3197,7 @@ class MosaicApp:
             self.state.dem_seats_history = []
             self.state.competitive_count_history = []
             self.state.pp_history = []
+            self.state.reock_history = []
             self.state.pop_deviation_history = []
             self.state.pop_dev_max_history = []
             self.state.pop_dev_mean_history = []
