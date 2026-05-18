@@ -114,6 +114,7 @@ _CONTRIB_BAR_METRICS = [
     ("Cut Edges",       "Cuts",   (160, 160, 165, 220)),
     ("County Splits",   "Co.Spl", (190, 170, 130, 220)),
     ("Compactness",     "PP",    (90,  160, 220, 220)),
+    ("Reock",           "Reock", (60,  190, 200, 220)),
     ("Population Deviation", "PopDev", (220, 200, 70,  220)),
     ("Mean-Median",     "MM",     (240, 140, 60,  220)),
     ("Efficiency Gap",  "EG",     (225, 75,  75,  220)),
