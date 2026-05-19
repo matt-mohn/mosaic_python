@@ -421,6 +421,8 @@
           <dd>Colours each district by signed deviation from ideal population. Underpopulated districts in one direction, overpopulated in the other.</dd>
           <dt><strong>Labels</strong></dt>
           <dd>Draws the district number at each district's interior. Number matches the labels in the District Info panel and the exported CSVs.</dd>
+          <dt><strong>Precincts</strong></dt>
+          <dd>Draws faint white precinct boundaries on top of the district colouring. Hairline at on-screen resolution; cleans up at high-DPI exports. Useful for previewing how district lines fall relative to precinct lines.</dd>
         </dl>
       </section>
 
@@ -452,6 +454,14 @@
           <dd>One row per district: population, deviation from ideal, optional vote totals and Dem/Rep percentages, optional Polsby-Popper compactness. Same district numbering as the assignments CSV.</dd>
         </dl>
         <p>Both files load directly into Dave's Redistricting App via its <strong>Color Map from File</strong> feature, or join back to your shapefile in QGIS / ArcGIS using the precinct ID column.</p>
+        <h3 class="text-xl font-semibold tracking-tight mt-8">Map image (PNG)</h3>
+        <p>Two icons sit at the right end of the map-overlay row, just under the District Map panel.</p>
+        <dl>
+          <dt><strong>Camera icon &rarr; <code>output/map_YYYYMMDD_HHMMSS.png</code></strong></dt>
+          <dd>Quick PNG of the current map. Re-rasterized at native resolution and cropped to the state's bounding box (so vertical states like Mississippi save tall, not letterboxed). Preserves whichever overlays are currently checked.</dd>
+          <dt><strong>"..." (Photo Menu) icon</strong></dt>
+          <dd>Opens an export dialog for high-resolution output: optional title bar, DPI selection (96 / 144 / 192 / 288 / 384 / 576 &mdash; 288 is the default), and a "Made with Mosaic" caption strip across the bottom. The map is re-rasterized at the chosen resolution (not upscaled), border and label thicknesses scale at about half rate so high-DPI exports don't over-emphasize the lines, and a black state-edge outline is added so the boundary reads cleanly when the image is shared.</dd>
+        </dl>
       </section>
 
       <!-- FAQ ─────────────────────────────────────────────────────────────── -->
