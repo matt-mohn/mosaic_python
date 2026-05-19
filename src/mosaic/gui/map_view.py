@@ -165,6 +165,8 @@ class MapView:
         self._pixel_map: Optional[np.ndarray] = None   # (H, W) int32; -1 = bg
         self._n_precincts: int = 0
         self._loaded: bool = False
+        # Last rendered RGBA (uint8, HxWx4); cached so the GUI can save it to disk.
+        self._last_rgba: Optional[np.ndarray] = None
         # Background color used outside polygon pixels; theme can override.
         self._bg_color: np.ndarray = _BG_COLOR.copy()
         self._county_array: Optional[np.ndarray] = None
@@ -186,6 +188,12 @@ class MapView:
         self.pop_dev_view: bool = False              # colour each district by population deviation
         self.show_labels: bool = False               # show district number labels
         self.fast_labels: bool = False               # True: cheap centroid; False: pole-of-inaccessibility
+        self.precinct_overlay: bool = False          # faint white precinct boundaries
+        self.state_outline: bool = False             # black outline around the state's geometry
+        # Multiplier for state/county/district borders and label font size.
+        # 1 = native (on-screen); offscreen export sets this from the DPI scale.
+        # Precinct overlay is intentionally not scaled — it stays a hairline hint.
+        self.border_thickness: int = 1
 
     # ── Load (thread-safe, no DPG) ────────────────────────────────────────────
 
@@ -343,6 +351,13 @@ class MapView:
         lut[n] = self._bg_color
         return lut
 
+    def _thicken(self, mask: np.ndarray) -> np.ndarray:
+        """Dilate a boolean border mask by (border_thickness - 1) pixels."""
+        if self.border_thickness <= 1:
+            return mask
+        from scipy.ndimage import binary_dilation
+        return binary_dilation(mask, iterations=self.border_thickness - 1)
+
     def _county_border_mask(self, pm: np.ndarray) -> np.ndarray:
         """Boolean mask of pixels that lie on county borders."""
         ca = self._county_array
@@ -367,6 +382,7 @@ class MapView:
         lut = np.full((n + 1, 4), _BLANK_COLOR, dtype=np.uint8)
         lut[n] = self._bg_color
         rgba = self._colorise(lut)
+        self._last_rgba = rgba
         dpg.set_value(self._ttag, self._to_dpg(rgba))
 
     def render_assignment(
@@ -375,13 +391,26 @@ class MapView:
         n_districts: int,
         initial: Optional[np.ndarray] = None,
     ) -> None:
+        """Compose the current frame's rgba and upload to DPG. GUI thread only."""
+        rgba = self.compose_rgba(assignment, n_districts, initial)
+        if rgba is None:
+            return
+        self._last_rgba = rgba
+        dpg.set_value(self._ttag, self._to_dpg(rgba))
+
+    def compose_rgba(
+        self,
+        assignment: np.ndarray,
+        n_districts: int,
+        initial: Optional[np.ndarray] = None,
+    ) -> Optional[np.ndarray]:
         """
-        Colourise by district assignment (or partisan lean) and upload texture.
+        Build the colourised RGBA frame without uploading. Returns None if the
+        view isn't loaded or the assignment doesn't match.
         Overlays are applied in order: splits view, county borders, district borders.
-        GUI thread only.
         """
         if not self._loaded:
-            return
+            return None
 
         # Safety: if the assignment array length doesn't match what the
         # MapView was loaded with, skip this render rather than indexing past
@@ -395,7 +424,7 @@ class MapView:
                 f"does not match loaded precincts {self._n_precincts}. "
                 "Map is stale; reload the shapefile."
             )
-            return
+            return None
 
         pm = self._pixel_map
         n = self._n_precincts
@@ -443,13 +472,28 @@ class MapView:
                 rgba[clean_mask] = _SPLITS_DIM_RGBA
 
             # County borders always visible in splits view
-            rgba[self._county_border_mask(pm)] = _COUNTY_BORDER_RGBA
+            rgba[self._thicken(self._county_border_mask(pm))] = _COUNTY_BORDER_RGBA
 
         # ── County overlay (border lines only, when not using splits view) ────
         elif self.county_overlay and self._county_array is not None:
-            rgba[self._county_border_mask(pm)] = _COUNTY_BORDER_RGBA
+            rgba[self._thicken(self._county_border_mask(pm))] = _COUNTY_BORDER_RGBA
 
-        # ── District borders (always last, on top of everything) ─────────────
+        # ── Precinct boundaries (faint white, alpha-blended) ─────────────────
+        if self.precinct_overlay:
+            pb_h = (pm[:-1, :] != pm[1:, :]) & (pm[:-1, :] >= 0) & (pm[1:, :] >= 0)
+            pb_v = (pm[:, :-1] != pm[:, 1:]) & (pm[:, :-1] >= 0) & (pm[:, 1:] >= 0)
+            pb_mask = np.zeros(pm.shape, dtype=bool)
+            pb_mask[:-1, :] |= pb_h
+            pb_mask[1:,  :] |= pb_h
+            pb_mask[:, :-1] |= pb_v
+            pb_mask[:, 1:]  |= pb_v
+            if pb_mask.any():
+                alpha = 0.35
+                blended = rgba[pb_mask].astype(np.float32)
+                blended[:, :3] = blended[:, :3] * (1.0 - alpha) + 255.0 * alpha
+                rgba[pb_mask] = blended.astype(np.uint8)
+
+        # ── District borders (over precinct boundaries) ──────────────────────
         dist_map = np.where(pm >= 0, assignment[np.clip(pm, 0, n - 1)], -1)
         bh = dist_map[:-1, :] != dist_map[1:, :]
         bv = dist_map[:, :-1] != dist_map[:, 1:]
@@ -460,7 +504,17 @@ class MapView:
         border[1:,  :] |= bh & vh
         border[:, :-1] |= bv & vv
         border[:, 1:]  |= bv & vv
-        rgba[border] = _BORDER_RGBA
+        rgba[self._thicken(border)] = _BORDER_RGBA
+
+        # ── State outline (above district borders so it's a clean edge) ──────
+        if self.state_outline:
+            valid = pm >= 0
+            so = np.zeros(pm.shape, dtype=bool)
+            so[:-1, :] |= valid[:-1, :] & ~valid[1:,  :]
+            so[1:,  :] |= valid[1:,  :] & ~valid[:-1, :]
+            so[:, :-1] |= valid[:, :-1] & ~valid[:, 1:]
+            so[:, 1:]  |= valid[:, 1:]  & ~valid[:, :-1]
+            rgba[self._thicken(so)] = _BORDER_RGBA
 
         # ── District labels (if enabled) ─────────────────────────────────────
         if self.show_labels and self._precinct_centroids is not None:
@@ -519,9 +573,10 @@ class MapView:
             areas = np.bincount(assignment, minlength=n_districts)
             district_centers.sort(key=lambda x: -areas[x[0]])
 
-            # Greedy collision avoidance
-            font_h = 14
-            char_w = 8
+            # Greedy collision avoidance — scale glyph size with border_thickness
+            # so labels stay legible at high-DPI exports.
+            font_h = 14 * self.border_thickness
+            char_w = 8 * self.border_thickness
             placed_boxes = []
             labels_to_draw = []
 
@@ -562,31 +617,26 @@ class MapView:
                         font = ImageFont.load_default()
                         use_anchor = False
 
-                # 8-direction outline at 1px radius -> full ring around glyph
-                _outline_offsets = [
-                    (-1, -1), (0, -1), (1, -1),
-                    (-1,  0),          (1,  0),
-                    (-1,  1), (0,  1), (1,  1),
-                ]
+                # Outline scales with border_thickness so it stays visible
+                # against high-DPI glyphs (PIL's built-in stroke_width).
+                stroke_w = max(1, self.border_thickness)
 
                 for px, py, text in labels_to_draw:
                     if use_anchor:
-                        for dx, dy in _outline_offsets:
-                            draw.text((px + dx, py + dy), text,
-                                      fill=(0, 0, 0, 255), font=font, anchor="mm")
                         draw.text((px, py), text,
-                                  fill=(255, 255, 255, 255), font=font, anchor="mm")
+                                  fill=(255, 255, 255, 255), font=font,
+                                  anchor="mm",
+                                  stroke_width=stroke_w,
+                                  stroke_fill=(0, 0, 0, 255))
                     else:
-                        # Default font: manually center
                         bbox = draw.textbbox((0, 0), text, font=font)
                         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
                         tx, ty = px - tw // 2, py - th // 2
-                        for dx, dy in _outline_offsets:
-                            draw.text((tx + dx, ty + dy), text,
-                                      fill=(0, 0, 0, 255), font=font)
                         draw.text((tx, ty), text,
-                                  fill=(255, 255, 255, 255), font=font)
+                                  fill=(255, 255, 255, 255), font=font,
+                                  stroke_width=stroke_w,
+                                  stroke_fill=(0, 0, 0, 255))
 
                 rgba = np.array(img, dtype=np.uint8)
 
-        dpg.set_value(self._ttag, self._to_dpg(rgba))
+        return rgba

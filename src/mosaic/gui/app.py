@@ -36,6 +36,41 @@ _COMPACT_THIN = 50       # keep 1-in-N for old data (~200 pts per 10k iters)
 _RENDER_TARGET = 1500
 
 
+_CAMERA_ICON_SIZE = 20
+
+
+def _build_camera_icon(fg_rgb: tuple[int, int, int]) -> np.ndarray:
+    """Procedural 20x20 RGBA camera glyph as a flat float32 array (for DPG raw texture).
+
+    The 'hole' through the lens uses the inverse of fg so the icon stays
+    legible on both light and dark button backgrounds.
+    """
+    from PIL import Image, ImageDraw
+    w = h = _CAMERA_ICON_SIZE
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    fg = (*fg_rgb, 255)
+    inv = (255 - fg_rgb[0], 255 - fg_rgb[1], 255 - fg_rgb[2], 255)
+    d.rectangle((4, 3, 9, 5), fill=fg)                       # viewfinder bump
+    d.rounded_rectangle((1, 5, 18, 17), radius=2, fill=fg)   # body
+    d.ellipse((6, 7, 14, 15), fill=inv)                      # lens hole
+    d.ellipse((8, 9, 12, 13), fill=fg)                       # lens highlight
+    return (np.asarray(img, dtype=np.float32) / 255.0).ravel()
+
+
+def _build_more_icon(fg_rgb: tuple[int, int, int]) -> np.ndarray:
+    """Procedural 20x20 RGBA three-dot 'more options' glyph (for raw texture)."""
+    from PIL import Image, ImageDraw
+    w = h = _CAMERA_ICON_SIZE
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    fg = (*fg_rgb, 255)
+    cy = 9
+    for cx in (4, 9, 14):
+        d.ellipse((cx, cy, cx + 3, cy + 3), fill=fg)
+    return (np.asarray(img, dtype=np.float32) / 255.0).ravel()
+
+
 class _SeriesBuffer:
     """Incremental, self-compacting local history for one plot series.
 
@@ -302,11 +337,31 @@ class MosaicApp:
                 format=dpg.mvFormat_Float_rgba,
                 tag="map_texture",
             )
+            dpg.add_raw_texture(
+                width=_CAMERA_ICON_SIZE, height=_CAMERA_ICON_SIZE,
+                default_value=_build_camera_icon((220, 220, 220)),
+                format=dpg.mvFormat_Float_rgba,
+                tag="camera_icon_texture",
+            )
+            dpg.add_raw_texture(
+                width=_CAMERA_ICON_SIZE, height=_CAMERA_ICON_SIZE,
+                default_value=_build_more_icon((220, 220, 220)),
+                format=dpg.mvFormat_Float_rgba,
+                tag="more_icon_texture",
+            )
 
         # ── Build palette themes and bind initial ─────────────────────────────
         self.theme.build()
         self.theme.apply(self.theme.palette.name)
         self._sync_map_bg_to_theme()
+        self._sync_camera_icon_to_theme()
+
+        # Smaller font for compact toolbars (map overlay checkbox row).
+        self._small_font = 0
+        _inter_regular = _ASSETS_DIR / "fonts" / "inter" / "Inter-Regular.ttf"
+        if _inter_regular.exists():
+            with dpg.font_registry():
+                self._small_font = dpg.add_font(str(_inter_regular), 13)
 
         self._shp_dialog = ShapefileDialog(
             confirm_cb=self._on_shp_confirm,
@@ -317,6 +372,7 @@ class MosaicApp:
 
         self._build_population_popup()
         self._build_seed_popup()
+        self._build_advanced_save_popup()
         self._build_opt_popup()
         self._build_partisan_popup()
         self._build_help_popup()
@@ -636,7 +692,7 @@ class MosaicApp:
                             tag="map_container",
                         ):
                             dpg.add_image("map_texture")
-                        with dpg.group(horizontal=True):
+                        with dpg.group(horizontal=True) as overlay_row:
                             self._county_overlay = dpg.add_checkbox(
                                 label="County",
                                 default_value=False,
@@ -649,13 +705,13 @@ class MosaicApp:
                                 callback=self._on_splits_view_toggle,
                             )
                             self._partisan_overlay = dpg.add_checkbox(
-                                label="Precinct Results",
+                                label="Pct. Results",
                                 default_value=False,
                                 enabled=False,
                                 callback=self._on_partisan_overlay_toggle,
                             )
                             self._district_partisan = dpg.add_checkbox(
-                                label="District Results",
+                                label="Dist. Results",
                                 default_value=False,
                                 enabled=False,
                                 callback=self._on_district_partisan_toggle,
@@ -667,16 +723,47 @@ class MosaicApp:
                                 callback=self._on_compactness_toggle,
                             )
                             self._pop_dev_view = dpg.add_checkbox(
-                                label="Pop. Deviation",
+                                label="Pop. Dev.",
                                 default_value=False,
                                 enabled=False,
                                 callback=self._on_pop_dev_toggle,
+                            )
+                            self._precinct_overlay = dpg.add_checkbox(
+                                label="Precincts",
+                                default_value=False,
+                                callback=self._on_precinct_overlay_toggle,
                             )
                             self._show_labels = dpg.add_checkbox(
                                 label="Labels",
                                 default_value=False,
                                 callback=self._on_labels_toggle,
                             )
+                            # Adjusted by _align_photo_icons() on viewport
+                            # resize so the photo buttons sit at the right edge.
+                            self._overlay_fill = dpg.add_spacer(width=20)
+                            self._cam_btn = cam_btn = dpg.add_image_button(
+                                "camera_icon_texture",
+                                callback=self._on_save_map,
+                                width=20, height=20,
+                                frame_padding=2,
+                            )
+                            with dpg.tooltip(cam_btn):
+                                dpg.add_text("Quick PNG")
+                            self._more_btn = more_btn = dpg.add_image_button(
+                                "more_icon_texture",
+                                callback=self._on_advanced_save_open,
+                                width=20, height=20,
+                                frame_padding=2,
+                            )
+                            with dpg.tooltip(more_btn):
+                                dpg.add_text("Photo Menu")
+                            self._save_spinner = dpg.add_loading_indicator(
+                                style=0, radius=2.0, show=False,
+                                color=self.theme.color("body"),
+                                secondary_color=self.theme.color("muted"),
+                            )
+                        if self._small_font:
+                            dpg.bind_item_font(overlay_row, self._small_font)
 
                         dpg.add_spacer(height=4)
 
@@ -1097,6 +1184,46 @@ class MosaicApp:
                 callback=lambda: dpg.configure_item("popup_seed", show=False),
                 width=80,
             )
+
+    def _build_advanced_save_popup(self):
+        with dpg.window(
+            label="Export District Map as PNG",
+            tag="popup_adv_save", show=False,
+            modal=True, no_close=True,
+            width=420, height=210,
+            pos=[(_VP_W - 420) // 2, (_VP_H - 210) // 2],
+        ):
+            self._adv_save_title = dpg.add_input_text(
+                label="Title (optional)", default_value="", width=260,
+                hint="Leave blank for no title",
+            )
+            dpg.add_spacer(height=4)
+            self._adv_save_dpi = dpg.add_combo(
+                label="DPI (resolution)",
+                items=["96 (screen)", "144 (1.5x)", "192 (2x)",
+                       "288 (3x)", "384 (4x)", "576 (6x)"],
+                default_value="288 (3x)", width=260,
+            )
+            dpg.add_spacer(height=10)
+            dpg.add_separator()
+            dpg.add_spacer(height=6)
+            with dpg.group(horizontal=True):
+                self._adv_save_btn = dpg.add_button(
+                    label="Save",   width=90,
+                    callback=self._on_advanced_save_confirm,
+                )
+                self._adv_cancel_btn = dpg.add_button(
+                    label="Cancel", width=90,
+                    callback=lambda: dpg.configure_item(
+                        "popup_adv_save", show=False),
+                )
+                dpg.add_spacer(width=4)
+                self._adv_save_spinner = dpg.add_loading_indicator(
+                    style=0, radius=2.0, show=False,
+                    color=self.theme.color("body"),
+                    secondary_color=self.theme.color("muted"),
+                )
+                self._adv_save_status = dpg.add_text("", show=False)
 
     def _build_opt_popup(self):
         with dpg.window(
@@ -1950,9 +2077,14 @@ class MosaicApp:
 
     def run(self):
         dpg.show_viewport()
+        dpg.set_viewport_resize_callback(self._align_photo_icons)
+        _aligned = False
         while dpg.is_dearpygui_running():
             self._update_ui()
             dpg.render_dearpygui_frame()
+            if not _aligned and dpg.get_frame_count() >= 2:
+                self._align_photo_icons()
+                _aligned = True
         dpg.destroy_context()
 
     # ── Frame update ──────────────────────────────────────────────────────────
@@ -2835,6 +2967,55 @@ class MosaicApp:
         self.theme.apply("dark" if choice == "Dark" else "light")
         self._sync_map_bg_to_theme()
         self._sync_ref_lines_to_theme()
+        self._sync_camera_icon_to_theme()
+
+    def _align_photo_icons(self, *_):
+        """Resize the overlay-row spacer so the photo icons hug the right edge.
+
+        Called once after first render and again on every viewport resize.
+        Uses the actual measured positions/sizes rather than guessing widths
+        because checkbox widths depend on the font in use.
+        """
+        fill = getattr(self, "_overlay_fill", None)
+        cam = getattr(self, "_cam_btn", None)
+        more = getattr(self, "_more_btn", None)
+        spinner = getattr(self, "_save_spinner", None)
+        if not all(t is not None and dpg.does_item_exist(t)
+                   for t in (fill, cam, more, spinner)):
+            return
+        if not dpg.does_item_exist("map_container"):
+            return
+        container_w = dpg.get_item_rect_size("map_container")[0]
+        if container_w <= 1:
+            return
+        cam_x = dpg.get_item_pos(cam)[0]
+        cam_w = dpg.get_item_rect_size(cam)[0] or 28
+        more_w = dpg.get_item_rect_size(more)[0] or 28
+        spinner_w = dpg.get_item_rect_size(spinner)[0] or 0
+        photo_block = cam_w + more_w + spinner_w + 16
+        right_pad = 12
+        target_cam_x = container_w - photo_block - right_pad
+        try:
+            current_w = dpg.get_item_configuration(fill).get("width", 20)
+        except SystemError:
+            current_w = 20
+        new_w = max(8, int(current_w + (target_cam_x - cam_x)))
+        dpg.configure_item(fill, width=new_w)
+
+    def _sync_camera_icon_to_theme(self):
+        """Repaint the map-toolbar icon textures in the current palette's body color."""
+        r, g, b, _ = self.theme.color("body")
+        fg = (int(r), int(g), int(b))
+        if dpg.does_item_exist("camera_icon_texture"):
+            dpg.set_value("camera_icon_texture", _build_camera_icon(fg))
+        if dpg.does_item_exist("more_icon_texture"):
+            dpg.set_value("more_icon_texture", _build_more_icon(fg))
+        body = self.theme.color("body")
+        muted = self.theme.color("muted")
+        for tag_attr in ("_save_spinner", "_adv_save_spinner"):
+            tag = getattr(self, tag_attr, None)
+            if tag is not None and dpg.does_item_exist(tag):
+                dpg.configure_item(tag, color=body, secondary_color=muted)
 
     def _sync_ref_lines_to_theme(self):
         """Rebind the partisan/win-chance 50/50 and median guide lines so
@@ -2869,6 +3050,12 @@ class MosaicApp:
         if self.map_view is None or not self.map_view._loaded:
             return
         self.map_view.county_overlay = dpg.get_value(self._county_overlay)
+        self.state.update(map_needs_update=True)
+
+    def _on_precinct_overlay_toggle(self):
+        if self.map_view is None or not self.map_view._loaded:
+            return
+        self.map_view.precinct_overlay = dpg.get_value(self._precinct_overlay)
         self.state.update(map_needs_update=True)
 
     def _on_partisan_overlay_toggle(self):
@@ -3349,6 +3536,203 @@ class MosaicApp:
             pp_data=self.runner.pp_data,
         )
         self.state.update(status_message=f"Metrics saved to {output_path}")
+
+    def _render_map_at_scale(self, scale: float,
+                             state_outline: bool = False) -> Optional[np.ndarray]:
+        """Re-rasterize the current map at `scale`x resolution, cropped to the
+        state's aspect ratio, and return rgba.
+
+        Long edge is `_MAP_DW * scale` regardless of orientation; short edge is
+        derived from the gdf's bounding-box aspect. Falls back to LANCZOS
+        upscale of the cached frame if the runner/gdf isn't available.
+        """
+        src = self.map_view
+        if src is None or not src._loaded:
+            return None
+
+        if (self.runner is None or self.runner.gdf is None
+                or self.state.current_assignment is None):
+            if src._last_rgba is None:
+                return None
+            if scale == 1.0:
+                return src._last_rgba.copy()
+            from PIL import Image
+            img = Image.fromarray(src._last_rgba, mode="RGBA")
+            new_size = (int(img.width * scale), int(img.height * scale))
+            return np.asarray(
+                img.resize(new_size, Image.LANCZOS), dtype=np.uint8,
+            )
+
+        bounds = self.runner.gdf.total_bounds
+        gw = max(float(bounds[2] - bounds[0]), 1e-9)
+        gh = max(float(bounds[3] - bounds[1]), 1e-9)
+        long_edge = max(1, int(_MAP_DW * scale))
+        if gw >= gh:
+            w = long_edge
+            h = max(1, int(round(long_edge * gh / gw)))
+        else:
+            h = long_edge
+            w = max(1, int(round(long_edge * gw / gh)))
+        offscreen = MapView(texture_tag="__offscreen", draw_w=w, draw_h=h)
+        offscreen._bg_color = src._bg_color.copy()
+        for flag in ("county_overlay", "partisan_overlay",
+                     "district_partisan_overlay", "splits_view",
+                     "compactness_view", "pop_dev_view", "show_labels",
+                     "precinct_overlay"):
+            setattr(offscreen, flag, getattr(src, flag))
+        offscreen.fast_labels = False  # precise label placement for export
+        offscreen.state_outline = state_outline
+        # Half-rate proportionality: doubling DPI grows lines/labels by ~50%,
+        # not 100%. Keeps high-DPI exports from over-emphasizing borders.
+        offscreen.border_thickness = max(1, int(round(1 + 0.5 * (scale - 1))))
+
+        dem = (self.runner.election_arrays[0][0]
+               if self.runner.election_arrays else None)
+        gop = (self.runner.election_arrays[0][1]
+               if self.runner.election_arrays else None)
+        offscreen.load(
+            self.runner.gdf,
+            county_array=self.runner.county_array,
+            dem_votes=dem, gop_votes=gop,
+            pp_data=self.runner.pp_data,
+            populations=self.runner.populations,
+        )
+
+        with self.state._lock:
+            assignment = self.state.current_assignment.copy()
+            initial = (self.state.initial_assignment.copy()
+                       if self.state.initial_assignment is not None else None)
+            n_dist = self.state.num_districts
+        return offscreen.compose_rgba(assignment, n_dist, initial)
+
+    def _on_save_map(self):
+        if getattr(self, "_saving", False):
+            return
+        if self.map_view is None or not self.map_view._loaded:
+            self.state.update(status_message="Nothing to save: load a shapefile first.")
+            return
+        self._saving = True
+        dpg.configure_item(self._save_spinner, show=True)
+        self.state.update(status_message="Saving map...")
+
+        def _worker():
+            from datetime import datetime
+            from PIL import Image
+            try:
+                rgba = self._render_map_at_scale(1.0)
+                if rgba is None:
+                    self.state.update(
+                        status_message="Save failed: map not ready.",
+                    )
+                    return
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_path = Path("output") / f"map_{timestamp}.png"
+                output_path.parent.mkdir(exist_ok=True)
+                Image.fromarray(rgba, mode="RGBA").save(output_path)
+                self.state.update(status_message=f"Map saved to {output_path}")
+            finally:
+                dpg.configure_item(self._save_spinner, show=False)
+                self._saving = False
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_advanced_save_open(self):
+        if self.map_view is None or self.map_view._last_rgba is None:
+            self.state.update(status_message="Nothing to save: load a shapefile first.")
+            return
+        dpg.configure_item("popup_adv_save", show=True)
+
+    def _on_advanced_save_confirm(self):
+        if getattr(self, "_saving", False):
+            return
+        if self.map_view is None or not self.map_view._loaded:
+            self.state.update(status_message="Nothing to save: load a shapefile first.")
+            dpg.configure_item("popup_adv_save", show=False)
+            return
+
+        title = dpg.get_value(self._adv_save_title).strip()
+        dpi = int(dpg.get_value(self._adv_save_dpi).split()[0])
+        scale = dpi / 96.0
+
+        self._saving = True
+        dpg.configure_item(self._adv_save_btn, enabled=False)
+        dpg.configure_item(self._adv_cancel_btn, enabled=False)
+        dpg.configure_item(self._adv_save_spinner, show=True)
+        dpg.set_value(self._adv_save_status, f"Rendering {dpi} DPI...")
+        dpg.configure_item(self._adv_save_status, show=True)
+
+        def _worker():
+            from datetime import datetime
+            from PIL import Image, ImageDraw, ImageFont
+            try:
+                rgba = self._render_map_at_scale(scale, state_outline=True)
+                if rgba is None:
+                    self.state.update(status_message="Save failed: map not ready.")
+                    return
+
+                img = Image.fromarray(rgba, mode="RGBA")
+                font_path = Path(__file__).resolve().parent.parent \
+                    / "assets" / "fonts" / "inter" / "Inter-SemiBold.ttf"
+
+                # Both strips live on the same bg as the title's strip.
+                br, bg, bb, _ = self.theme.color("child_bg")
+
+                # Caption strip (always present in advanced save) — sized to
+                # the caption font + margin so it never overlaps the map.
+                cap_size = max(10, int(11 * scale))
+                cap_margin = max(8, int(12 * scale))
+                bottom_strip_h = cap_size + 2 * cap_margin
+                try:
+                    cap_font = ImageFont.truetype(str(font_path), cap_size)
+                except OSError:
+                    cap_font = ImageFont.load_default()
+
+                # Optional title strip on top.
+                top_strip_h = 0
+                title_font = None
+                if title:
+                    r, g, b, _ = self.theme.color("body")
+                    top_strip_h = max(28, int(36 * scale))
+                    font_size = max(14, int(18 * scale))
+                    try:
+                        title_font = ImageFont.truetype(str(font_path), font_size)
+                    except OSError:
+                        title_font = ImageFont.load_default()
+
+                new_img = Image.new(
+                    "RGBA",
+                    (img.width, img.height + top_strip_h + bottom_strip_h),
+                    (br, bg, bb, 255),
+                )
+                new_img.paste(img, (0, top_strip_h), img)
+                draw = ImageDraw.Draw(new_img)
+                if title:
+                    draw.text(
+                        (img.width // 2, top_strip_h // 2), title,
+                        fill=(r, g, b, 255), font=title_font, anchor="mm",
+                    )
+                cap_r, cap_g, cap_b, _ = self.theme.color("body")
+                draw.text(
+                    (new_img.width - cap_margin,
+                     new_img.height - cap_margin),
+                    "Made with Mosaic",
+                    fill=(cap_r, cap_g, cap_b, 255),
+                    font=cap_font, anchor="rs",
+                )
+                img = new_img
+
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_path = Path("output") / f"map_{timestamp}.png"
+                output_path.parent.mkdir(exist_ok=True)
+                img.save(output_path, dpi=(dpi, dpi))
+                self.state.update(status_message=f"Map saved to {output_path}")
+            finally:
+                dpg.configure_item(self._adv_save_spinner, show=False)
+                dpg.configure_item(self._adv_save_status, show=False)
+                dpg.configure_item(self._adv_save_btn, enabled=True)
+                dpg.configure_item(self._adv_cancel_btn, enabled=True)
+                dpg.configure_item("popup_adv_save", show=False)
+                self._saving = False
+        threading.Thread(target=_worker, daemon=True).start()
 
 
 def main():
