@@ -745,7 +745,6 @@ class MosaicApp:
                                 "camera_icon_texture",
                                 callback=self._on_save_map,
                                 width=20, height=20,
-                                frame_padding=2,
                             )
                             with dpg.tooltip(cam_btn):
                                 dpg.add_text("Quick PNG")
@@ -753,7 +752,6 @@ class MosaicApp:
                                 "more_icon_texture",
                                 callback=self._on_advanced_save_open,
                                 width=20, height=20,
-                                frame_padding=2,
                             )
                             with dpg.tooltip(more_btn):
                                 dpg.add_text("Photo Menu")
