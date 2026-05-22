@@ -223,7 +223,7 @@
         <p>Each enabled metric is multiplied by its weight and summed into <code>PlanScore.total</code>, which the optimizer minimizes. Weight 0 disables the metric; the computation is skipped, reducing per-iteration cost. Per-metric contribution formulas are in the <a href="#metrics">Metrics glossary</a>.</p>
 
         <h3>Partisan calibration</h3>
-        <p>Set in the Partisanship popup. Applied when any of Efficiency Gap (Robust), Expected Seats, Competitiveness, Chance of Majority, or Hinge is enabled.</p>
+        <p>Set in the Partisanship popup. Applied when any of Efficiency Gap (Robust), Expected Dem Seats, Competitiveness, Chance of Majority, or Hinge is enabled.</p>
         <dl>
           <dt><strong><code>election_win_prob_at_55</code></strong> — default 0.9</dt>
           <dd>Calibration anchor: P(D wins | D share = 0.55). Inverted to <code>σ_district = 0.05 / Φ⁻¹(p)</code>. Higher values yield sharper per-district win probabilities.</dd>
@@ -255,7 +255,7 @@
         <h2 class="text-2xl font-bold tracking-tight">Metrics glossary</h2>
         <p>Each metric appears on a score row in the GUI. Entries below give a definition followed by a meta card listing the unit, optimization direction, contribution to <code>PlanScore.total</code>, and any tunable parameters with their GUI location. Metrics are internally rescaled to comparable magnitudes; weights and formulas appear in the meta card.</p>
 
-        <p>Five metrics (Efficiency Gap in Robust mode, Expected Seats, Competitiveness, Chance of Majority, Hinge) model each district's Dem share as a Gaussian variable. Two parameters set the spread and are shared across these metrics: <code>election_win_prob_at_55</code> (anchors per-district noise via <code>σ_district = 0.05 / Φ⁻¹(p)</code>) and <code>election_swing_sigma</code> (standard deviation of a shared partisan-environment draw). They combine as <code>σ_combined = √(σ_swing² + σ_district²)</code>. Both are set in the Partisanship popup; see <a href="#run-config">Run Config &gt; Partisan calibration</a> for details.</p>
+        <p>Five metrics (Efficiency Gap in Robust mode, Expected Dem Seats, Competitiveness, Chance of Majority, Hinge) model each district's Dem share as a Gaussian variable. Two parameters set the spread and are shared across these metrics: <code>election_win_prob_at_55</code> (anchors per-district noise via <code>σ_district = 0.05 / Φ⁻¹(p)</code>) and <code>election_swing_sigma</code> (standard deviation of a shared partisan-environment draw). They combine as <code>σ_combined = √(σ_swing² + σ_district²)</code>. Both are set in the Partisanship popup; see <a href="#run-config">Run Config &gt; Partisan calibration</a> for details.</p>
 
         <dl>
           <dt><strong>Cut Edges</strong></dt>
@@ -311,6 +311,16 @@
             </table>
           </dd>
 
+          <dt><strong>Holistic Compactness</strong></dt>
+          <dd>
+            <p>One compactness dial that blends mean Polsby-Popper and mean Reock 50/50, each linearly normalized into [0, 100] over a fixed band. Use it when you want to optimize compactness without juggling two separate weights.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
+              <tr><th>Direction</th><td>lower contribution is better</td></tr>
+              <tr><th>Contribution</th><td><code>100 − rating</code></td></tr>
+            </table>
+          </dd>
+
           <dt><strong>Mean-Median</strong></dt>
           <dd>
             <p><code>mean(district Dem share) − median(district Dem share)</code>. Non-zero values indicate the mean and median districts disagree on partisan balance. Sign: negative = D advantage, positive = R advantage.</p>
@@ -350,16 +360,16 @@
             </table>
           </dd>
 
-          <dt><strong>Expected Seats</strong></dt>
+          <dt><strong>Expected Dem Seats</strong></dt>
           <dd>
-            <p>Sum of per-district P(D wins) under the swing model. Penalized by squared distance from target, rescaled by 100 to align with the other partisan metrics.</p>
+            <p>Sum of per-district P(D wins) under the swing model. The penalty is directional: D-toggle pushes the plan toward more Dem seats, R-toggle toward fewer. Linear [0, 100], no target.</p>
             <table class="meta">
               <tr><th>Unit</th><td>real-valued seat count (display)</td></tr>
-              <tr><th>Direction</th><td>distance from target</td></tr>
-              <tr><th>Contribution</th><td><code>(raw − target)² × 100</code></td></tr>
+              <tr><th>Direction</th><td>toward the favored party (selected via D/R toggle)</td></tr>
+              <tr><th>Contribution</th><td><code>(n − raw)/n × 100</code> when favoring D; <code>raw/n × 100</code> when favoring R</td></tr>
               <tr><th>Tunables</th><td>
                 <ul>
-                  <li><span class="gui">Score panel &rarr; Expected Dem Seats row &rarr; Target S slider</span> (<code>target_dem_seats</code>, default 7)</li>
+                  <li><span class="gui">Score panel &rarr; Expected Dem Seats row &rarr; D / R checkboxes</span> (selects which party the optimizer pulls toward)</li>
                   <li>Shared partisan calibration</li>
                 </ul>
               </td></tr>
@@ -429,12 +439,12 @@
       <!-- Charts ──────────────────────────────────────────────────────────── -->
       <section id="charts" class="prose-block mt-16">
         <h2 class="text-2xl font-bold tracking-tight">Reading the charts</h2>
-        <p>The left side of the GUI shows live charts you can toggle from the <strong>Panels</strong> menu. The most useful ones during a run:</p>
+        <p>The left side of the GUI shows live charts you can toggle from the <strong>Views</strong> menu. The most useful ones during a run:</p>
         <dl>
           <dt><strong>Score History</strong></dt>
           <dd>Total <code>PlanScore.total</code> over iterations (lower is better). Trends down as annealing cools and the search becomes pickier.</dd>
           <dt><strong>Per-metric panels</strong></dt>
-          <dd>One chart per enabled metric, plotted in its native units. Metrics with targets (Mean-Median, Efficiency Gap, Expected Seats) draw a horizontal target line for reference.</dd>
+          <dd>One chart per enabled metric, plotted in its native units. Metrics with targets (Mean-Median, Efficiency Gap) draw a horizontal target line for reference.</dd>
           <dt><strong>Temperature</strong></dt>
           <dd>The annealing temperature over time. In GUIDED mode the curve is non-linear by design; in STATIC mode it's a clean geometric decay.</dd>
           <dt><strong>Entropy / Acceptance</strong></dt>

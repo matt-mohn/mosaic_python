@@ -93,6 +93,7 @@ class SharedState:
     competitive_count_history: list = field(default_factory=list)
     pp_history: list = field(default_factory=list)
     reock_history: list = field(default_factory=list)
+    holistic_compactness_history: list = field(default_factory=list)
     pop_deviation_history: list = field(default_factory=list)
     pop_dev_max_history: list = field(default_factory=list)
     pop_dev_mean_history: list = field(default_factory=list)
@@ -193,6 +194,7 @@ class SharedState:
             self.competitive_count_history = []
             self.pp_history = []
             self.reock_history = []
+            self.holistic_compactness_history = []
             self.pop_deviation_history = []
             self.pop_dev_max_history = []
             self.pop_dev_mean_history = []

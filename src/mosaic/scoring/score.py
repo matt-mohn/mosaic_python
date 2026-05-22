@@ -26,6 +26,7 @@ class ScoreConfig:
     weight_county_splits: float = 0.0
     weight_polsby_popper: float = 0.0
     weight_reock: float = 0.0
+    weight_holistic_compactness: float = 0.0
     weight_pop_deviation: float = 0.0
     pop_deviation_safe_harbor: float = 0.0025   # fractional; 0.0025 = 0.25%
     # Partisan metrics (require election data; all off by default)
@@ -35,7 +36,7 @@ class ScoreConfig:
     target_efficiency_gap: float = 0.0
     use_robust_eg: bool = True
     weight_dem_seats: float = 0.0
-    target_dem_seats: float = 7.0
+    dem_seats_favor_dem: bool = True   # True = optimize toward more D seats, False = more R
     weight_competitiveness: float = 0.0
     weight_majority_chance_dem: float = 0.0
     weight_majority_chance_rep: float = 0.0
@@ -54,6 +55,7 @@ class PlanScore:
     county_splits: float = 0.0
     polsby_popper: float = 0.0          # stored as 1 - mean_PP (penalty form)
     reock: float = 0.0                  # stored as 1 - mean_Reock (penalty form)
+    holistic_compactness: float = 0.0   # stored as 100 - rating (penalty form)
     pop_deviation: float = 0.0          # mean squared excess dev × 10,000
     pop_dev_max: float = 0.0            # max |deviation| as % (display only)
     pop_dev_mean: float = 0.0           # mean |deviation| as % (display only)
@@ -62,7 +64,8 @@ class PlanScore:
     # Partisan raw metric values (before target penalty; for display)
     mean_median: float = 0.0           # actual MM = mean(shares) - median(shares)
     efficiency_gap: float = 0.0        # actual EG (at swung shares when robust)
-    dem_seats: float = 0.0             # expected number of Dem seats
+    dem_seats: float = 0.0             # expected number of Dem seats (raw, for display)
+    dem_seats_penalty: float = 0.0     # directional linear [0, 100] penalty (lower = better)
     competitiveness: float = 0.0       # mean non-competitiveness in [0, 1]
     majority_chance_dem: float = 0.0   # P(Dems win >= ceil(n/2) districts)
     majority_chance_rep: float = 0.0   # 1 - majority_chance_dem
@@ -92,6 +95,7 @@ def score_plan(
     All other kwargs are only used when the corresponding weight is > 0.
     """
     from mosaic.scoring.county_splits import score_county_splits
+    from mosaic.scoring.holistic_compactness import holistic_compactness_from_scores
     from mosaic.scoring.polsby_popper import score_polsby_popper
     from mosaic.scoring.reock import score_reock
     from mosaic.scoring.population import score_pop_deviation
@@ -105,9 +109,10 @@ def score_plan(
 
     cut_edges = len(cut_edge_indices)
     total = config.weight_cut_edges * cut_edges
-    cs_raw = pp_raw = reock_raw = pd_raw = 0.0
+    cs_raw = pp_raw = reock_raw = hc_raw = pd_raw = 0.0
     cs_excess = cs_clean = 0
     mm_raw = eg_raw = seats_raw = comp_raw = 0.0
+    seats_penalty = 0.0
     maj_d_raw = maj_r_raw = hinge_raw = 0.0
 
     if config.weight_county_splits and assignment is not None \
@@ -120,15 +125,27 @@ def score_plan(
         )
         total += config.weight_county_splits * cs_raw
 
-    if config.weight_polsby_popper and assignment is not None \
-            and pp_data is not None and n_districts is not None:
+    # PP and Reock are feeders for Holistic Compactness; compute when either
+    # their own weight or Holistic's weight is active so we never re-run them.
+    need_pp = bool(config.weight_polsby_popper or config.weight_holistic_compactness)
+    if need_pp and assignment is not None and pp_data is not None \
+            and n_districts is not None:
         pp_raw = score_polsby_popper(assignment, pp_data, n_districts)
-        total += config.weight_polsby_popper * pp_raw
+        if config.weight_polsby_popper:
+            total += config.weight_polsby_popper * pp_raw
 
-    if config.weight_reock and assignment is not None \
-            and reock_data is not None and n_districts is not None:
+    need_reock = bool(config.weight_reock or config.weight_holistic_compactness)
+    if need_reock and assignment is not None and reock_data is not None \
+            and n_districts is not None:
         reock_raw = score_reock(assignment, reock_data, n_districts)
-        total += config.weight_reock * reock_raw
+        if config.weight_reock:
+            total += config.weight_reock * reock_raw
+
+    if config.weight_holistic_compactness and pp_data is not None \
+            and reock_data is not None and assignment is not None \
+            and n_districts is not None:
+        hc_raw = holistic_compactness_from_scores(pp_raw, reock_raw)
+        total += config.weight_holistic_compactness * hc_raw
 
     pd_max = pd_mean = 0.0
     if config.weight_pop_deviation and assignment is not None \
@@ -173,14 +190,14 @@ def score_plan(
 
         seats_raw, seats_penalty = score_dem_seats(
             assignment, dem_votes, gop_votes, n_districts,
-            target=config.target_dem_seats,
+            favor_dem=config.dem_seats_favor_dem,
             win_prob_at_55=config.election_win_prob_at_55,
             swing_sigma=config.election_swing_sigma,
             _shares=_shares,
             _sigma_d=_sigma_d,
         )
         if config.weight_dem_seats:
-            total += config.weight_dem_seats * seats_penalty * 100
+            total += config.weight_dem_seats * seats_penalty
 
         comp_raw = score_competitiveness(
             assignment, dem_votes, gop_votes, n_districts,
@@ -241,12 +258,14 @@ def score_plan(
         county_clean_districts=cs_clean,
         polsby_popper=pp_raw,
         reock=reock_raw,
+        holistic_compactness=hc_raw,
         pop_deviation=pd_raw,
         pop_dev_max=pd_max,
         pop_dev_mean=pd_mean,
         mean_median=mm_raw,
         efficiency_gap=eg_raw,
         dem_seats=seats_raw,
+        dem_seats_penalty=seats_penalty,
         competitiveness=comp_raw,
         majority_chance_dem=maj_d_raw,
         majority_chance_rep=maj_r_raw,

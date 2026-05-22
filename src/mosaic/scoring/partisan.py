@@ -7,7 +7,7 @@ Mean-Median Difference  (MM)  -- exponent 2
 Efficiency Gap          (EG)  -- exponent 2
   Static:  vote-weighted EG at current election environment
   Robust:  single closed-form call with sigma_combined = sqrt(sigma_swing^2 + sigma_district^2)
-Expected Dem Seats      (DS)  -- exponent 2
+Expected Dem Seats      (DS)  -- linear directional penalty (no target)
 Competitiveness         (CP)  -- exponent 1  (no target)
 Chance of Majority      (CoM) -- exponent 1.5
 
@@ -205,16 +205,22 @@ def score_dem_seats(
     dem_votes: np.ndarray,
     gop_votes: np.ndarray,
     n_districts: int,
-    target: float,
+    favor_dem: bool = True,
     win_prob_at_55: float = 0.9,
     swing_sigma: float = _EG_SWING_SIGMA,
     _shares: np.ndarray | None = None,
     _sigma_d: float | None = None,
 ) -> tuple[float, float]:
     """
+    Expected Dem seats as a directional penalty (no target).
+
     Returns:
         raw     -- expected number of Dem seats (for display)
-        penalty -- (raw - target)^2
+        penalty -- linear [0, 100]. 0 = the toggled-for party already wins
+                   every seat; 100 = the opposite extreme.
+
+    favor_dem=True pushes the plan toward more Dem seats (penalty = (n - raw)/n * 100).
+    favor_dem=False pushes toward more GOP seats (penalty = raw/n * 100).
     """
     if _sigma_d is None:
         _sigma_d = k_to_sigma(win_prob_at_55)
@@ -222,7 +228,13 @@ def score_dem_seats(
     if _shares is None:
         _shares, _ = district_dem_shares(assignment, dem_votes, gop_votes, n_districts)
     raw = float(p_win_gaussian(_shares, sigma_comb).sum())
-    return raw, (raw - target) ** 2
+    if n_districts <= 0:
+        return raw, 0.0
+    if favor_dem:
+        penalty = max(0.0, min(100.0, (n_districts - raw) / n_districts * 100.0))
+    else:
+        penalty = max(0.0, min(100.0, raw / n_districts * 100.0))
+    return raw, penalty
 
 
 def score_competitiveness(
