@@ -17,6 +17,7 @@ from mosaic.scoring.polsby_popper import score_polsby_popper
 from mosaic.scoring.reock import (
     ReockData, precompute_reock_data, score_reock,
 )
+from mosaic.scoring.holistic_compactness import holistic_compactness_from_scores
 from mosaic.scoring.partisan import (
     district_dem_shares,
     eg_from_shares,
@@ -49,6 +50,7 @@ __all__ = [
     "ReockData",
     "precompute_reock_data",
     "score_reock",
+    "holistic_compactness_from_scores",
     "district_dem_shares",
     "eg_from_shares",
     "k_to_sigma",

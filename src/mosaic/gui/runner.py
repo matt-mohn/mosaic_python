@@ -50,6 +50,7 @@ def _build_score_breakdown(ps, cfg) -> dict:
     _add("County Splits",  cfg.weight_county_splits * ps.county_splits)
     _add("Compactness", cfg.weight_polsby_popper * ps.polsby_popper)
     _add("Reock", cfg.weight_reock * ps.reock)
+    _add("Holistic Compactness", cfg.weight_holistic_compactness * ps.holistic_compactness)
     _add("Population Deviation", cfg.weight_pop_deviation * ps.pop_deviation)
     if cfg.weight_mean_median:
         _add("Mean-Median",    cfg.weight_mean_median *
@@ -58,8 +59,7 @@ def _build_score_breakdown(ps, cfg) -> dict:
         _add("Efficiency Gap", cfg.weight_efficiency_gap *
              ((ps.efficiency_gap - cfg.target_efficiency_gap) * 100) ** 2)
     if cfg.weight_dem_seats:
-        _add("Dem Seats",      cfg.weight_dem_seats *
-             (ps.dem_seats - cfg.target_dem_seats) ** 2 * 100)
+        _add("Dem Seats", cfg.weight_dem_seats * ps.dem_seats_penalty)
     _add("Competitiveness", cfg.weight_competitiveness * ps.competitiveness * 100)
     if cfg.weight_majority_chance_dem:
         _add("D Majority", cfg.weight_majority_chance_dem *
@@ -408,6 +408,7 @@ class AlgorithmRunner:
                 self.state.competitive_count_history.append(0)
                 self.state.pp_history.append(1.0 - current_ps.polsby_popper / 100.0)
                 self.state.reock_history.append(1.0 - current_ps.reock / 100.0)
+                self.state.holistic_compactness_history.append(current_ps.holistic_compactness)
                 self.state.pop_deviation_history.append(current_ps.pop_deviation)
                 self.state.pop_dev_max_history.append(current_ps.pop_dev_max)
                 self.state.pop_dev_mean_history.append(current_ps.pop_dev_mean)
@@ -594,6 +595,7 @@ class AlgorithmRunner:
                     self.state.competitive_count_history.append(comp_count)
                     self.state.pp_history.append(1.0 - current_ps.polsby_popper / 100.0)
                     self.state.reock_history.append(1.0 - current_ps.reock / 100.0)
+                    self.state.holistic_compactness_history.append(current_ps.holistic_compactness)
                     self.state.pop_deviation_history.append(current_ps.pop_deviation)
                     self.state.pop_dev_max_history.append(current_ps.pop_dev_max)
                     self.state.pop_dev_mean_history.append(current_ps.pop_dev_mean)

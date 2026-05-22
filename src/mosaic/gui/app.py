@@ -150,11 +150,12 @@ _CONTRIB_BAR_METRICS = [
     ("County Splits",   "Co.Spl", (190, 170, 130, 220)),
     ("Compactness",     "PP",    (90,  160, 220, 220)),
     ("Reock",           "Reock", (60,  190, 200, 220)),
+    ("Holistic Compactness", "H-Comp", (220, 160, 60,  220)),
     ("Population Deviation", "PopDev", (220, 200, 70,  220)),
     ("Mean-Median",     "MM",     (240, 140, 60,  220)),
     ("Efficiency Gap",  "EG",     (225, 75,  75,  220)),
     ("Dem Seats",       "Seats",  (180, 80,  220, 220)),
-    ("Competitiveness", "Comp",   (70,  200, 120, 220)),
+    ("Competitiveness", "Cmptv",  (70,  200, 120, 220)),
     ("D Majority",      "D Maj",  (70,  130, 210, 220)),
     ("R Majority",      "R Maj",  (210, 70,  70,  220)),
     ("Hinge",           "Hinge",  (140, 90,  200, 220)),
@@ -217,6 +218,11 @@ _HINTS: dict[str, str] = {
         "Complementary to Polsby-Popper — PP measures boundary smoothness, Reock measures overall roundness. "
         "Optimizer uses (1 - Reock) as the penalty."
     ),
+    "holistic_compactness": (
+        "Single 0-100 compactness rating blending mean Polsby-Popper and mean Reock 50/50, "
+        "each linearly normalised over a fixed band. Higher = more compact. "
+        "Useful when you want one compactness dial instead of tuning PP and Reock separately."
+    ),
     "mean_median": (
         "Gap between the mean and median Democratic vote share across districts. "
         "A nonzero value signals partisan skew baked into the plan."
@@ -232,7 +238,8 @@ _HINTS: dict[str, str] = {
     ),
     "dem_seats": (
         "Expected number of Democratic-won districts under a partisan-swing model. "
-        "Penalty drives the plan toward a target seat count."
+        "Penalty is directional: D-toggle pushes the plan toward more Dem seats, "
+        "R-toggle toward fewer. Linear [0, 100] — no target, just pull toward the favored party."
     ),
     "majority_chance": (
         "Probability that the selected party wins a majority of seats under "
@@ -296,6 +303,7 @@ class MosaicApp:
         self._buf_comp      = _SeriesBuffer()
         self._buf_pp        = _SeriesBuffer()
         self._buf_reock     = _SeriesBuffer()
+        self._buf_hc        = _SeriesBuffer()
         self._buf_popdev     = _SeriesBuffer()
         self._buf_popdev_max = _SeriesBuffer()
         self._buf_popdev_mean = _SeriesBuffer()
@@ -388,6 +396,7 @@ class MosaicApp:
         self._build_comp_panel()
         self._build_pp_panel()
         self._build_reock_panel()
+        self._build_hc_panel()
         self._build_popdev_panel()
         self._build_cut_edges_panel()
         self._build_majority_panel()
@@ -442,76 +451,8 @@ class MosaicApp:
                         callback=lambda s, d: self.state.update(
                             map_render_interval=d),
                     )
-                with dpg.menu(label="Panels"):
-                    self._panel_temp_item = dpg.add_menu_item(
-                        label="Temperature",
-                        check=True,
-                        default_value=False,
-                        callback=self._on_panel_temp_toggle,
-                    )
-                    self._panel_cs_item = dpg.add_menu_item(
-                        label="County Splits", check=True, default_value=False,
-                        callback=self._on_panel_cs_toggle,
-                    )
-                    self._panel_partisan_item = dpg.add_menu_item(
-                        label="Partisanship", check=True, default_value=False,
-                        callback=self._on_panel_partisan_toggle,
-                    )
-                    self._panel_win_chance_item = dpg.add_menu_item(
-                        label="Win Chance", check=True, default_value=False,
-                        callback=self._on_panel_win_chance_toggle,
-                    )
-                    self._panel_mm_item = dpg.add_menu_item(
-                        label="Mean-Median", check=True, default_value=False,
-                        callback=self._on_panel_mm_toggle,
-                    )
-                    self._panel_eg_item = dpg.add_menu_item(
-                        label="Efficiency Gap", check=True, default_value=False,
-                        callback=self._on_panel_eg_toggle,
-                    )
-                    self._panel_seats_item = dpg.add_menu_item(
-                        label="Expected Dem Seats", check=True, default_value=False,
-                        callback=self._on_panel_seats_toggle,
-                    )
-                    self._panel_comp_item = dpg.add_menu_item(
-                        label="Competitiveness", check=True, default_value=False,
-                        callback=self._on_panel_comp_toggle,
-                    )
-                    self._panel_pp_item = dpg.add_menu_item(
-                        label="Compactness", check=True, default_value=False,
-                        callback=self._on_panel_pp_toggle,
-                    )
-                    self._panel_reock_item = dpg.add_menu_item(
-                        label="Reock", check=True, default_value=False,
-                        callback=self._on_panel_reock_toggle,
-                    )
-                    self._panel_popdev_item = dpg.add_menu_item(
-                        label="Population Deviation", check=True, default_value=False,
-                        callback=self._on_panel_popdev_toggle,
-                    )
-                    self._panel_cuts_item = dpg.add_menu_item(
-                        label="Cut Edges", check=True, default_value=False,
-                        callback=self._on_panel_cuts_toggle,
-                    )
-                    self._panel_hinge_item = dpg.add_menu_item(
-                        label="Supermajority/Hinge", check=True, default_value=False,
-                        callback=self._on_panel_hinge_toggle,
-                    )
-                    self._panel_majority_item = dpg.add_menu_item(
-                        label="Chance of Majority", check=True, default_value=False,
-                        callback=self._on_panel_majority_toggle,
-                    )
-                    dpg.add_separator()
-                    self._panel_contrib_item = dpg.add_menu_item(
-                        label="Score Contributors", check=True, default_value=False,
-                        callback=self._on_panel_contrib_toggle,
-                    )
-                    self._panel_district_item = dpg.add_menu_item(
-                        label="District Info", check=True, default_value=False,
-                        callback=self._on_panel_district_toggle,
-                    )
-
                 with dpg.menu(label="Scores", tag="menu_scores"):
+                    # Structural
                     self._svis_cuts = dpg.add_menu_item(
                         label="Cut Edges", check=True, default_value=False,
                         callback=lambda: self._set_score_row_vis(
@@ -531,6 +472,7 @@ class MosaicApp:
                             self._popdev_enabled, self._on_popdev_score_toggle),
                     )
                     dpg.add_separator()
+                    # Compactness
                     self._svis_pp = dpg.add_menu_item(
                         label="Compactness", check=True, default_value=True,
                         callback=lambda: self._set_score_row_vis(
@@ -543,6 +485,14 @@ class MosaicApp:
                             "score_row_reock", dpg.get_value(self._svis_reock),
                             self._reock_enabled, self._on_reock_toggle),
                     )
+                    self._svis_hc = dpg.add_menu_item(
+                        label="Holistic Compactness", check=True, default_value=False,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_hc", dpg.get_value(self._svis_hc),
+                            self._hc_enabled, self._on_hc_toggle),
+                    )
+                    dpg.add_separator()
+                    # Partisan
                     self._svis_mm = dpg.add_menu_item(
                         label="Mean-Median", check=True, default_value=False,
                         callback=lambda: self._set_score_row_vis(
@@ -555,7 +505,6 @@ class MosaicApp:
                             "score_row_eg", dpg.get_value(self._svis_eg),
                             self._eg_enabled, self._on_eg_toggle),
                     )
-                    dpg.add_separator()
                     self._svis_comp = dpg.add_menu_item(
                         label="Competitiveness", check=True, default_value=True,
                         callback=lambda: self._set_score_row_vis(
@@ -579,6 +528,83 @@ class MosaicApp:
                         callback=lambda: self._set_score_row_vis(
                             "score_row_hinge", dpg.get_value(self._svis_hinge),
                             self._hinge_enabled, self._on_hinge_toggle),
+                    )
+
+                with dpg.menu(label="Views"):
+                    # Structural
+                    self._panel_cuts_item = dpg.add_menu_item(
+                        label="Cut Edges", check=True, default_value=False,
+                        callback=self._on_panel_cuts_toggle,
+                    )
+                    self._panel_cs_item = dpg.add_menu_item(
+                        label="County Splits", check=True, default_value=False,
+                        callback=self._on_panel_cs_toggle,
+                    )
+                    self._panel_popdev_item = dpg.add_menu_item(
+                        label="Population Deviation", check=True, default_value=False,
+                        callback=self._on_panel_popdev_toggle,
+                    )
+                    dpg.add_separator()
+                    # Compactness
+                    self._panel_pp_item = dpg.add_menu_item(
+                        label="Compactness", check=True, default_value=False,
+                        callback=self._on_panel_pp_toggle,
+                    )
+                    self._panel_reock_item = dpg.add_menu_item(
+                        label="Reock", check=True, default_value=False,
+                        callback=self._on_panel_reock_toggle,
+                    )
+                    self._panel_hc_item = dpg.add_menu_item(
+                        label="Holistic Compactness", check=True, default_value=False,
+                        callback=self._on_panel_hc_toggle,
+                    )
+                    dpg.add_separator()
+                    # Partisan
+                    self._panel_mm_item = dpg.add_menu_item(
+                        label="Mean-Median", check=True, default_value=False,
+                        callback=self._on_panel_mm_toggle,
+                    )
+                    self._panel_eg_item = dpg.add_menu_item(
+                        label="Efficiency Gap", check=True, default_value=False,
+                        callback=self._on_panel_eg_toggle,
+                    )
+                    self._panel_comp_item = dpg.add_menu_item(
+                        label="Competitiveness", check=True, default_value=False,
+                        callback=self._on_panel_comp_toggle,
+                    )
+                    self._panel_seats_item = dpg.add_menu_item(
+                        label="Expected Dem Seats", check=True, default_value=False,
+                        callback=self._on_panel_seats_toggle,
+                    )
+                    self._panel_majority_item = dpg.add_menu_item(
+                        label="Chance of Majority", check=True, default_value=False,
+                        callback=self._on_panel_majority_toggle,
+                    )
+                    self._panel_hinge_item = dpg.add_menu_item(
+                        label="Supermajority/Hinge", check=True, default_value=False,
+                        callback=self._on_panel_hinge_toggle,
+                    )
+                    dpg.add_separator()
+                    # Views-only (no corresponding score)
+                    self._panel_temp_item = dpg.add_menu_item(
+                        label="Temperature", check=True, default_value=False,
+                        callback=self._on_panel_temp_toggle,
+                    )
+                    self._panel_partisan_item = dpg.add_menu_item(
+                        label="Partisanship", check=True, default_value=False,
+                        callback=self._on_panel_partisan_toggle,
+                    )
+                    self._panel_win_chance_item = dpg.add_menu_item(
+                        label="Win Chance", check=True, default_value=False,
+                        callback=self._on_panel_win_chance_toggle,
+                    )
+                    self._panel_contrib_item = dpg.add_menu_item(
+                        label="Score Contributors", check=True, default_value=False,
+                        callback=self._on_panel_contrib_toggle,
+                    )
+                    self._panel_district_item = dpg.add_menu_item(
+                        label="District Info", check=True, default_value=False,
+                        callback=self._on_panel_district_toggle,
                     )
 
                 with dpg.menu(label="Help"):
@@ -929,6 +955,26 @@ class MosaicApp:
                                 )
                             dpg.add_spacer(height=4)
 
+                        with dpg.group(tag="score_row_hc", show=False):
+                            with dpg.group(horizontal=True):
+                                self._hc_enabled = dpg.add_checkbox(
+                                    default_value=False,
+                                    callback=self._on_hc_toggle,
+                                )
+                                self._hc_lbl = self.theme.text(
+                                    "Holistic Compactness", "secondary",
+                                )
+                                self._hint(self._hc_lbl, "holistic_compactness")
+                                dpg.add_button(label="↗", width=24,
+                                    callback=lambda: self._show_panel("panel_hc", self._panel_hc_item))
+                            with dpg.group(tag="hc_controls", show=False):
+                                self._w_holistic_compactness = dpg.add_slider_int(
+                                    label="Weight",
+                                    default_value=25, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 100,
+                                )
+                            dpg.add_spacer(height=4)
+
                         with dpg.group(tag="score_row_mm", show=False):
                             with dpg.group(horizontal=True):
                                 self._mm_enabled = dpg.add_checkbox(
@@ -1027,14 +1073,19 @@ class MosaicApp:
                             with dpg.group(tag="seats_controls", show=False):
                                 self._w_dem_seats = dpg.add_slider_int(
                                     label="Weight",
-                                    default_value=1, min_value=0, max_value=100,
+                                    default_value=25, min_value=0, max_value=100,
                                     width=_SCORE_COL_W - 100,
                                 )
-                                self._target_dem_seats = dpg.add_slider_int(
-                                    label="Target S",
-                                    default_value=7, min_value=1, max_value=14,
-                                    width=_SCORE_COL_W - 100,
-                                )
+                                with dpg.group(horizontal=True):
+                                    self._dem_seats_dem_chk = dpg.add_checkbox(
+                                        label="D", default_value=True,
+                                        callback=self._on_dem_seats_dem_chk,
+                                    )
+                                    dpg.add_spacer(width=12)
+                                    self._dem_seats_rep_chk = dpg.add_checkbox(
+                                        label="R", default_value=False,
+                                        callback=self._on_dem_seats_rep_chk,
+                                    )
                             dpg.add_spacer(height=4)
 
                         with dpg.group(tag="score_row_majority", show=False):
@@ -1681,6 +1732,32 @@ class MosaicApp:
             )
         dpg.set_axis_limits("reock_y", 0.0, 100.0)
 
+    def _build_hc_panel(self):
+        with dpg.window(
+            label="Holistic Compactness", tag="panel_hc",
+            show=False, width=500, height=295,
+            pos=[_LEFT_W + 80, 80],
+            on_close=lambda: dpg.set_value(self._panel_hc_item, False),
+        ):
+            with dpg.group(tag="hc_plot_grp"):
+                with dpg.plot(height=240, width=-1):
+                    dpg.add_plot_legend()
+                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="hc_x")
+                    with dpg.plot_axis(dpg.mvYAxis, label="Holistic (100 = best)", tag="hc_y"):
+                        dpg.add_line_series([], [], label="Holistic", tag="hc_series")
+            self._tooltip(
+                "hc_plot_grp",
+                "Combined PP + Reock rating; higher is more compact.",
+            )
+            self.theme.track(
+                dpg.add_text(
+                    "Apply a score to use this panel.",
+                    tag="hc_inactive_lbl", show=False,
+                ),
+                "muted",
+            )
+        dpg.set_axis_limits("hc_y", 0.0, 100.0)
+
     def _build_popdev_panel(self):
         with dpg.window(
             label="Population Deviation", tag="panel_popdev",
@@ -2279,7 +2356,6 @@ class MosaicApp:
 
         # Keep district-count-dependent sliders bounded
         n_dist_val = dpg.get_value(self._num_districts)
-        dpg.configure_item(self._target_dem_seats, max_value=n_dist_val)
         dpg.configure_item(self._hinge_threshold,  max_value=n_dist_val)
 
         # ── Button states ─────────────────────────────────────────────────────
@@ -2345,6 +2421,7 @@ class MosaicApp:
             _cod  = list(self.state.competitive_count_history[self._buf_comp.read:])
             _pd   = list(self.state.pp_history[self._buf_pp.read:])
             _rd   = list(self.state.reock_history[self._buf_reock.read:])
+            _hcd  = list(self.state.holistic_compactness_history[self._buf_hc.read:])
             _pvd  = list(self.state.pop_deviation_history[self._buf_popdev.read:])
             _pvd_max  = list(self.state.pop_dev_max_history[self._buf_popdev_max.read:])
             _pvd_mean = list(self.state.pop_dev_mean_history[self._buf_popdev_mean.read:])
@@ -2365,6 +2442,8 @@ class MosaicApp:
         self._buf_comp.add(_cod)
         self._buf_pp.add([v * 100.0 for v in _pd])
         self._buf_reock.add([v * 100.0 for v in _rd])
+        # Holistic chart: convert penalty (0=best) to rating (100=best) for display.
+        self._buf_hc.add([100.0 - v for v in _hcd])
         self._buf_popdev.add(_pvd)
         self._buf_popdev_max.add(_pvd_max)
         self._buf_popdev_mean.add(_pvd_mean)
@@ -2502,6 +2581,12 @@ class MosaicApp:
             dpg.configure_item("reock_inactive_lbl", show=not reock_on)
             if reock_on:
                 _render(self._buf_reock, "reock_series", "reock_x", "reock_y")
+        if dpg.is_item_shown("panel_hc"):
+            hc_on = dpg.get_value(self._hc_enabled)
+            dpg.configure_item("hc_plot_grp",     show=hc_on)
+            dpg.configure_item("hc_inactive_lbl", show=not hc_on)
+            if hc_on:
+                _render(self._buf_hc, "hc_series", "hc_x", "hc_y")
         if dpg.is_item_shown("panel_popdev"):
             popdev_on = dpg.get_value(self._popdev_enabled)
             dpg.configure_item("popdev_plot_grp",     show=popdev_on)
@@ -2615,7 +2700,8 @@ class MosaicApp:
             self._buf_score, self._buf_acc, self._buf_temp,
             self._buf_cs_score, self._buf_cs_excess, self._buf_cs_clean,
             self._buf_mm, self._buf_eg, self._buf_seats,
-            self._buf_comp, self._buf_pp, self._buf_reock, self._buf_popdev,
+            self._buf_comp, self._buf_pp, self._buf_reock, self._buf_hc,
+            self._buf_popdev,
             self._buf_popdev_max, self._buf_popdev_mean, self._buf_cuts,
             self._buf_maj_dem, self._buf_maj_rep, self._buf_hinge,
         ):
@@ -2805,6 +2891,12 @@ class MosaicApp:
                            "accent_green" if en else "secondary")
         dpg.configure_item("reock_controls", show=en)
 
+    def _on_hc_toggle(self):
+        en = dpg.get_value(self._hc_enabled)
+        self.theme.retoken(self._hc_lbl,
+                           "accent_green" if en else "secondary")
+        dpg.configure_item("hc_controls", show=en)
+
     def _on_popdev_score_toggle(self):
         en = dpg.get_value(self._popdev_enabled)
         self.theme.retoken(self._popdev_lbl,
@@ -2834,6 +2926,19 @@ class MosaicApp:
         self.theme.retoken(self._seats_lbl,
                            "accent_green" if en else "disabled")
         dpg.configure_item("seats_controls", show=en)
+
+    def _on_dem_seats_dem_chk(self):
+        if dpg.get_value(self._dem_seats_dem_chk):
+            dpg.set_value(self._dem_seats_rep_chk, False)
+        else:
+            # Mutually exclusive: at least one must be on. Re-enable D.
+            dpg.set_value(self._dem_seats_dem_chk, True)
+
+    def _on_dem_seats_rep_chk(self):
+        if dpg.get_value(self._dem_seats_rep_chk):
+            dpg.set_value(self._dem_seats_dem_chk, False)
+        else:
+            dpg.set_value(self._dem_seats_rep_chk, True)
 
     def _on_majority_toggle(self):
         en = dpg.get_value(self._majority_enabled)
@@ -2930,6 +3035,9 @@ class MosaicApp:
 
     def _on_panel_reock_toggle(self):
         dpg.configure_item("panel_reock", show=dpg.get_value(self._panel_reock_item))
+
+    def _on_panel_hc_toggle(self):
+        dpg.configure_item("panel_hc", show=dpg.get_value(self._panel_hc_item))
 
     def _on_panel_popdev_toggle(self):
         dpg.configure_item("panel_popdev", show=dpg.get_value(self._panel_popdev_item))
@@ -3218,6 +3326,7 @@ class MosaicApp:
             self.state.competitive_count_history = []
             self.state.pp_history = []
             self.state.reock_history = []
+            self.state.holistic_compactness_history = []
             self.state.pop_deviation_history = []
             self.state.pop_dev_max_history = []
             self.state.pop_dev_mean_history = []
@@ -3262,6 +3371,8 @@ class MosaicApp:
             self.state.dem_seats_history        = self.state.dem_seats_history[:n_score]
             self.state.competitive_count_history = self.state.competitive_count_history[:n_score]
             self.state.pp_history               = self.state.pp_history[:n_score]
+            self.state.reock_history            = self.state.reock_history[:n_score]
+            self.state.holistic_compactness_history = self.state.holistic_compactness_history[:n_score]
             self.state.pop_deviation_history = self.state.pop_deviation_history[:n_score]
             self.state.pop_dev_max_history   = self.state.pop_dev_max_history[:n_score]
             self.state.pop_dev_mean_history  = self.state.pop_dev_mean_history[:n_score]
@@ -3292,7 +3403,8 @@ class MosaicApp:
         for buf in (
             self._buf_score, self._buf_cs_score, self._buf_cs_excess,
             self._buf_cs_clean, self._buf_mm, self._buf_eg,
-            self._buf_seats, self._buf_comp, self._buf_pp, self._buf_reock, self._buf_popdev,
+            self._buf_seats, self._buf_comp, self._buf_pp, self._buf_reock,
+            self._buf_hc, self._buf_popdev,
             self._buf_popdev_max, self._buf_popdev_mean, self._buf_cuts,
             self._buf_maj_dem, self._buf_maj_rep,
         ):
@@ -3333,6 +3445,8 @@ class MosaicApp:
                   if dpg.get_value(self._pp_enabled) else 0.0)
         w_reock = (dpg.get_value(self._w_reock)
                    if dpg.get_value(self._reock_enabled) else 0.0)
+        w_hc   = (dpg.get_value(self._w_holistic_compactness)
+                  if dpg.get_value(self._hc_enabled) else 0.0)
         w_pd   = (dpg.get_value(self._w_pop_deviation)
                   if dpg.get_value(self._popdev_enabled) else 0.0)
         # Safe harbor cannot exceed population tolerance
@@ -3340,14 +3454,13 @@ class MosaicApp:
         _harbor = min(dpg.get_value(self._pop_dev_harbor) / 100.0, _tol)
 
         n_dist_run = dpg.get_value(self._num_districts)
-        raw_target_seats = dpg.get_value(self._target_dem_seats)
-        target_seats = float(max(1, min(raw_target_seats, n_dist_run - 1)))
 
         score_cfg = ScoreConfig(
             weight_cut_edges=w_cut,
             weight_county_splits=w_cs,
             weight_polsby_popper=w_pp,
             weight_reock=w_reock,
+            weight_holistic_compactness=w_hc,
             weight_pop_deviation=w_pd,
             pop_deviation_safe_harbor=_harbor,
             weight_mean_median=dpg.get_value(self._w_mean_median) if mm_on else 0.0,
@@ -3356,7 +3469,7 @@ class MosaicApp:
             target_efficiency_gap=dpg.get_value(self._target_efficiency_gap) if eg_on else 0.0,
             use_robust_eg=robust_eg,
             weight_dem_seats=dpg.get_value(self._w_dem_seats) if seats_on else 0.0,
-            target_dem_seats=target_seats,
+            dem_seats_favor_dem=dpg.get_value(self._dem_seats_dem_chk),
             weight_competitiveness=dpg.get_value(self._w_competitiveness) if comp_on else 0.0,
             weight_majority_chance_dem=(dpg.get_value(self._w_majority)
                                         if maj_on and dpg.get_value(self._majority_dem_chk)
@@ -3429,6 +3542,7 @@ class MosaicApp:
             self.state.competitive_count_history = []
             self.state.pp_history = []
             self.state.reock_history = []
+            self.state.holistic_compactness_history = []
             self.state.pop_deviation_history = []
             self.state.pop_dev_max_history = []
             self.state.pop_dev_mean_history = []
