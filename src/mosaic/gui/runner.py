@@ -23,6 +23,10 @@ from mosaic.graph import (
 )
 from mosaic.recom import create_initial_partition
 from mosaic.recom.recombination import recom_step_ig, recom_step_ig_n3, GraphContext
+from mosaic.recom.flip import flip_step_ig, flip_rate_curve
+
+# Defaults match engine.py / MosaicPy's GUI; not exposed as sliders today.
+_FLIP_STEEPNESS = 9.5
 from mosaic.recom.annealing import (
     init_annealing, accept_proposal, cool_temperature, relaunch_temperature,
 )
@@ -47,20 +51,36 @@ def _build_score_breakdown(ps, cfg) -> dict:
         if contrib > 0:
             result[name] = contrib / total * 100.0
     _add("Cut Edges",      cfg.weight_cut_edges * ps.cut_edges)
-    _add("County Splits",  cfg.weight_county_splits * ps.county_splits)
+    _add("Excess Splits",    cfg.weight_county_excess  * ps.county_excess_score)
+    _add("Unified Counties", cfg.weight_county_unified * ps.county_unified_score)
+    _add("Holistic Splitting", cfg.weight_holistic_splitting * ps.holistic_splitting)
     _add("Compactness", cfg.weight_polsby_popper * ps.polsby_popper)
     _add("Reock", cfg.weight_reock * ps.reock)
     _add("Holistic Compactness", cfg.weight_holistic_compactness * ps.holistic_compactness)
     _add("Population Deviation", cfg.weight_pop_deviation * ps.pop_deviation)
+    # MM / EG breakdown re-uses score_plan's exact math by recomputing the
+    # per-mode penalty from the stored raw values.
+    def _mm_eg_pen(raw: float, mode: str, bound: float) -> float:
+        if mode == "favor_dem":
+            d = max(0.0, min(1.0, (raw + bound) / (2.0 * bound)))
+        elif mode == "favor_rep":
+            d = max(0.0, min(1.0, (bound - raw) / (2.0 * bound)))
+        else:
+            d = min(1.0, abs(raw) / bound)
+        return (d * d if cfg.partisan_quadratic_penalty else d) * 100.0
     if cfg.weight_mean_median:
         _add("Mean-Median",    cfg.weight_mean_median *
-             ((ps.mean_median - cfg.target_mean_median) * 100) ** 2)
+             _mm_eg_pen(ps.mean_median, cfg.mm_mode, cfg.mm_bound))
     if cfg.weight_efficiency_gap:
         _add("Efficiency Gap", cfg.weight_efficiency_gap *
-             ((ps.efficiency_gap - cfg.target_efficiency_gap) * 100) ** 2)
+             _mm_eg_pen(ps.efficiency_gap, cfg.eg_mode, cfg.eg_bound))
     if cfg.weight_dem_seats:
         _add("Dem Seats", cfg.weight_dem_seats * ps.dem_seats_penalty)
+    _add("Holistic Proportionality",
+         cfg.weight_holistic_proportionality * ps.holistic_proportionality)
     _add("Competitiveness", cfg.weight_competitiveness * ps.competitiveness * 100)
+    _add("Holistic Competitiveness",
+         cfg.weight_holistic_competitiveness * ps.holistic_competitiveness)
     if cfg.weight_majority_chance_dem:
         _add("D Majority", cfg.weight_majority_chance_dem *
              (1.0 - ps.majority_chance_dem) ** 1.5 * 100)
@@ -320,11 +340,15 @@ class AlgorithmRunner:
         (num_districts, tolerance, max_iterations, seed,
          score_config, annealing_config,
          county_bias_enabled, county_bias,
-         n3_probability, n3_max_attempts_per_stage) = self.state.get(
+         n3_probability, n3_max_attempts_per_stage,
+         flip_enabled, flip_midpoint,
+         hot_start_assignment) = self.state.get(
             "num_districts", "pop_tolerance", "max_iterations", "seed",
             "score_config", "annealing_config",
             "county_bias_enabled", "county_bias",
             "n3_probability", "n3_max_attempts_per_stage",
+            "flip_enabled", "flip_midpoint",
+            "hot_start_assignment",
         )
 
         # If user supplied a seed, seed BOTH RNGs the algorithm touches:
@@ -350,6 +374,13 @@ class AlgorithmRunner:
                 f"n=3 ReCom mix enabled: p={n3_probability:.1%}, "
                 f"max_attempts_per_stage={n3_max_attempts_per_stage}"
             )
+        # Flip dispatch short-circuits when disabled so the legacy ReCom-only
+        # RNG sequence stays byte-identical at the cost of a single bool check.
+        if flip_enabled:
+            log.info(
+                "Polish Flips enabled: two-piece logistic ramp "
+                f"(5%->50% at p={flip_midpoint:.2f}->85%, steepness={_FLIP_STEEPNESS})"
+            )
 
         _skw = dict(
             county_ids=self.county_array,
@@ -371,25 +402,36 @@ class AlgorithmRunner:
                 f"Partitioning: {num_districts} districts, "
                 f"{tolerance*100:.1f}% tolerance, {max_iterations} iters"
             )
-            self.state.update(
-                status=AlgorithmStatus.PARTITIONING,
-                status_message="Creating initial partition...",
-            )
-            assignment = create_initial_partition(
-                self.graph, self.populations, num_districts, tolerance,
-                seed=seed,
-                on_progress=lambda c, t: self.state.update(
-                    status_message=f"Creating district {c}/{t}..."
-                ),
-                should_cancel=lambda: (
-                    self.state.check_should_stop() or self.state.check_should_pause()
-                ),
-            )
-            if assignment is None:
-                self.state.request_resume()
-                self.state.update(status=AlgorithmStatus.IDLE, status_message="")
-                return
-            log.info("Initial partition complete")
+            if hot_start_assignment is not None:
+                self.state.update(
+                    status=AlgorithmStatus.PARTITIONING,
+                    status_message="Using hot start assignment...",
+                )
+                assignment = hot_start_assignment.astype(np.int32).copy()
+                log.info(
+                    f"Hot start: skipping bipartition, using preloaded assignment "
+                    f"({int(assignment.max()) + 1} districts, {len(assignment)} precincts)"
+                )
+            else:
+                self.state.update(
+                    status=AlgorithmStatus.PARTITIONING,
+                    status_message="Creating initial partition...",
+                )
+                assignment = create_initial_partition(
+                    self.graph, self.populations, num_districts, tolerance,
+                    seed=seed,
+                    on_progress=lambda c, t: self.state.update(
+                        status_message=f"Creating district {c}/{t}..."
+                    ),
+                    should_cancel=lambda: (
+                        self.state.check_should_stop() or self.state.check_should_pause()
+                    ),
+                )
+                if assignment is None:
+                    self.state.request_resume()
+                    self.state.update(status=AlgorithmStatus.IDLE, status_message="")
+                    return
+                log.info("Initial partition complete")
             self.state.update(initial_assignment=assignment.copy())
 
             # ── Initial score ────────────────────────────────────────────────
@@ -399,9 +441,10 @@ class AlgorithmRunner:
 
             with self.state._lock:
                 self.state.score_history.append(current_ps.total)
-                self.state.county_splits_score_history.append(current_ps.county_splits)
+                self.state.county_splits_score_history.append(
+                    current_ps.county_excess_score + current_ps.county_unified_score)
                 self.state.county_excess_splits_history.append(current_ps.county_excess_splits)
-                self.state.county_clean_districts_history.append(current_ps.county_clean_districts)
+                self.state.county_unified_districts_history.append(current_ps.county_unified_districts)
                 self.state.mm_history.append(current_ps.mean_median)
                 self.state.eg_history.append(current_ps.efficiency_gap)
                 self.state.dem_seats_history.append(current_ps.dem_seats)
@@ -409,6 +452,9 @@ class AlgorithmRunner:
                 self.state.pp_history.append(1.0 - current_ps.polsby_popper / 100.0)
                 self.state.reock_history.append(1.0 - current_ps.reock / 100.0)
                 self.state.holistic_compactness_history.append(current_ps.holistic_compactness)
+                self.state.holistic_splitting_history.append(current_ps.holistic_splitting)
+                self.state.holistic_proportionality_history.append(current_ps.holistic_proportionality)
+                self.state.holistic_competitiveness_history.append(current_ps.holistic_competitiveness)
                 self.state.pop_deviation_history.append(current_ps.pop_deviation)
                 self.state.pop_dev_max_history.append(current_ps.pop_dev_max)
                 self.state.pop_dev_mean_history.append(current_ps.pop_dev_mean)
@@ -523,10 +569,23 @@ class AlgorithmRunner:
                         status_message="Running ReCom...",
                     )
 
-                # ── ReCom step ───────────────────────────────────────────────
-                # Zero-overhead dispatch when n3_enabled is False: the `and`
-                # short-circuits, np.random.random() is never called.
-                if n3_enabled and np.random.random() < n3_probability:
+                # ── Proposal dispatch ────────────────────────────────────────
+                # Order: flip wins over n=3, which wins over n=2. Each branch
+                # short-circuits when its enable flag is False so a pure
+                # n=2 ReCom run pays only a single bool check per iteration.
+                if flip_enabled:
+                    _progress = iteration / max_iterations if max_iterations > 0 else 0.0
+                    _flip_p = flip_rate_curve(_progress, flip_midpoint, _FLIP_STEEPNESS)
+                else:
+                    _flip_p = 0.0
+                if flip_enabled and np.random.random() < _flip_p:
+                    new_assignment, valid, new_cut_indices = flip_step_ig(
+                        ctx, assignment, self.populations, ideal_pop, tolerance,
+                        cut_edge_indices,
+                        county_array=self.county_array,
+                        county_bias=effective_bias,
+                    )
+                elif n3_enabled and np.random.random() < n3_probability:
                     new_assignment, valid, new_cut_indices = recom_step_ig_n3(
                         ctx, assignment, self.populations, ideal_pop, tolerance,
                         cut_edge_indices,
@@ -586,9 +645,10 @@ class AlgorithmRunner:
                 n_score = n_temp = n_acc = 0
                 with self.state._lock:
                     self.state.score_history.append(current_ps.total)
-                    self.state.county_splits_score_history.append(current_ps.county_splits)
+                    self.state.county_splits_score_history.append(
+                        current_ps.county_excess_score + current_ps.county_unified_score)
                     self.state.county_excess_splits_history.append(current_ps.county_excess_splits)
-                    self.state.county_clean_districts_history.append(current_ps.county_clean_districts)
+                    self.state.county_unified_districts_history.append(current_ps.county_unified_districts)
                     self.state.mm_history.append(current_ps.mean_median)
                     self.state.eg_history.append(current_ps.efficiency_gap)
                     self.state.dem_seats_history.append(current_ps.dem_seats)
@@ -596,6 +656,9 @@ class AlgorithmRunner:
                     self.state.pp_history.append(1.0 - current_ps.polsby_popper / 100.0)
                     self.state.reock_history.append(1.0 - current_ps.reock / 100.0)
                     self.state.holistic_compactness_history.append(current_ps.holistic_compactness)
+                    self.state.holistic_splitting_history.append(current_ps.holistic_splitting)
+                    self.state.holistic_proportionality_history.append(current_ps.holistic_proportionality)
+                    self.state.holistic_competitiveness_history.append(current_ps.holistic_competitiveness)
                     self.state.pop_deviation_history.append(current_ps.pop_deviation)
                     self.state.pop_dev_max_history.append(current_ps.pop_dev_max)
                     self.state.pop_dev_mean_history.append(current_ps.pop_dev_mean)

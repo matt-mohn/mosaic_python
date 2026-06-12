@@ -97,9 +97,42 @@ def _preflight() -> None:
     _try_import("numpy", "numerical core")
 
 
+def _setup_logging() -> None:
+    """Wire up a console handler for the 'mosaic' logger.
+
+    Without this the runner-added NullHandler swallows every log line, so
+    diagnostic checkpoints (e.g. the hot-start flow) leave no trace when
+    something goes wrong. ASCII-only formatter to dodge cp1252 crashes
+    when the console code page is Windows-1252.
+
+    Note: no persistent file handler, and level is WARNING so routine
+    per-iteration progress (INFO) does not stream to the console. Only
+    warnings/errors surface. Durable on-disk diagnostics for failures are
+    handled separately by crash.write_crash_log (crashes/*.log).
+    """
+    import logging
+
+    logger = logging.getLogger("mosaic")
+    if any(
+        not isinstance(h, logging.NullHandler) for h in logger.handlers
+    ):
+        return  # already configured (e.g. headless CLI ran basicConfig)
+
+    logger.setLevel(logging.WARNING)
+    fmt = logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    console = logging.StreamHandler(stream=sys.stderr)
+    console.setFormatter(fmt)
+    logger.addHandler(console)
+
+
 def main():
     """Launch the Mosaic GUI application."""
     _preflight()
+    _setup_logging()
 
     try:
         from mosaic.gui import MosaicApp

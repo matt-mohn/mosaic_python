@@ -86,7 +86,7 @@ class SharedState:
     # Per-metric histories (one entry per iteration, same length as score_history)
     county_splits_score_history: list = field(default_factory=list)
     county_excess_splits_history: list = field(default_factory=list)
-    county_clean_districts_history: list = field(default_factory=list)
+    county_unified_districts_history: list = field(default_factory=list)
     mm_history: list = field(default_factory=list)
     eg_history: list = field(default_factory=list)
     dem_seats_history: list = field(default_factory=list)
@@ -94,6 +94,9 @@ class SharedState:
     pp_history: list = field(default_factory=list)
     reock_history: list = field(default_factory=list)
     holistic_compactness_history: list = field(default_factory=list)
+    holistic_splitting_history: list = field(default_factory=list)
+    holistic_proportionality_history: list = field(default_factory=list)
+    holistic_competitiveness_history: list = field(default_factory=list)
     pop_deviation_history: list = field(default_factory=list)
     pop_dev_max_history: list = field(default_factory=list)
     pop_dev_mean_history: list = field(default_factory=list)
@@ -116,12 +119,27 @@ class SharedState:
     county_bias_enabled: bool = False
     county_bias: float = 5.0
 
+    # Hot start: user-uploaded initial assignment that replaces the
+    # recursive-bipartition default. None = use default.
+    hot_start_assignment: Optional[np.ndarray] = None
+    hot_start_filename: str = ""
+
     # n=3 ReCom mix probability. 0.0 = pure n=2 (~0 dispatch overhead, mass-generate mode).
     # 0.05 default helps the chain escape local minima at ~5-7% wall-time cost.
     # Set by GUI before run; frozen at run start to keep dispatch zero-overhead at 0.
     n3_probability: float = 0.05
     # Per-stage attempt cap for n=3 cuts. Bench showed 20 is the sweet spot.
     n3_max_attempts_per_stage: int = 20
+
+    # Polish flips: single-precinct boundary moves whose per-step probability
+    # follows a two-piece logistic ramp pinned to 5% at the start, 50% at the
+    # midpoint, and 85% at the end. Off by default; runner dispatch short-
+    # circuits when disabled so the RNG sequence stays byte-identical to a
+    # pure-ReCom run.
+    flip_enabled: bool = False
+    # Progress (0-1) at which the flip rate crosses 50%. User-adjustable; the
+    # 5%-start / 85%-end anchors hold regardless.
+    flip_midpoint: float = 0.835
 
     # Control flags
     should_stop: bool = False
@@ -187,7 +205,7 @@ class SharedState:
             self.acceptance_rate_history = []
             self.county_splits_score_history = []
             self.county_excess_splits_history = []
-            self.county_clean_districts_history = []
+            self.county_unified_districts_history = []
             self.mm_history = []
             self.eg_history = []
             self.dem_seats_history = []
@@ -195,6 +213,9 @@ class SharedState:
             self.pp_history = []
             self.reock_history = []
             self.holistic_compactness_history = []
+            self.holistic_splitting_history = []
+            self.holistic_proportionality_history = []
+            self.holistic_competitiveness_history = []
             self.pop_deviation_history = []
             self.pop_dev_max_history = []
             self.pop_dev_mean_history = []
@@ -204,6 +225,9 @@ class SharedState:
             self.hinge_history = []
             self.score_breakdown = {}
             self.initial_assignment = None
+            # Note: hot_start_assignment is intentionally NOT cleared here -- it
+            # persists across run resets so the user can re-run from the same
+            # uploaded plan. The GUI clears it on shapefile change.
             self.map_needs_update = False
             self.shp_inspect_ready = False
             self.should_stop = False
