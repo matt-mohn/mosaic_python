@@ -79,13 +79,13 @@ def score_pop_deviation(
     return_components: bool = False,
 ) -> float | tuple[float, float, float]:
     """
-    Population balance score combining average and worst-case excess deviation.
+    Population balance score using sum of squared excess deviations.
 
-    Score = (mean(excess²) + max(excess²)) × 50,000, where
+    Score = sum(excess²) × 100,000 / n_districts, where
     excess = max(0, |dev_frac| - safe_harbor).
-    Equals mean(excess²) × 100k when all districts deviate equally;
-    rises faster when one district is an outlier. Lower is better; 0 means
-    all districts are within the safe-harbor.
+    Quadratic scaling naturally prioritizes outliers while providing smooth
+    gradients for annealing. Lower is better; 0 means all districts are
+    within the safe-harbor.
 
     If return_components=True, returns (score, max_dev_pct, mean_dev_pct)
     where max_dev_pct and mean_dev_pct are actual percentages (0-100).
@@ -96,7 +96,10 @@ def score_pop_deviation(
     abs_dev = np.abs(pop_d - ideal) / ideal
     excess = np.maximum(0.0, abs_dev - safe_harbor)
     excess_sq = excess ** 2
-    combined = float((np.mean(excess_sq) + np.max(excess_sq)) * 50_000)
+    # Sum-of-squares provides smoother optimization landscape than mean+max.
+    # Scale factor chosen to roughly match previous (mean+max)×50k at typical
+    # uniform deviations, so existing weight tuning remains valid.
+    combined = float(np.sum(excess_sq) * 100_000 / n_districts)
 
     if return_components:
         max_dev_pct = float(abs_dev.max() * 100.0)

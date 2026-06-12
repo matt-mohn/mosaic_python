@@ -18,6 +18,9 @@ from mosaic.scoring.reock import (
     ReockData, precompute_reock_data, score_reock,
 )
 from mosaic.scoring.holistic_compactness import holistic_compactness_from_scores
+from mosaic.scoring.holistic_proportionality import holistic_proportionality_from_shares
+from mosaic.scoring.holistic_competitiveness import holistic_competitiveness_from_shares
+from mosaic.scoring.holistic_splitting import score_holistic_splitting
 from mosaic.scoring.partisan import (
     district_dem_shares,
     eg_from_shares,
@@ -51,6 +54,9 @@ __all__ = [
     "precompute_reock_data",
     "score_reock",
     "holistic_compactness_from_scores",
+    "holistic_proportionality_from_shares",
+    "holistic_competitiveness_from_shares",
+    "score_holistic_splitting",
     "district_dem_shares",
     "eg_from_shares",
     "k_to_sigma",
