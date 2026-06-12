@@ -145,13 +145,23 @@ def score_mean_median(
     dem_votes: np.ndarray,
     gop_votes: np.ndarray,
     n_districts: int,
-    target: float = 0.0,
+    mode: str = "fair",          # "fair" | "favor_dem" | "favor_rep"
+    bound: float = 0.20,
+    quadratic_penalty: bool = False,
     _shares: np.ndarray | None = None,
 ) -> tuple[float, float]:
     """
+    Unified Mean-Median score (one row, three modes).
+
     Returns:
-        raw     -- actual mean-median value (for display)
-        penalty -- ((raw - target) * 100)^2  (scaled to pp for weight comparability)
+        raw     -- actual mean-median value (for display).
+        penalty -- in [0, 100].
+
+    Each mode computes a normalized value d in [0, 1]:
+        fair       -- d = min(1, abs(raw) / bound)
+        favor_dem  -- d = clamp01((raw + bound) / (2 * bound))    # raw=-bound -> 0
+        favor_rep  -- d = clamp01((bound - raw) / (2 * bound))    # raw=+bound -> 0
+    Penalty = (d^2 if quadratic_penalty else d) * 100.
     """
     if _shares is None:
         _shares, _ = district_dem_shares(assignment, dem_votes, gop_votes, n_districts)
@@ -159,7 +169,15 @@ def score_mean_median(
     n = len(_s)
     _med = 0.5 * (_s[n // 2 - 1] + _s[n // 2]) if n % 2 == 0 else float(_s[n // 2])
     raw = float(_shares.mean() - _med)
-    return raw, ((raw - target) * 100) ** 2
+
+    if mode == "favor_dem":
+        d = max(0.0, min(1.0, (raw + bound) / (2.0 * bound)))
+    elif mode == "favor_rep":
+        d = max(0.0, min(1.0, (bound - raw) / (2.0 * bound)))
+    else:  # "fair"
+        d = min(1.0, abs(raw) / bound)
+    penalty = (d * d if quadratic_penalty else d) * 100.0
+    return raw, penalty
 
 
 def score_efficiency_gap(
@@ -167,7 +185,9 @@ def score_efficiency_gap(
     dem_votes: np.ndarray,
     gop_votes: np.ndarray,
     n_districts: int,
-    target: float = 0.0,
+    mode: str = "fair",          # "fair" | "favor_dem" | "favor_rep"
+    bound: float = 0.35,
+    quadratic_penalty: bool = False,
     robust: bool = True,
     win_prob_at_55: float = 0.9,
     _shares: np.ndarray | None = None,
@@ -175,16 +195,14 @@ def score_efficiency_gap(
     _sigma_d: float | None = None,
 ) -> tuple[float, float]:
     """
-    Returns:
-        raw     -- EG value (robust when robust=True, static when robust=False)
-        penalty -- ((raw - target) * 100)^2  (scaled to pp for weight comparability)
+    Unified Efficiency Gap score (one row, three modes).
 
     Robust (default): integrates out both partisan-environment uncertainty
       (sigma_swing = _EG_SWING_SIGMA = 3pp) and per-district electoral noise
-      (sigma_district from win_prob_at_55) in one closed-form call:
-          sigma_combined = sqrt(sigma_swing^2 + sigma_district^2)
-      Mathematically exact under Gaussian swing assumption. Deterministic, no sampling.
+      (sigma_district from win_prob_at_55) via sigma_combined.
     Static: vote-weighted EG at the current partisan split, no noise.
+
+    Modes match score_mean_median's d-then-optional-square pattern.
     """
     if _shares is None or _total_d is None:
         _shares, _total_d = district_dem_shares(assignment, dem_votes, gop_votes, n_districts)
@@ -197,7 +215,14 @@ def score_efficiency_gap(
     else:
         raw = _eg_votes(_shares, _total_d)
 
-    return raw, ((raw - target) * 100) ** 2
+    if mode == "favor_dem":
+        d = max(0.0, min(1.0, (raw + bound) / (2.0 * bound)))
+    elif mode == "favor_rep":
+        d = max(0.0, min(1.0, (bound - raw) / (2.0 * bound)))
+    else:  # "fair"
+        d = min(1.0, abs(raw) / bound)
+    penalty = (d * d if quadratic_penalty else d) * 100.0
+    return raw, penalty
 
 
 def score_dem_seats(
@@ -343,7 +368,7 @@ def score_majority_chance(
 
     Returns:
         p_dem_maj   -- P(Dems win strict majority; no ties)
-        p_rep_maj   -- 1 - p_dem_maj  (exact for odd n_districts)
+        p_rep_maj   -- P(Reps win strict majority; no ties)
         dem_penalty -- (1 - p_dem_maj)^1.5 * 100
         rep_penalty -- (1 - p_rep_maj)^1.5 * 100
     """
@@ -357,7 +382,18 @@ def score_majority_chance(
     centered     = (_shares - 0.5) * inv_sigma_d
     node_offsets = _GH_NODES * swing_sigma * inv_sigma_d          # (M,)
     p_wins_matrix = ndtr(centered[None, :] + node_offsets[:, None])  # (M, n)
-    p_per_node = _poisson_binomial_ge_batched(p_wins_matrix, majority)  # (M,)
-    p_dem = float(np.dot(_GH_WEIGHTS, p_per_node)) / _GH_NORM
-    p_rep = 1.0 - p_dem
+    p_per_node_dem = _poisson_binomial_ge_batched(p_wins_matrix, majority)  # (M,)
+    p_dem = float(np.dot(_GH_WEIGHTS, p_per_node_dem)) / _GH_NORM
+
+    if n_districts % 2 == 1:
+        # Odd districts: no ties possible, so p_rep = 1 - p_dem
+        p_rep = 1.0 - p_dem
+    else:
+        # Even districts: ties are possible, need separate calculation
+        # P(R majority) = P(D wins <= n//2 - 1) = 1 - P(D wins >= n//2)
+        tie_threshold = n_districts // 2
+        p_per_node_tie = _poisson_binomial_ge_batched(p_wins_matrix, tie_threshold)
+        p_dem_ge_tie = float(np.dot(_GH_WEIGHTS, p_per_node_tie)) / _GH_NORM
+        p_rep = 1.0 - p_dem_ge_tie
+
     return p_dem, p_rep, (1.0 - p_dem) ** 1.5 * 100.0, (1.0 - p_rep) ** 1.5 * 100.0
