@@ -1,10 +1,13 @@
 """Main Dear PyGui application -- two-column layout with live district map."""
 
+import logging
 import threading
 import time
 import webbrowser
 from pathlib import Path
 from typing import Optional
+
+log = logging.getLogger("mosaic")
 
 _DOCS_URL = "https://matt-mohn.github.io/mosaic_python/"
 _DOCS_SHAPEFILE_URL = "https://matt-mohn.github.io/mosaic_python/shapefiles.html"
@@ -145,20 +148,27 @@ class _SeriesBuffer:
 
 # Score Contributor panel — bar chart metrics in display order (structural → partisan)
 # (name, x-tick label, RGBA fill)
+_DIR_TO_MODE = {"Fair": "fair", "D": "favor_dem", "R": "favor_rep"}
+
 _CONTRIB_BAR_METRICS = [
     ("Cut Edges",       "Cuts",   (160, 160, 165, 220)),
-    ("County Splits",   "Co.Spl", (190, 170, 130, 220)),
+    ("Excess Splits",    "Co.Exc", (190, 170, 130, 220)),
+    ("Unified Counties", "Co.Uni", (160, 200, 130, 220)),
+    ("Population Deviation", "PopDev", (220, 200, 70,  220)),
     ("Compactness",     "PP",    (90,  160, 220, 220)),
     ("Reock",           "Reock", (60,  190, 200, 220)),
-    ("Holistic Compactness", "H-Comp", (220, 160, 60,  220)),
-    ("Population Deviation", "PopDev", (220, 200, 70,  220)),
     ("Mean-Median",     "MM",     (240, 140, 60,  220)),
     ("Efficiency Gap",  "EG",     (225, 75,  75,  220)),
-    ("Dem Seats",       "Seats",  (180, 80,  220, 220)),
     ("Competitiveness", "Cmptv",  (70,  200, 120, 220)),
+    ("Dem Seats",       "Seats",  (180, 80,  220, 220)),
     ("D Majority",      "D Maj",  (70,  130, 210, 220)),
     ("R Majority",      "R Maj",  (210, 70,  70,  220)),
     ("Hinge",           "Hinge",  (140, 90,  200, 220)),
+    # Holistic block — single-rating composites
+    ("Holistic Compactness",     "H-Comp",  (220, 160, 60,  220)),
+    ("Holistic Splitting",       "H-Split", (200, 140, 50,  220)),
+    ("Holistic Proportionality", "H-Prop",  (170, 90,  50,  220)),
+    ("Holistic Competitiveness", "H-Cmptv", (50,  150, 90,  220)),
 ]
 
 # ── Layout constants ──────────────────────────────────────────────────────────
@@ -222,6 +232,21 @@ _HINTS: dict[str, str] = {
         "Single 0-100 compactness rating blending mean Polsby-Popper and mean Reock 50/50, "
         "each linearly normalised over a fixed band. Higher = more compact. "
         "Useful when you want one compactness dial instead of tuning PP and Reock separately."
+    ),
+    "holistic_splitting": (
+        "Single 0-100 splitting rating blending county-direction and district-direction splits 50/50. "
+        "Uses a sqrt-of-fractions kernel that rewards lopsided splits over even ones, "
+        "and population-weights so a split big city costs more than a split tiny county."
+    ),
+    "holistic_proportionality": (
+        "Single 0-100 rating of seat-share vs vote-share fairness. "
+        "Pulls the plan toward integer-proportional seats given statewide vote share; "
+        "antimajoritarian plans (majority-vote, minority-seat) get an instant 100 penalty."
+    ),
+    "holistic_competitiveness": (
+        "Single 0-100 competitiveness rating using a soft-Bernoulli kernel. "
+        "Rewards districts near 50/50 win probability more sharply than the linear "
+        "Competitiveness score. Saturates above 75% competitive-equivalent districts."
     ),
     "mean_median": (
         "Gap between the mean and median Democratic vote share across districts. "
@@ -304,6 +329,9 @@ class MosaicApp:
         self._buf_pp        = _SeriesBuffer()
         self._buf_reock     = _SeriesBuffer()
         self._buf_hc        = _SeriesBuffer()
+        self._buf_hsplit    = _SeriesBuffer()
+        self._buf_hprop     = _SeriesBuffer()
+        self._buf_hcmp      = _SeriesBuffer()
         self._buf_popdev     = _SeriesBuffer()
         self._buf_popdev_max = _SeriesBuffer()
         self._buf_popdev_mean = _SeriesBuffer()
@@ -397,6 +425,9 @@ class MosaicApp:
         self._build_pp_panel()
         self._build_reock_panel()
         self._build_hc_panel()
+        self._build_hsplit_panel()
+        self._build_hprop_panel()
+        self._build_hcmp_panel()
         self._build_popdev_panel()
         self._build_cut_edges_panel()
         self._build_majority_panel()
@@ -485,12 +516,6 @@ class MosaicApp:
                             "score_row_reock", dpg.get_value(self._svis_reock),
                             self._reock_enabled, self._on_reock_toggle),
                     )
-                    self._svis_hc = dpg.add_menu_item(
-                        label="Holistic Compactness", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_hc", dpg.get_value(self._svis_hc),
-                            self._hc_enabled, self._on_hc_toggle),
-                    )
                     dpg.add_separator()
                     # Partisan
                     self._svis_mm = dpg.add_menu_item(
@@ -529,6 +554,32 @@ class MosaicApp:
                             "score_row_hinge", dpg.get_value(self._svis_hinge),
                             self._hinge_enabled, self._on_hinge_toggle),
                     )
+                    dpg.add_separator()
+                    # Holistic — single-rating composites
+                    self._svis_hc = dpg.add_menu_item(
+                        label="Holistic Compactness", check=True, default_value=False,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_hc", dpg.get_value(self._svis_hc),
+                            self._hc_enabled, self._on_hc_toggle),
+                    )
+                    self._svis_hsplit = dpg.add_menu_item(
+                        label="Holistic Splitting", check=True, default_value=False,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_hsplit", dpg.get_value(self._svis_hsplit),
+                            self._hsplit_enabled, self._on_hsplit_toggle),
+                    )
+                    self._svis_hprop = dpg.add_menu_item(
+                        label="Holistic Proportionality", check=True, default_value=False,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_hprop", dpg.get_value(self._svis_hprop),
+                            self._hprop_enabled, self._on_hprop_toggle),
+                    )
+                    self._svis_hcmp = dpg.add_menu_item(
+                        label="Holistic Competitiveness", check=True, default_value=False,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_hcmp", dpg.get_value(self._svis_hcmp),
+                            self._hcmp_enabled, self._on_hcmp_toggle),
+                    )
 
                 with dpg.menu(label="Views"):
                     # Structural
@@ -553,10 +604,6 @@ class MosaicApp:
                     self._panel_reock_item = dpg.add_menu_item(
                         label="Reock", check=True, default_value=False,
                         callback=self._on_panel_reock_toggle,
-                    )
-                    self._panel_hc_item = dpg.add_menu_item(
-                        label="Holistic Compactness", check=True, default_value=False,
-                        callback=self._on_panel_hc_toggle,
                     )
                     dpg.add_separator()
                     # Partisan
@@ -583,6 +630,24 @@ class MosaicApp:
                     self._panel_hinge_item = dpg.add_menu_item(
                         label="Supermajority/Hinge", check=True, default_value=False,
                         callback=self._on_panel_hinge_toggle,
+                    )
+                    dpg.add_separator()
+                    # Holistic — single-rating composites
+                    self._panel_hc_item = dpg.add_menu_item(
+                        label="Holistic Compactness", check=True, default_value=False,
+                        callback=self._on_panel_hc_toggle,
+                    )
+                    self._panel_hsplit_item = dpg.add_menu_item(
+                        label="Holistic Splitting", check=True, default_value=False,
+                        callback=self._on_panel_hsplit_toggle,
+                    )
+                    self._panel_hprop_item = dpg.add_menu_item(
+                        label="Holistic Proportionality", check=True, default_value=False,
+                        callback=self._on_panel_hprop_toggle,
+                    )
+                    self._panel_hcmp_item = dpg.add_menu_item(
+                        label="Holistic Competitiveness", check=True, default_value=False,
+                        callback=self._on_panel_hcmp_toggle,
                     )
                     dpg.add_separator()
                     # Views-only (no corresponding score)
@@ -613,6 +678,17 @@ class MosaicApp:
                         callback=lambda: dpg.configure_item("popup_help", show=True),
                     )
 
+                with dpg.menu(label="Debug", tag="menu_debug") as self._debug_menu:
+                    self._hot_start_load_item = dpg.add_menu_item(
+                        label="Load Hot Start...",
+                        callback=self._on_load_hot_start,
+                    )
+                    self._hot_start_clear_item = dpg.add_menu_item(
+                        label="Clear Hot Start",
+                        enabled=False,
+                        callback=self._on_clear_hot_start,
+                    )
+
             with dpg.child_window(height=_TOP_H, border=False,
                                   no_scrollbar=True):
                 with dpg.group(horizontal=True):
@@ -634,6 +710,10 @@ class MosaicApp:
                         self._shp_info = self.theme.text(
                             "No shapefile loaded", "muted",
                         )
+                        self._hot_start_info = self.theme.text(
+                            "", "warning",
+                        )
+                        dpg.configure_item(self._hot_start_info, show=False)
 
                         dpg.add_spacer(height=8)
                         self.theme.text("Run Parameters", "heading")
@@ -869,8 +949,13 @@ class MosaicApp:
                                 dpg.add_button(label="↗", width=24,
                                     callback=lambda: self._show_panel("panel_county_splits", self._panel_cs_item))
                             with dpg.group(tag="cs_controls", show=False):
-                                self._w_county_splits = dpg.add_slider_int(
-                                    label="Weight",
+                                self._w_county_excess = dpg.add_slider_int(
+                                    label="Excess weight",
+                                    default_value=1, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 100,
+                                )
+                                self._w_county_unified = dpg.add_slider_int(
+                                    label="Unified weight",
                                     default_value=1, min_value=0, max_value=100,
                                     width=_SCORE_COL_W - 100,
                                 )
@@ -887,6 +972,27 @@ class MosaicApp:
                                         default_value=5, min_value=1, max_value=20,
                                         width=_SCORE_COL_W - 120,
                                     )
+                            dpg.add_spacer(height=4)
+
+                        with dpg.group(tag="score_row_hsplit", show=False):
+                            with dpg.group(horizontal=True):
+                                self._hsplit_enabled = dpg.add_checkbox(
+                                    default_value=False,
+                                    callback=self._on_hsplit_toggle,
+                                )
+                                self._hsplit_lbl = self.theme.text(
+                                    "Holistic Splitting", "secondary",
+                                )
+                                self._hint(self._hsplit_lbl, "holistic_splitting")
+                                dpg.add_button(label="↗", width=24,
+                                    callback=lambda: self._show_panel(
+                                        "panel_hsplit", self._panel_hsplit_item))
+                            with dpg.group(tag="hsplit_controls", show=False):
+                                self._w_holistic_splitting = dpg.add_slider_int(
+                                    label="Weight",
+                                    default_value=25, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 100,
+                                )
                             dpg.add_spacer(height=4)
 
                         with dpg.group(tag="score_row_popdev", show=True):
@@ -988,20 +1094,19 @@ class MosaicApp:
                                 self._hint(self._mm_lbl, "mean_median")
                                 dpg.add_button(label="↗", width=24,
                                     callback=lambda: self._show_panel("panel_mm", self._panel_mm_item))
+                                dpg.add_button(label="...", width=24,
+                                    callback=lambda: dpg.configure_item(
+                                        "popup_partisan",
+                                        show=not dpg.is_item_shown("popup_partisan")))
                             with dpg.group(tag="mm_controls", show=False):
                                 self._w_mean_median = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=1, min_value=0, max_value=100,
                                     width=_SCORE_COL_W - 100,
                                 )
-                                self._target_mean_median = dpg.add_slider_float(
-                                    label="Target MM",
-                                    default_value=0.0, min_value=-0.15, max_value=0.15,
-                                    format="%.3f", width=_SCORE_COL_W - 100,
-                                )
-                                self._tooltip(
-                                    self._target_mean_median,
-                                    "- = D advantage  |  + = R advantage",
+                                self._mm_dir = dpg.add_radio_button(
+                                    items=["Fair", "D", "R"],
+                                    default_value="Fair", horizontal=True,
                                 )
                             dpg.add_spacer(height=4)
 
@@ -1018,21 +1123,43 @@ class MosaicApp:
                                 self._hint(self._eg_lbl, "efficiency_gap")
                                 dpg.add_button(label="↗", width=24,
                                     callback=lambda: self._show_panel("panel_eg", self._panel_eg_item))
+                                dpg.add_button(label="...", width=24,
+                                    callback=lambda: dpg.configure_item(
+                                        "popup_partisan",
+                                        show=not dpg.is_item_shown("popup_partisan")))
                             with dpg.group(tag="eg_controls", show=False):
                                 self._w_efficiency_gap = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=1, min_value=0, max_value=100,
                                     width=_SCORE_COL_W - 100,
                                 )
-                                self._target_efficiency_gap = dpg.add_slider_float(
-                                    label="Target EG",
-                                    default_value=0.0, min_value=-0.35, max_value=0.35,
-                                    format="%.3f", width=_SCORE_COL_W - 100,
+                                self._eg_dir = dpg.add_radio_button(
+                                    items=["Fair", "D", "R"],
+                                    default_value="Fair", horizontal=True,
                                 )
-                                self._tooltip(
-                                    self._target_efficiency_gap,
-                                    "- = D bias  |  + = R bias",
+                            dpg.add_spacer(height=4)
+
+                        with dpg.group(tag="score_row_hprop", show=False):
+                            with dpg.group(horizontal=True):
+                                self._hprop_enabled = dpg.add_checkbox(
+                                    default_value=False, enabled=False,
+                                    callback=self._on_hprop_toggle,
                                 )
+                                self._hprop_lbl = self.theme.text(
+                                    "Holistic Proportionality",
+                                    "disabled_deep",
+                                )
+                                self._hint(self._hprop_lbl, "holistic_proportionality")
+                                dpg.add_button(label="↗", width=24,
+                                    callback=lambda: self._show_panel(
+                                        "panel_hprop", self._panel_hprop_item))
+                            with dpg.group(tag="hprop_controls", show=False):
+                                self._w_holistic_proportionality = dpg.add_slider_int(
+                                    label="Weight",
+                                    default_value=25, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 100,
+                                )
+                            dpg.add_spacer(height=4)
 
                     # Col 3: outcome metrics
                     with dpg.child_window(width=-1, height=-1, border=False):
@@ -1057,6 +1184,28 @@ class MosaicApp:
                                 )
                             dpg.add_spacer(height=4)
 
+                        with dpg.group(tag="score_row_hcmp", show=False):
+                            with dpg.group(horizontal=True):
+                                self._hcmp_enabled = dpg.add_checkbox(
+                                    default_value=False, enabled=False,
+                                    callback=self._on_hcmp_toggle,
+                                )
+                                self._hcmp_lbl = self.theme.text(
+                                    "Holistic Competitiveness",
+                                    "disabled_deep",
+                                )
+                                self._hint(self._hcmp_lbl, "holistic_competitiveness")
+                                dpg.add_button(label="↗", width=24,
+                                    callback=lambda: self._show_panel(
+                                        "panel_hcmp", self._panel_hcmp_item))
+                            with dpg.group(tag="hcmp_controls", show=False):
+                                self._w_holistic_competitiveness = dpg.add_slider_int(
+                                    label="Weight",
+                                    default_value=25, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 100,
+                                )
+                            dpg.add_spacer(height=4)
+
                         with dpg.group(tag="score_row_seats", show=False):
                             with dpg.group(horizontal=True):
                                 self._seats_enabled = dpg.add_checkbox(
@@ -1076,16 +1225,10 @@ class MosaicApp:
                                     default_value=25, min_value=0, max_value=100,
                                     width=_SCORE_COL_W - 100,
                                 )
-                                with dpg.group(horizontal=True):
-                                    self._dem_seats_dem_chk = dpg.add_checkbox(
-                                        label="D", default_value=True,
-                                        callback=self._on_dem_seats_dem_chk,
-                                    )
-                                    dpg.add_spacer(width=12)
-                                    self._dem_seats_rep_chk = dpg.add_checkbox(
-                                        label="R", default_value=False,
-                                        callback=self._on_dem_seats_rep_chk,
-                                    )
+                                self._dem_seats_dir = dpg.add_radio_button(
+                                    items=["D", "R"],
+                                    default_value="D", horizontal=True,
+                                )
                             dpg.add_spacer(height=4)
 
                         with dpg.group(tag="score_row_majority", show=False):
@@ -1189,7 +1332,7 @@ class MosaicApp:
             self.theme.text("Population Deviation Score - Safe Harbor", "heading")
             self._pop_dev_harbor = dpg.add_slider_float(
                 label="Safe Harbor",
-                default_value=0.25, min_value=0.0, max_value=5.0,
+                default_value=0.0, min_value=0.0, max_value=5.0,
                 format="%.2f %%", width=260,
             )
             self._tooltip(
@@ -1363,7 +1506,7 @@ class MosaicApp:
             self.theme.text("n=3 ReCom Mix", "heading")
             self._n3_pct = dpg.add_slider_int(
                 label="% of iterations",
-                default_value=5, min_value=0, max_value=25,
+                default_value=25, min_value=0, max_value=50,
                 format="%d %%", width=200,
             )
             self._tooltip(
@@ -1371,6 +1514,32 @@ class MosaicApp:
                 "Fraction of steps that merge 3 districts (vs 2) and re-split. "
                 "Helps escape local minima at the cost of ~2.4x per-step time. "
                 "Set to 0 for mass-generation runs (no overhead).",
+            )
+
+            dpg.add_spacer(height=6)
+            self.theme.text("Polish Flips", "heading")
+            self._flip_enabled = dpg.add_checkbox(
+                label="Enable single-precinct flips in tail",
+                default_value=True,
+            )
+            self._tooltip(
+                self._flip_enabled,
+                "Adds single-precinct boundary flips alongside ReCom. "
+                "Probability ramps along a two-piece logistic pinned to 5% "
+                "at the start, 50% at the crossover, and 85% at the end -- "
+                "leaving >=15% ReCom throughout so the chain can still "
+                "escape local minima. Polishes borders late in the run.",
+            )
+            self._flip_midpoint = dpg.add_slider_int(
+                label="50% crossover (% of run)",
+                default_value=84, min_value=1, max_value=99,
+                format="%d %%", width=200,
+            )
+            self._tooltip(
+                self._flip_midpoint,
+                "Progress point where the flip rate hits 50%. The rate ramps "
+                "from 5% at the start to 85% at the end, crossing 50% here. "
+                "Higher = flips stay rare until later in the run.",
             )
 
             dpg.add_spacer(height=8)
@@ -1427,6 +1596,41 @@ class MosaicApp:
                 self._eg_mode,
                 "Robust EG integrates out both swing sigma and per-district noise.",
             )
+            dpg.add_spacer(height=10)
+            dpg.add_separator()
+            dpg.add_spacer(height=6)
+
+            self.theme.text("Mean-Median / Efficiency Gap shape", "heading")
+            self._partisan_quadratic_penalty = dpg.add_checkbox(
+                label="Use quadratic penalty",
+                default_value=False,
+            )
+            self._tooltip(
+                self._partisan_quadratic_penalty,
+                "When ON, all three modes (Fair / D / R) use a quadratic curve: "
+                "less urgency near the favored end, more urgency near the unfavored "
+                "end. Off = linear.",
+            )
+            dpg.add_spacer(height=8)
+
+            self._mm_bound = dpg.add_slider_float(
+                label="MM bound",
+                default_value=0.20, min_value=0.05, max_value=0.30,
+                format="%.2f", width=220,
+            )
+            self._tooltip(
+                self._mm_bound,
+                "MM penalty reaches 100 at this |raw| value, then saturates.",
+            )
+            self._eg_bound = dpg.add_slider_float(
+                label="EG bound",
+                default_value=0.35, min_value=0.10, max_value=0.50,
+                format="%.2f", width=220,
+            )
+            self._tooltip(
+                self._eg_bound,
+                "EG penalty reaches 100 at this |raw| value, then saturates.",
+            )
             dpg.add_spacer(height=8)
 
             dpg.add_button(
@@ -1479,12 +1683,12 @@ class MosaicApp:
                             with dpg.plot_axis(dpg.mvYAxis, label="Count", tag="cs_excess_y"):
                                 dpg.add_line_series([], [], label="Excess", tag="cs_excess_series")
                     with dpg.group():
-                        self.theme.text("Single-County Districts", "heading")
+                        self.theme.text("Unified Counties", "heading")
                         with dpg.plot(height=150, width=-1):
                             dpg.add_plot_legend()
                             dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="cs_clean_x")
                             with dpg.plot_axis(dpg.mvYAxis, label="Count", tag="cs_clean_y"):
-                                dpg.add_line_series([], [], label="Single-County", tag="cs_clean_series")
+                                dpg.add_line_series([], [], label="Unified", tag="cs_clean_series")
                                 _cs_max = dpg.add_line_series(
                                     [], [], label="##cs_max", tag="cs_clean_max",
                                 )
@@ -1683,12 +1887,12 @@ class MosaicApp:
     def _build_pp_panel(self):
         with dpg.window(
             label="Compactness", tag="panel_pp",
-            show=False, width=500, height=295,
+            show=False, width=500, height=280,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_pp_item, False),
         ):
             with dpg.group(tag="pp_plot_grp"):
-                with dpg.plot(height=240, width=-1):
+                with dpg.plot(height=-1, width=-1):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="pp_x")
                     with dpg.plot_axis(dpg.mvYAxis, label="Polsby-Popper (100 = circle)", tag="pp_y"):
@@ -1709,12 +1913,12 @@ class MosaicApp:
     def _build_reock_panel(self):
         with dpg.window(
             label="Reock", tag="panel_reock",
-            show=False, width=500, height=295,
+            show=False, width=500, height=280,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_reock_item, False),
         ):
             with dpg.group(tag="reock_plot_grp"):
-                with dpg.plot(height=240, width=-1):
+                with dpg.plot(height=-1, width=-1):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="reock_x")
                     with dpg.plot_axis(dpg.mvYAxis, label="Reock (100 = circle)", tag="reock_y"):
@@ -1735,12 +1939,12 @@ class MosaicApp:
     def _build_hc_panel(self):
         with dpg.window(
             label="Holistic Compactness", tag="panel_hc",
-            show=False, width=500, height=295,
+            show=False, width=500, height=280,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_hc_item, False),
         ):
             with dpg.group(tag="hc_plot_grp"):
-                with dpg.plot(height=240, width=-1):
+                with dpg.plot(height=-1, width=-1):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="hc_x")
                     with dpg.plot_axis(dpg.mvYAxis, label="Holistic (100 = best)", tag="hc_y"):
@@ -1758,15 +1962,93 @@ class MosaicApp:
             )
         dpg.set_axis_limits("hc_y", 0.0, 100.0)
 
+    def _build_hsplit_panel(self):
+        with dpg.window(
+            label="Holistic Splitting", tag="panel_hsplit",
+            show=False, width=500, height=280,
+            pos=[_LEFT_W + 80, 80],
+            on_close=lambda: dpg.set_value(self._panel_hsplit_item, False),
+        ):
+            with dpg.group(tag="hsplit_plot_grp"):
+                with dpg.plot(height=-1, width=-1):
+                    dpg.add_plot_legend()
+                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="hsplit_x")
+                    with dpg.plot_axis(dpg.mvYAxis, label="Holistic Splitting (100 = best)", tag="hsplit_y"):
+                        dpg.add_line_series([], [], label="Holistic Split", tag="hsplit_series")
+            self._tooltip(
+                "hsplit_plot_grp",
+                "Combined county- and district-direction splitting rating; higher = less split.",
+            )
+            self.theme.track(
+                dpg.add_text(
+                    "Apply a score to use this panel.",
+                    tag="hsplit_inactive_lbl", show=False,
+                ),
+                "muted",
+            )
+        dpg.set_axis_limits("hsplit_y", 0.0, 100.0)
+
+    def _build_hprop_panel(self):
+        with dpg.window(
+            label="Holistic Proportionality", tag="panel_hprop",
+            show=False, width=500, height=280,
+            pos=[_LEFT_W + 80, 80],
+            on_close=lambda: dpg.set_value(self._panel_hprop_item, False),
+        ):
+            with dpg.group(tag="hprop_plot_grp"):
+                with dpg.plot(height=-1, width=-1):
+                    dpg.add_plot_legend()
+                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="hprop_x")
+                    with dpg.plot_axis(dpg.mvYAxis, label="Holistic Proportionality (100 = best)", tag="hprop_y"):
+                        dpg.add_line_series([], [], label="Holistic Prop", tag="hprop_series")
+            self._tooltip(
+                "hprop_plot_grp",
+                "Bias-from-proportional rating; higher = closer to proportional.",
+            )
+            self.theme.track(
+                dpg.add_text(
+                    "Load election data to use this panel.",
+                    tag="hprop_inactive_lbl", show=False,
+                ),
+                "muted",
+            )
+        dpg.set_axis_limits("hprop_y", 0.0, 100.0)
+
+    def _build_hcmp_panel(self):
+        with dpg.window(
+            label="Holistic Competitiveness", tag="panel_hcmp",
+            show=False, width=500, height=280,
+            pos=[_LEFT_W + 80, 80],
+            on_close=lambda: dpg.set_value(self._panel_hcmp_item, False),
+        ):
+            with dpg.group(tag="hcmp_plot_grp"):
+                with dpg.plot(height=-1, width=-1):
+                    dpg.add_plot_legend()
+                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="hcmp_x")
+                    with dpg.plot_axis(dpg.mvYAxis, label="Holistic Competitiveness (100 = best)", tag="hcmp_y"):
+                        dpg.add_line_series([], [], label="Holistic Cmptv", tag="hcmp_series")
+            self._tooltip(
+                "hcmp_plot_grp",
+                "Soft-Bernoulli competitiveness rating; higher = more districts near toss-up.",
+            )
+            self.theme.track(
+                dpg.add_text(
+                    "Load election data to use this panel.",
+                    tag="hcmp_inactive_lbl", show=False,
+                ),
+                "muted",
+            )
+        dpg.set_axis_limits("hcmp_y", 0.0, 100.0)
+
     def _build_popdev_panel(self):
         with dpg.window(
             label="Population Deviation", tag="panel_popdev",
-            show=False, width=500, height=300,
+            show=False, width=500, height=280,
             pos=[_LEFT_W + 100, 100],
             on_close=lambda: dpg.set_value(self._panel_popdev_item, False),
         ):
             with dpg.group(tag="popdev_plot_grp"):
-                with dpg.plot(height=240, width=-1):
+                with dpg.plot(height=-1, width=-1):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="popdev_x")
                     with dpg.plot_axis(dpg.mvYAxis, label="% Deviation", tag="popdev_y"):
@@ -1774,7 +2056,8 @@ class MosaicApp:
                                             tag="popdev_max_series")
                         dpg.add_line_series([], [], label="Mean %",
                                             tag="popdev_mean_series")
-                # Constrain y-axis so pan/zoom can't go below 0; upper grows freely.
+                # Set y-axis floor to 0; constrain so pan/zoom can't go below.
+                dpg.set_axis_limits("popdev_y", 0.0, 5.0)
                 dpg.set_axis_limits_constraints("popdev_y", 0.0, float("inf"))
             self._tooltip(
                 "popdev_plot_grp",
@@ -2414,7 +2697,7 @@ class MosaicApp:
             _td   = list(self.state.temperature_history[self._buf_temp.read:])
             _csd  = list(self.state.county_splits_score_history[self._buf_cs_score.read:])
             _ced  = list(self.state.county_excess_splits_history[self._buf_cs_excess.read:])
-            _cld  = list(self.state.county_clean_districts_history[self._buf_cs_clean.read:])
+            _cld  = list(self.state.county_unified_districts_history[self._buf_cs_clean.read:])
             _md   = list(self.state.mm_history[self._buf_mm.read:])
             _ed   = list(self.state.eg_history[self._buf_eg.read:])
             _sed  = list(self.state.dem_seats_history[self._buf_seats.read:])
@@ -2422,6 +2705,9 @@ class MosaicApp:
             _pd   = list(self.state.pp_history[self._buf_pp.read:])
             _rd   = list(self.state.reock_history[self._buf_reock.read:])
             _hcd  = list(self.state.holistic_compactness_history[self._buf_hc.read:])
+            _hsd  = list(self.state.holistic_splitting_history[self._buf_hsplit.read:])
+            _hpd  = list(self.state.holistic_proportionality_history[self._buf_hprop.read:])
+            _hmd  = list(self.state.holistic_competitiveness_history[self._buf_hcmp.read:])
             _pvd  = list(self.state.pop_deviation_history[self._buf_popdev.read:])
             _pvd_max  = list(self.state.pop_dev_max_history[self._buf_popdev_max.read:])
             _pvd_mean = list(self.state.pop_dev_mean_history[self._buf_popdev_mean.read:])
@@ -2442,8 +2728,11 @@ class MosaicApp:
         self._buf_comp.add(_cod)
         self._buf_pp.add([v * 100.0 for v in _pd])
         self._buf_reock.add([v * 100.0 for v in _rd])
-        # Holistic chart: convert penalty (0=best) to rating (100=best) for display.
+        # Holistic charts: convert penalty (0=best) to rating (100=best) for display.
         self._buf_hc.add([100.0 - v for v in _hcd])
+        self._buf_hsplit.add([100.0 - v for v in _hsd])
+        self._buf_hprop.add([100.0 - v for v in _hpd])
+        self._buf_hcmp.add([100.0 - v for v in _hmd])
         self._buf_popdev.add(_pvd)
         self._buf_popdev_max.add(_pvd_max)
         self._buf_popdev_mean.add(_pvd_mean)
@@ -2587,6 +2876,22 @@ class MosaicApp:
             dpg.configure_item("hc_inactive_lbl", show=not hc_on)
             if hc_on:
                 _render(self._buf_hc, "hc_series", "hc_x", "hc_y")
+        if dpg.is_item_shown("panel_hsplit"):
+            hs_on = dpg.get_value(self._hsplit_enabled)
+            dpg.configure_item("hsplit_plot_grp",     show=hs_on)
+            dpg.configure_item("hsplit_inactive_lbl", show=not hs_on)
+            if hs_on:
+                _render(self._buf_hsplit, "hsplit_series", "hsplit_x", "hsplit_y")
+        if dpg.is_item_shown("panel_hprop"):
+            dpg.configure_item("hprop_plot_grp",     show=self._has_elections)
+            dpg.configure_item("hprop_inactive_lbl", show=not self._has_elections)
+            if self._has_elections:
+                _render(self._buf_hprop, "hprop_series", "hprop_x", "hprop_y")
+        if dpg.is_item_shown("panel_hcmp"):
+            dpg.configure_item("hcmp_plot_grp",     show=self._has_elections)
+            dpg.configure_item("hcmp_inactive_lbl", show=not self._has_elections)
+            if self._has_elections:
+                _render(self._buf_hcmp, "hcmp_series", "hcmp_x", "hcmp_y")
         if dpg.is_item_shown("panel_popdev"):
             popdev_on = dpg.get_value(self._popdev_enabled)
             dpg.configure_item("popdev_plot_grp",     show=popdev_on)
@@ -2594,8 +2899,10 @@ class MosaicApp:
             if popdev_on:
                 _render(self._buf_popdev_max,  "popdev_max_series",  "popdev_x", "popdev_y")
                 _render(self._buf_popdev_mean, "popdev_mean_series", "popdev_x", "popdev_y")
-                # Let DPG auto-fit y to data; the constraint pins lower bound to 0.
-                dpg.fit_axis_data("popdev_y")
+                # Fit x-axis to data; set y-axis with floor at 0 and reasonable headroom.
+                dpg.fit_axis_data("popdev_x")
+                y_max = max(self._buf_popdev_max.ys) if self._buf_popdev_max.ys else 1.0
+                dpg.set_axis_limits("popdev_y", 0.0, max(y_max * 1.15, 2.0))
         if dpg.is_item_shown("panel_cut_edges"):
             _render(self._buf_cuts, "cuts_series", "cuts_x", "cuts_y")
 
@@ -2701,6 +3008,7 @@ class MosaicApp:
             self._buf_cs_score, self._buf_cs_excess, self._buf_cs_clean,
             self._buf_mm, self._buf_eg, self._buf_seats,
             self._buf_comp, self._buf_pp, self._buf_reock, self._buf_hc,
+            self._buf_hsplit, self._buf_hprop, self._buf_hcmp,
             self._buf_popdev,
             self._buf_popdev_max, self._buf_popdev_mean, self._buf_cuts,
             self._buf_maj_dem, self._buf_maj_rep, self._buf_hinge,
@@ -2732,9 +3040,10 @@ class MosaicApp:
         # Without this, set_axis_limits_auto above releases them and the next
         # render auto-fits to whatever the data happens to be, causing the
         # axis to "stick" at a small range like [0, 0.1].
-        dpg.set_axis_limits("pp_y",    0.0, 100.0)
-        dpg.set_axis_limits("maj_y",   0.0, 100.0)
-        dpg.set_axis_limits("hinge_y", 0.0, 1.0)
+        dpg.set_axis_limits("pp_y",     0.0, 100.0)
+        dpg.set_axis_limits("maj_y",    0.0, 100.0)
+        dpg.set_axis_limits("hinge_y",  0.0, 1.0)
+        dpg.set_axis_limits("popdev_y", 0.0, 5.0)
         for s in self._partisan_bar_series:
             dpg.set_value(s, empty)
         for s in self._win_chance_bar_series:
@@ -2813,7 +3122,9 @@ class MosaicApp:
         for chk, lbl in [
             (self._mm_enabled,       self._mm_lbl),
             (self._eg_enabled,       self._eg_lbl),
+            (self._hprop_enabled,    self._hprop_lbl),
             (self._comp_enabled,     self._comp_lbl),
+            (self._hcmp_enabled,     self._hcmp_lbl),
             (self._seats_enabled,    self._seats_lbl),
             (self._majority_enabled, self._majority_lbl),
             (self._hinge_enabled,    self._hinge_lbl),
@@ -2824,7 +3135,9 @@ class MosaicApp:
             for chk, ctrl_tag in [
                 (self._mm_enabled,       "mm_controls"),
                 (self._eg_enabled,       "eg_controls"),
+                (self._hprop_enabled,    "hprop_controls"),
                 (self._comp_enabled,     "comp_controls"),
+                (self._hcmp_enabled,     "hcmp_controls"),
                 (self._seats_enabled,    "seats_controls"),
                 (self._majority_enabled, "majority_controls"),
                 (self._hinge_enabled,    "hinge_controls"),
@@ -2837,8 +3150,10 @@ class MosaicApp:
             (self._panel_win_chance_item, "panel_win_chance"),
             (self._panel_mm_item,         "panel_mm"),
             (self._panel_eg_item,         "panel_eg"),
+            (self._panel_hprop_item,      "panel_hprop"),
             (self._panel_seats_item,      "panel_dem_seats"),
             (self._panel_comp_item,       "panel_comp"),
+            (self._panel_hcmp_item,       "panel_hcmp"),
             (self._panel_majority_item,   "panel_majority"),
             (self._panel_hinge_item,      "panel_hinge"),
         ]:
@@ -2897,6 +3212,24 @@ class MosaicApp:
                            "accent_green" if en else "secondary")
         dpg.configure_item("hc_controls", show=en)
 
+    def _on_hsplit_toggle(self):
+        en = dpg.get_value(self._hsplit_enabled)
+        self.theme.retoken(self._hsplit_lbl,
+                           "accent_green" if en else "secondary")
+        dpg.configure_item("hsplit_controls", show=en)
+
+    def _on_hprop_toggle(self):
+        en = dpg.get_value(self._hprop_enabled)
+        self.theme.retoken(self._hprop_lbl,
+                           "accent_green" if en else "disabled")
+        dpg.configure_item("hprop_controls", show=en)
+
+    def _on_hcmp_toggle(self):
+        en = dpg.get_value(self._hcmp_enabled)
+        self.theme.retoken(self._hcmp_lbl,
+                           "accent_green" if en else "disabled")
+        dpg.configure_item("hcmp_controls", show=en)
+
     def _on_popdev_score_toggle(self):
         en = dpg.get_value(self._popdev_enabled)
         self.theme.retoken(self._popdev_lbl,
@@ -2926,19 +3259,6 @@ class MosaicApp:
         self.theme.retoken(self._seats_lbl,
                            "accent_green" if en else "disabled")
         dpg.configure_item("seats_controls", show=en)
-
-    def _on_dem_seats_dem_chk(self):
-        if dpg.get_value(self._dem_seats_dem_chk):
-            dpg.set_value(self._dem_seats_rep_chk, False)
-        else:
-            # Mutually exclusive: at least one must be on. Re-enable D.
-            dpg.set_value(self._dem_seats_dem_chk, True)
-
-    def _on_dem_seats_rep_chk(self):
-        if dpg.get_value(self._dem_seats_rep_chk):
-            dpg.set_value(self._dem_seats_dem_chk, False)
-        else:
-            dpg.set_value(self._dem_seats_rep_chk, True)
 
     def _on_majority_toggle(self):
         en = dpg.get_value(self._majority_enabled)
@@ -3038,6 +3358,15 @@ class MosaicApp:
 
     def _on_panel_hc_toggle(self):
         dpg.configure_item("panel_hc", show=dpg.get_value(self._panel_hc_item))
+
+    def _on_panel_hsplit_toggle(self):
+        dpg.configure_item("panel_hsplit", show=dpg.get_value(self._panel_hsplit_item))
+
+    def _on_panel_hprop_toggle(self):
+        dpg.configure_item("panel_hprop", show=dpg.get_value(self._panel_hprop_item))
+
+    def _on_panel_hcmp_toggle(self):
+        dpg.configure_item("panel_hcmp", show=dpg.get_value(self._panel_hcmp_item))
 
     def _on_panel_popdev_toggle(self):
         dpg.configure_item("panel_popdev", show=dpg.get_value(self._panel_popdev_item))
@@ -3288,6 +3617,257 @@ class MosaicApp:
             dpg.add_file_extension(".shp", color=(120, 220, 120, 255))
             dpg.add_file_extension(".*")
 
+    # ── Hot start (Debug menu) ────────────────────────────────────────────────
+
+    def _on_load_hot_start(self):
+        log.info("Hot start: menu clicked")
+        if self.runner is None or self.runner.gdf is None or self.runner.graph is None:
+            self._show_hot_start_error(
+                "Load a shapefile before loading a hot start.",
+            )
+            return
+        import sys
+        if sys.platform == "darwin":
+            self._pick_hot_start_dpg()
+        else:
+            self._pick_hot_start_tk()
+
+    def _pick_hot_start_tk(self):
+        import tkinter as tk
+        from tkinter import filedialog
+        from mosaic.paths import mosaic_data_dir
+        initialdir = str(mosaic_data_dir())
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            path = filedialog.askopenfilename(
+                title="Select Hot Start CSV",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+                initialdir=initialdir,
+            )
+            root.destroy()
+        except Exception:
+            log.exception("Hot start: tk file dialog failed")
+            self._show_hot_start_error(
+                "File dialog could not be opened. See log for details."
+            )
+            return
+        log.info(f"Hot start: tk file dialog returned path={path!r}")
+        if not path:
+            return
+        self._show_hot_start_column_picker(path)
+
+    def _pick_hot_start_dpg(self):
+        if dpg.does_item_exist("__hot_start_file_dialog"):
+            dpg.delete_item("__hot_start_file_dialog")
+        from mosaic.paths import mosaic_data_dir
+        default_path = str(mosaic_data_dir())
+        with dpg.file_dialog(
+            directory_selector=False,
+            show=True,
+            modal=True,
+            callback=lambda s, d: self._show_hot_start_column_picker(
+                d.get("file_path_name", "") if isinstance(d, dict) else ""
+            ),
+            cancel_callback=lambda *_: None,
+            default_path=default_path,
+            width=700,
+            height=450,
+            tag="__hot_start_file_dialog",
+            label="Select Hot Start CSV",
+        ):
+            dpg.add_file_extension(".csv", color=(120, 220, 120, 255))
+            dpg.add_file_extension(".*")
+
+    def _show_hot_start_column_picker(self, path: str) -> None:
+        log.info(f"Hot start: column picker invoked with path={path!r}")
+        if not path:
+            return
+        from mosaic.io.hot_start import read_csv_columns, HotStartError
+        try:
+            columns = read_csv_columns(path)
+        except HotStartError as e:
+            self._show_hot_start_error(str(e))
+            return
+        except Exception as e:
+            log.exception("Hot start: read_csv_columns raised unexpectedly")
+            self._show_hot_start_error(f"Could not read CSV header: {e}")
+            return
+        if not columns:
+            self._show_hot_start_error("CSV appears to be empty.")
+            return
+
+        gdf_id_col = self.runner.id_col_name if self.runner else ""
+        default_id = gdf_id_col if gdf_id_col in columns else columns[0]
+        default_district = next(
+            (c for c in columns if c.lower() == "district"),
+            columns[-1] if len(columns) > 1 else columns[0],
+        )
+
+        if dpg.does_item_exist("popup_hot_start_picker"):
+            dpg.delete_item("popup_hot_start_picker")
+
+        # Center against the viewport so the picker can't land off-screen.
+        try:
+            vp_w = dpg.get_viewport_client_width()
+            vp_h = dpg.get_viewport_client_height()
+            popup_pos = [max(20, (vp_w - 520) // 2), max(20, (vp_h - 240) // 2)]
+        except Exception:
+            popup_pos = [200, 150]
+
+        with dpg.window(
+            label="Hot Start: Map CSV columns",
+            tag="popup_hot_start_picker",
+            modal=True, show=True,
+            width=520, height=240,
+            pos=popup_pos,
+        ):
+            self.theme.text("CSV column mapping", "heading")
+            dpg.add_text(f"File: {Path(path).name}")
+            dpg.add_text(
+                f"Shapefile ID column: {gdf_id_col} "
+                f"(CSV values will be matched against these)",
+                wrap=480,
+            )
+            dpg.add_separator()
+            id_combo = dpg.add_combo(
+                items=columns, default_value=default_id,
+                label="Precinct ID column (in CSV)", width=240,
+            )
+            district_combo = dpg.add_combo(
+                items=columns, default_value=default_district,
+                label="District column (in CSV)", width=240,
+            )
+            dpg.add_spacer(height=8)
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="Load",
+                    width=100,
+                    callback=lambda: self._apply_hot_start(
+                        path,
+                        dpg.get_value(id_combo),
+                        dpg.get_value(district_combo),
+                    ),
+                )
+                dpg.add_button(
+                    label="Cancel",
+                    width=100,
+                    callback=lambda: dpg.delete_item("popup_hot_start_picker"),
+                )
+
+    def _apply_hot_start(
+        self, path: str, csv_id_col: str, csv_district_col: str,
+    ) -> None:
+        log.info(
+            f"Hot start: apply path={path!r} id_col={csv_id_col!r} "
+            f"district_col={csv_district_col!r}"
+        )
+        if not path:
+            return
+        if dpg.does_item_exist("popup_hot_start_picker"):
+            dpg.delete_item("popup_hot_start_picker")
+        from mosaic.io.hot_start import load_hot_start, HotStartError
+        try:
+            assignment, info = load_hot_start(
+                path,
+                gdf=self.runner.gdf,
+                gdf_id_col=self.runner.id_col_name,
+                csv_id_col=csv_id_col,
+                csv_district_col=csv_district_col,
+                populations=self.runner.populations,
+                graph=self.runner.graph,
+                num_districts=dpg.get_value(self._num_districts),
+                tolerance=dpg.get_value(self._tolerance) / 100.0,
+            )
+        except HotStartError as e:
+            log.info(f"Hot start: validation failed -- {e}")
+            self._show_hot_start_error(str(e))
+            return
+        except Exception as e:
+            log.exception("Unexpected hot start error")
+            self._show_hot_start_error(f"Unexpected error: {e}")
+            return
+
+        log.info(
+            f"Hot start: state.update with assignment shape={assignment.shape} "
+            f"file={info['filename']}"
+        )
+        self.state.update(
+            hot_start_assignment=assignment,
+            hot_start_filename=info["filename"],
+        )
+        try:
+            self._update_hot_start_display(info)
+        except Exception:
+            log.exception("Hot start: display update failed (state is loaded)")
+            self._show_hot_start_error(
+                "Hot start loaded, but the status text could not be updated. "
+                "See log for details."
+            )
+
+    def _on_clear_hot_start(self):
+        self.state.update(
+            hot_start_assignment=None,
+            hot_start_filename="",
+        )
+        self._update_hot_start_display(None)
+
+    def _update_hot_start_display(self, info) -> None:
+        if info is None:
+            dpg.configure_item(self._hot_start_info, show=False)
+            dpg.set_value(self._hot_start_info, "")
+            dpg.configure_item(self._hot_start_clear_item, enabled=False)
+        else:
+            msg = (
+                f"HOT START: {info['filename']} -- "
+                f"{info['n_districts']} districts, "
+                f"max dev {info['max_dev_pct']:.2f}%"
+            )
+            dpg.set_value(self._hot_start_info, msg)
+            dpg.configure_item(self._hot_start_info, show=True)
+            dpg.configure_item(self._hot_start_clear_item, enabled=True)
+
+    def _show_hot_start_error(self, message: str) -> None:
+        if dpg.does_item_exist("popup_hot_start_error"):
+            dpg.delete_item("popup_hot_start_error")
+
+        # Wider/taller so diagnostic messages don't overflow, centered on the
+        # viewport so it can't land off-screen (a previous hardcoded position
+        # hid the popup entirely on common window layouts).
+        w, h = 620, 320
+        try:
+            vp_w = dpg.get_viewport_client_width()
+            vp_h = dpg.get_viewport_client_height()
+            popup_pos = [max(20, (vp_w - w) // 2), max(20, (vp_h - h) // 2)]
+        except Exception:
+            popup_pos = [200, 150]
+
+        log.info(f"Hot start error popup: {message[:200]}")
+        # Non-modal on purpose: when this popup is created in the same callback
+        # frame that just deleted the modal column-picker popup, DPG's modal
+        # stack leaves a new modal=True window hidden behind a defunct overlay.
+        # A non-modal window sidesteps that entirely.
+        with dpg.window(
+            label="Hot Start Error",
+            tag="popup_hot_start_error",
+            modal=False, show=True,
+            width=w, height=h,
+            pos=popup_pos,
+            no_collapse=True,
+        ):
+            self.theme.text("Hot start could not be loaded:", "heading")
+            dpg.add_text(message, wrap=580)
+            dpg.add_separator()
+            dpg.add_button(
+                label="OK",
+                callback=lambda: dpg.delete_item("popup_hot_start_error"),
+            )
+        try:
+            dpg.focus_item("popup_hot_start_error")
+        except Exception:
+            pass
+
     def _on_shapefile_selected(self, sender, app_data):
         path = app_data.get("file_path_name", "") if isinstance(app_data, dict) else ""
         if not path:
@@ -3296,11 +3876,15 @@ class MosaicApp:
         self._loaded_config = None
         self._has_elections = False
         self._has_county    = False
+        # Hot start was tied to the previous shapefile's precinct IDs.
         self.state.update(
             current_assignment=None,
             best_assignment=None,
             initial_assignment=None,
+            hot_start_assignment=None,
+            hot_start_filename="",
         )
+        self._update_hot_start_display(None)
         dpg.set_value(self._shp_info, "Reading shapefile...")
         self.theme.retoken(self._shp_info, "muted")
         threading.Thread(
@@ -3319,7 +3903,7 @@ class MosaicApp:
             self.state.acceptance_rate_history = []
             self.state.county_splits_score_history = []
             self.state.county_excess_splits_history = []
-            self.state.county_clean_districts_history = []
+            self.state.county_unified_districts_history = []
             self.state.mm_history = []
             self.state.eg_history = []
             self.state.dem_seats_history = []
@@ -3327,6 +3911,9 @@ class MosaicApp:
             self.state.pp_history = []
             self.state.reock_history = []
             self.state.holistic_compactness_history = []
+            self.state.holistic_splitting_history = []
+            self.state.holistic_proportionality_history = []
+            self.state.holistic_competitiveness_history = []
             self.state.pop_deviation_history = []
             self.state.pop_dev_max_history = []
             self.state.pop_dev_mean_history = []
@@ -3365,7 +3952,7 @@ class MosaicApp:
             self.state.acceptance_rate_history = self.state.acceptance_rate_history[:n_acc]
             self.state.county_splits_score_history    = self.state.county_splits_score_history[:n_score]
             self.state.county_excess_splits_history   = self.state.county_excess_splits_history[:n_score]
-            self.state.county_clean_districts_history = self.state.county_clean_districts_history[:n_score]
+            self.state.county_unified_districts_history = self.state.county_unified_districts_history[:n_score]
             self.state.mm_history               = self.state.mm_history[:n_score]
             self.state.eg_history               = self.state.eg_history[:n_score]
             self.state.dem_seats_history        = self.state.dem_seats_history[:n_score]
@@ -3373,6 +3960,9 @@ class MosaicApp:
             self.state.pp_history               = self.state.pp_history[:n_score]
             self.state.reock_history            = self.state.reock_history[:n_score]
             self.state.holistic_compactness_history = self.state.holistic_compactness_history[:n_score]
+            self.state.holistic_splitting_history = self.state.holistic_splitting_history[:n_score]
+            self.state.holistic_proportionality_history = self.state.holistic_proportionality_history[:n_score]
+            self.state.holistic_competitiveness_history = self.state.holistic_competitiveness_history[:n_score]
             self.state.pop_deviation_history = self.state.pop_deviation_history[:n_score]
             self.state.pop_dev_max_history   = self.state.pop_dev_max_history[:n_score]
             self.state.pop_dev_mean_history  = self.state.pop_dev_mean_history[:n_score]
@@ -3404,7 +3994,8 @@ class MosaicApp:
             self._buf_score, self._buf_cs_score, self._buf_cs_excess,
             self._buf_cs_clean, self._buf_mm, self._buf_eg,
             self._buf_seats, self._buf_comp, self._buf_pp, self._buf_reock,
-            self._buf_hc, self._buf_popdev,
+            self._buf_hc, self._buf_hsplit, self._buf_hprop, self._buf_hcmp,
+            self._buf_popdev,
             self._buf_popdev_max, self._buf_popdev_mean, self._buf_cuts,
             self._buf_maj_dem, self._buf_maj_rep,
         ):
@@ -3430,6 +4021,20 @@ class MosaicApp:
                               error_message="Please load a shapefile first")
             return
 
+        # Hot start sanity: was validated at load time, but the Districts
+        # slider could have moved since. Refuse to run if it no longer matches.
+        (hot_start,) = self.state.get("hot_start_assignment")
+        if hot_start is not None:
+            n_dist_csv = int(hot_start.max()) + 1
+            n_dist_slider = dpg.get_value(self._num_districts)
+            if n_dist_csv != n_dist_slider:
+                self._show_hot_start_error(
+                    f"Hot start has {n_dist_csv} districts but the Districts "
+                    f"slider is set to {n_dist_slider}. Clear the hot start "
+                    f"or adjust the slider."
+                )
+                return
+
         cs_on      = dpg.get_value(self._cs_enabled)
         mm_on      = dpg.get_value(self._mm_enabled)
         eg_on      = dpg.get_value(self._eg_enabled)
@@ -3440,13 +4045,20 @@ class MosaicApp:
 
         w_cut  = (dpg.get_value(self._w_cut_edges)
                   if dpg.get_value(self._cut_enabled) else 0.0)
-        w_cs   = dpg.get_value(self._w_county_splits) if cs_on else 0.0
+        w_cs_excess  = dpg.get_value(self._w_county_excess)  if cs_on else 0.0
+        w_cs_unified = dpg.get_value(self._w_county_unified) if cs_on else 0.0
         w_pp   = (dpg.get_value(self._w_polsby_popper)
                   if dpg.get_value(self._pp_enabled) else 0.0)
         w_reock = (dpg.get_value(self._w_reock)
                    if dpg.get_value(self._reock_enabled) else 0.0)
         w_hc   = (dpg.get_value(self._w_holistic_compactness)
                   if dpg.get_value(self._hc_enabled) else 0.0)
+        w_hsplit = (dpg.get_value(self._w_holistic_splitting)
+                    if dpg.get_value(self._hsplit_enabled) else 0.0)
+        w_hprop = (dpg.get_value(self._w_holistic_proportionality)
+                   if dpg.get_value(self._hprop_enabled) else 0.0)
+        w_hcmp  = (dpg.get_value(self._w_holistic_competitiveness)
+                   if dpg.get_value(self._hcmp_enabled) else 0.0)
         w_pd   = (dpg.get_value(self._w_pop_deviation)
                   if dpg.get_value(self._popdev_enabled) else 0.0)
         # Safe harbor cannot exceed population tolerance
@@ -3457,20 +4069,27 @@ class MosaicApp:
 
         score_cfg = ScoreConfig(
             weight_cut_edges=w_cut,
-            weight_county_splits=w_cs,
+            weight_county_excess=w_cs_excess,
+            weight_county_unified=w_cs_unified,
+            weight_holistic_splitting=w_hsplit,
             weight_polsby_popper=w_pp,
             weight_reock=w_reock,
             weight_holistic_compactness=w_hc,
             weight_pop_deviation=w_pd,
             pop_deviation_safe_harbor=_harbor,
             weight_mean_median=dpg.get_value(self._w_mean_median) if mm_on else 0.0,
-            target_mean_median=dpg.get_value(self._target_mean_median) if mm_on else 0.0,
+            mm_mode=_DIR_TO_MODE[dpg.get_value(self._mm_dir)],
+            mm_bound=dpg.get_value(self._mm_bound),
             weight_efficiency_gap=dpg.get_value(self._w_efficiency_gap) if eg_on else 0.0,
-            target_efficiency_gap=dpg.get_value(self._target_efficiency_gap) if eg_on else 0.0,
+            eg_mode=_DIR_TO_MODE[dpg.get_value(self._eg_dir)],
+            eg_bound=dpg.get_value(self._eg_bound),
+            partisan_quadratic_penalty=dpg.get_value(self._partisan_quadratic_penalty),
             use_robust_eg=robust_eg,
             weight_dem_seats=dpg.get_value(self._w_dem_seats) if seats_on else 0.0,
-            dem_seats_favor_dem=dpg.get_value(self._dem_seats_dem_chk),
+            dem_seats_favor_dem=(dpg.get_value(self._dem_seats_dir) == "D"),
             weight_competitiveness=dpg.get_value(self._w_competitiveness) if comp_on else 0.0,
+            weight_holistic_proportionality=w_hprop,
+            weight_holistic_competitiveness=w_hcmp,
             weight_majority_chance_dem=(dpg.get_value(self._w_majority)
                                         if maj_on and dpg.get_value(self._majority_dem_chk)
                                         else 0.0),
@@ -3512,6 +4131,8 @@ class MosaicApp:
             county_bias_enabled=cb_en,
             county_bias=cb_val,
             n3_probability=dpg.get_value(self._n3_pct) / 100.0,
+            flip_enabled=dpg.get_value(self._flip_enabled),
+            flip_midpoint=dpg.get_value(self._flip_midpoint) / 100.0,
         )
         self._clear_all_series()
         self.state.reset_run()
@@ -3535,7 +4156,7 @@ class MosaicApp:
             self.state.acceptance_rate_history = []
             self.state.county_splits_score_history = []
             self.state.county_excess_splits_history = []
-            self.state.county_clean_districts_history = []
+            self.state.county_unified_districts_history = []
             self.state.mm_history = []
             self.state.eg_history = []
             self.state.dem_seats_history = []
@@ -3543,6 +4164,9 @@ class MosaicApp:
             self.state.pp_history = []
             self.state.reock_history = []
             self.state.holistic_compactness_history = []
+            self.state.holistic_splitting_history = []
+            self.state.holistic_proportionality_history = []
+            self.state.holistic_competitiveness_history = []
             self.state.pop_deviation_history = []
             self.state.pop_dev_max_history = []
             self.state.pop_dev_mean_history = []
@@ -3848,6 +4472,12 @@ class MosaicApp:
 
 
 def main():
+    # The .bat / .command / .sh launchers invoke this entry point directly
+    # via `python -m mosaic.gui.app`, bypassing mosaic:main. Wire up logging
+    # here too so the 'mosaic' logger always has a console + file handler.
+    from mosaic import _setup_logging
+    _setup_logging()
+
     app = MosaicApp()
     app.setup()
     app.run()

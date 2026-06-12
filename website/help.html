@@ -211,6 +211,8 @@
         <dl>
           <dt><strong>Random Seed</strong></dt>
           <dd>Sets the RNG state at the start of the run. <code>0</code> (default) leaves the RNG random, so every run is different. Any non-zero integer makes a run reproducible <em>on the same machine, with the same Mosaic version, with the same shapefile</em>. Cross-machine or cross-version runs may diverge slightly due to floating-point ordering inside numpy / igraph; the seed buys you reproducibility, not bit-exactness across environments.</dd>
+          <dt><strong>Hot start</strong> (File menu)</dt>
+          <dd>Instead of beginning from a random seed plan, load an existing precinct-to-district assignment as the starting point. Pick a CSV with an id column and a district column (1-indexed; the format matches Mosaic's own assignment export), then map the id column to your shapefile. Mosaic validates that every precinct is assigned, the district count matches Number of Districts, and each district is contiguous before the run will use it. Useful for polishing a published map or resuming from a prior result. Clear it from the same menu to return to random seeding.</dd>
         </dl>
 
         <h3>County-Edge Bias</h3>
@@ -321,6 +323,16 @@
             </table>
           </dd>
 
+          <dt><strong>Holistic Splitting</strong></dt>
+          <dd>
+            <p>One splitting dial that blends county-direction and district-direction sub-ratings 50/50. Uses a sqrt-of-fractions kernel that rewards lopsided splits over even ones, population-weighted across counties and districts.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
+              <tr><th>Direction</th><td>lower contribution is better</td></tr>
+              <tr><th>Contribution</th><td><code>100 − rating</code></td></tr>
+            </table>
+          </dd>
+
           <dt><strong>Mean-Median</strong></dt>
           <dd>
             <p><code>mean(district Dem share) − median(district Dem share)</code>. Non-zero values indicate the mean and median districts disagree on partisan balance. Sign: negative = D advantage, positive = R advantage.</p>
@@ -349,6 +361,16 @@
             </table>
           </dd>
 
+          <dt><strong>Holistic Proportionality</strong></dt>
+          <dd>
+            <p>Single 0-100 rating of seat-share vs vote-share fairness. Antimajoritarian plans (majority-vote, minority-seat) get an instant 100 penalty.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
+              <tr><th>Direction</th><td>lower contribution is better</td></tr>
+              <tr><th>Contribution</th><td><code>100 − rating</code></td></tr>
+            </table>
+          </dd>
+
           <dt><strong>Competitiveness</strong></dt>
           <dd>
             <p>Mean non-competitiveness across districts. A district contributes 0 at a 50% win probability and 1 at certainty.</p>
@@ -357,6 +379,16 @@
               <tr><th>Direction</th><td>lower is better</td></tr>
               <tr><th>Contribution</th><td><code>raw × 100</code></td></tr>
               <tr><th>Tunables</th><td>shared partisan calibration</td></tr>
+            </table>
+          </dd>
+
+          <dt><strong>Holistic Competitiveness</strong></dt>
+          <dd>
+            <p>Soft-Bernoulli competitiveness rating. Per-district kernel <code>1 − 4·(P_win − 0.5)²</code> rewards toss-ups; cap at 75% competitive-equivalent districts.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
+              <tr><th>Direction</th><td>lower contribution is better</td></tr>
+              <tr><th>Contribution</th><td><code>100 − rating</code></td></tr>
             </table>
           </dd>
 
