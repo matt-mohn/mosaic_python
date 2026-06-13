@@ -7,7 +7,7 @@ Uses recombination (ReCom) to generate and optimize district maps.
 
 import sys
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 def _die_friendly(msg: str) -> None:

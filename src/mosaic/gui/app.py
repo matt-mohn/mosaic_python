@@ -27,6 +27,8 @@ from mosaic.io.inspect import ShapefileConfig, ShapefileInspection
 from mosaic.scoring.score import ScoreConfig
 from mosaic.recom.annealing import AnnealingConfig
 
+from mosaic import __version__
+
 _PLOT_LIMIT   = 10_000   # max points rendered when limit-plots is on
 _COMPACT_AT   = 20_000   # compact local buffer when it exceeds this
 _COMPACT_KEEP = 10_000   # keep last N at full resolution after compaction
@@ -153,7 +155,7 @@ _DIR_TO_MODE = {"Fair": "fair", "D": "favor_dem", "R": "favor_rep"}
 _CONTRIB_BAR_METRICS = [
     ("Cut Edges",       "Cuts",   (160, 160, 165, 220)),
     ("Excess Splits",    "Co.Exc", (190, 170, 130, 220)),
-    ("Unified Counties", "Co.Uni", (160, 200, 130, 220)),
+    ("Single-County Districts", "1-Co Dist", (160, 200, 130, 220)),
     ("Population Deviation", "PopDev", (220, 200, 70,  220)),
     ("Compactness",     "PP",    (90,  160, 220, 220)),
     ("Reock",           "Reock", (60,  190, 200, 220)),
@@ -683,10 +685,23 @@ class MosaicApp:
                         label="Load Hot Start...",
                         callback=self._on_load_hot_start,
                     )
+                    self._tooltip(
+                        self._hot_start_load_item,
+                        "Load an existing plan to start from instead of a "
+                        "random seed. Expects a CSV with a precinct id column "
+                        "and a 1-indexed district column -- the same format "
+                        "Mosaic exports with Save Assignments. Its district "
+                        "count must match the Districts setting.",
+                    )
                     self._hot_start_clear_item = dpg.add_menu_item(
                         label="Clear Hot Start",
                         enabled=False,
                         callback=self._on_clear_hot_start,
+                    )
+                    self._tooltip(
+                        self._hot_start_clear_item,
+                        "Discard the loaded hot start and go back to a random "
+                        "seed on the next run.",
                     )
 
             with dpg.child_window(height=_TOP_H, border=False,
@@ -727,6 +742,14 @@ class MosaicApp:
                                     default_value=5, min_value=2, max_value=500,
                                     width=_inp_w, step=0,
                                 )
+                                self._tooltip(
+                                    self._num_districts,
+                                    "Number of districts to draw (default 5, "
+                                    "range 2 to 500). Must match the chamber "
+                                    "size you are mapping. A hot start is "
+                                    "rejected if its plan has a different "
+                                    "district count.",
+                                )
                             with dpg.group():
                                 self.theme.text("Iterations", "subheading")
                                 self._iterations = dpg.add_input_int(
@@ -734,6 +757,14 @@ class MosaicApp:
                                     default_value=2500, min_value=1,
                                     max_value=1_000_000,
                                     width=_inp_w, step=0,
+                                )
+                                self._tooltip(
+                                    self._iterations,
+                                    "How many annealing steps to run (default "
+                                    "2500, max 1,000,000). The cooling "
+                                    "schedule is sized against this number, so "
+                                    "more iterations means slower, more "
+                                    "thorough cooling.",
                                 )
 
                         dpg.add_spacer(height=8)
@@ -804,11 +835,20 @@ class MosaicApp:
                                 default_value=False,
                                 callback=self._on_county_overlay_toggle,
                             )
+                            self._tooltip(
+                                self._county_overlay,
+                                "Draw county boundaries over the map.",
+                            )
                             self._splits_view = dpg.add_checkbox(
                                 label="Splits",
                                 default_value=False,
                                 enabled=False,
                                 callback=self._on_splits_view_toggle,
+                            )
+                            self._tooltip(
+                                self._splits_view,
+                                "Highlight counties split across districts. "
+                                "Needs a county column to be loaded.",
                             )
                             self._partisan_overlay = dpg.add_checkbox(
                                 label="Pct. Results",
@@ -816,17 +856,34 @@ class MosaicApp:
                                 enabled=False,
                                 callback=self._on_partisan_overlay_toggle,
                             )
+                            self._tooltip(
+                                self._partisan_overlay,
+                                "Shade each precinct by its vote margin. "
+                                "Stays disabled until election data is "
+                                "loaded.",
+                            )
                             self._district_partisan = dpg.add_checkbox(
                                 label="Dist. Results",
                                 default_value=False,
                                 enabled=False,
                                 callback=self._on_district_partisan_toggle,
                             )
+                            self._tooltip(
+                                self._district_partisan,
+                                "Shade each district by its aggregate vote "
+                                "margin. Stays disabled until election data "
+                                "is loaded.",
+                            )
                             self._compactness_view = dpg.add_checkbox(
                                 label="Compactness",
                                 default_value=False,
                                 enabled=False,
                                 callback=self._on_compactness_toggle,
+                            )
+                            self._tooltip(
+                                self._compactness_view,
+                                "Shade each district by how compact its shape "
+                                "is.",
                             )
                             self._pop_dev_view = dpg.add_checkbox(
                                 label="Pop. Dev.",
@@ -955,7 +1012,7 @@ class MosaicApp:
                                     width=_SCORE_COL_W - 100,
                                 )
                                 self._w_county_unified = dpg.add_slider_int(
-                                    label="Unified weight",
+                                    label="Single-county weight",
                                     default_value=1, min_value=0, max_value=100,
                                     width=_SCORE_COL_W - 100,
                                 )
@@ -1478,6 +1535,11 @@ class MosaicApp:
                         default_value=0.9995, min_value=0.990,
                         max_value=0.99999, format="%.5f", width=260,
                     )
+                    self._tooltip(
+                        self._cooling_rate,
+                        "Per-iteration temperature multiplier (default "
+                        "0.9995). Lower values cool faster.",
+                    )
 
                 dpg.add_spacer(height=8)
                 dpg.add_separator()
@@ -1683,12 +1745,12 @@ class MosaicApp:
                             with dpg.plot_axis(dpg.mvYAxis, label="Count", tag="cs_excess_y"):
                                 dpg.add_line_series([], [], label="Excess", tag="cs_excess_series")
                     with dpg.group():
-                        self.theme.text("Unified Counties", "heading")
+                        self.theme.text("Single-County Districts", "heading")
                         with dpg.plot(height=150, width=-1):
                             dpg.add_plot_legend()
                             dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="cs_clean_x")
                             with dpg.plot_axis(dpg.mvYAxis, label="Count", tag="cs_clean_y"):
-                                dpg.add_line_series([], [], label="Unified", tag="cs_clean_series")
+                                dpg.add_line_series([], [], label="Single-County", tag="cs_clean_series")
                                 _cs_max = dpg.add_line_series(
                                     [], [], label="##cs_max", tag="cs_clean_max",
                                 )
@@ -2383,6 +2445,10 @@ class MosaicApp:
                     "Mosaic from Matt Mohn (@mattmxhn)",
                     "title",
                 )
+                self.theme.text(
+                    f"Version {__version__}",
+                    "muted",
+                )
                 dpg.add_spacer(height=6)
                 dpg.add_text(
                     "Mosaic uses simulated annealing plus recombination to generate "
@@ -2398,9 +2464,12 @@ class MosaicApp:
                 dpg.add_text(
                     "1. Import a shapefile\n"
                     "2. Map columns (population, county, votes) in the picker\n"
-                    "3. Set district count, iterations, and score weights\n"
-                    "4. Start - pause / reset / revert to best as needed\n"
-                    "5. Save Assignments writes a CSV",
+                    "3. Set district count and iterations\n"
+                    "4. Enable and weight the scores in the left-hand panel\n"
+                    "5. Optionally load an existing plan as a hot start via "
+                    "Debug > Load Hot Start\n"
+                    "6. Start - pause / reset / revert to best as needed\n"
+                    "7. Save Assignments writes a CSV",
                     wrap=420,
                 )
                 dpg.add_spacer(height=14)
