@@ -176,6 +176,8 @@
           <dd>Hard cap on the optimisation budget. The annealing schedule is sized against this number, so changing it changes the cooling trajectory, not just the stopping point.</dd>
           <dt><strong>n=3 ReCom Mix</strong></dt>
           <dd>Probability per step of attempting a three-way recombination (merge 3 adjacent districts and re-split into 3) instead of the default two-way step. Three-way moves are slower but escape local minima better; 0.0 disables it.</dd>
+          <dt><strong>Polish Flips</strong> (on by default)</dt>
+          <dd>Adds single-precinct boundary flips alongside ReCom to clean up district borders late in the run. The flip probability ramps along a two-piece logistic: about 5% at the start, rising to 50% at the crossover, and 85% by the end &mdash; so at least 15% of steps stay ReCom throughout and the chain can still escape local minima. The <strong>50% crossover</strong> slider (default 84% of the run) sets where the rate hits 50%; higher keeps flips rare until later.</dd>
         </dl>
 
         <h3>Population</h3>
@@ -183,7 +185,7 @@
           <dt><strong>Population Tolerance</strong></dt>
           <dd>Per-district deviation from the ideal population that Mosaic will accept as a valid plan. Any candidate that violates this is rejected at the recombination step (default 2.5%). Tighter is harder to satisfy and slower to converge.</dd>
           <dt><strong>Safe Harbor</strong></dt>
-          <dd>The no-penalty band for the Population Deviation score (default 0.25%). Districts inside it contribute 0 to that metric; districts outside contribute <code>(excess²)</code>, summed as mean + max so a single outlier cannot be averaged away. Clamped at run-start to never exceed Population Tolerance.</dd>
+          <dd>The no-penalty band for the Population Deviation score (default 0.0%, i.e. off &mdash; every district outside perfect balance is penalized). Districts inside the band contribute 0 to that metric; districts outside contribute their squared excess deviation. Clamped at run-start to never exceed Population Tolerance.</dd>
         </dl>
 
         <h3>Annealing</h3>
@@ -192,17 +194,16 @@
           <dd>Temperature drops fastest during an initial guide window (a fraction of max iterations) and tapers off afterward. The schedule self-tunes to acceptance rate, so the same settings work across very different shapefiles and weight mixes.</dd>
           <dt><strong>STATIC cooling</strong></dt>
           <dd>Temperature decays on a fixed geometric schedule. Useful when reproducing a published methodology or when you want fine control over the cooling curve. Requires more manual tuning to match GUIDED's quality.</dd>
-          <dt><strong>Initial Temperature factor &amp; mode</strong></dt>
+          <dt><strong>Initial Temp Factor</strong></dt>
           <dd>
-            <code>PROPORTIONAL</code> (default) multiplies the factor by the initial plan's score: starting temp = <code>factor × initial_score</code> (default factor 0.2). This is the right mode when you don't know what magnitudes to expect from your weight mix — the temperature scales with whatever the score actually is.<br>
-            <code>NOMINAL</code> uses the factor as an absolute temperature. Use this when you have a calibrated target temperature in mind, e.g. when reproducing a specific run.
+            The GUI exposes the factor slider (default 0.2). In the default <code>PROPORTIONAL</code> mode the starting temperature is <code>factor × initial_score</code> &mdash; the right behavior when you don't know what magnitudes to expect from your weight mix, since temperature scales with whatever the score actually is. (A <code>NOMINAL</code> mode that treats the factor as an absolute temperature exists for headless/config use but is not surfaced as a GUI control.)
           </dd>
-          <dt><strong>GUIDED — Guide Fraction &amp; Target Temperature</strong></dt>
-          <dd>The schedule is sized so that temperature reaches Target Temperature at <code>Guide Fraction × max_iterations</code>. Defaults: 0.9 and 1.0. Lowering Guide Fraction means faster cooling (more aggressive); lowering Target Temperature means a colder endpoint (less random late in the run).</dd>
+          <dt><strong>GUIDED — Guide Point &amp; Target Temperature</strong></dt>
+          <dd>The schedule is sized so that temperature reaches Target Temperature at <code>Guide Point × max_iterations</code>. Defaults: 0.9 and 1.0. Lowering Guide Point means faster cooling (more aggressive); lowering Target Temperature means a colder endpoint (less random late in the run). (The underlying config field is <code>guide_fraction</code>.)</dd>
           <dt><strong>STATIC — Cooling Rate</strong></dt>
           <dd>Per-iteration temperature multiplier (default 0.9995, meaning temp drops 0.05% per step). The total cooling over a run is <code>cooling_rate^max_iterations</code>; e.g. 0.9995 over 10,000 iterations leaves temperature at about 0.7% of initial.</dd>
           <dt><strong>Launch Watch</strong></dt>
-          <dd>When enabled (default on, at iteration 250), Mosaic re-anchors the temperature to the current score after the first 250 iterations. Useful when score collapses early (common with County Splits and County-Edge Bias enabled) and the initial-anchored temperature would otherwise become too hot to be useful by the time the score has stabilized.</dd>
+          <dd>When enabled (default on), Mosaic re-anchors the temperature to the current score after a set number of iterations, configurable via the <strong>Re-anchor after iter</strong> input (default 250). Useful when score collapses early (common with County Splits and County-Edge Bias enabled) and the initial-anchored temperature would otherwise become too hot to be useful by the time the score has stabilized.</dd>
           <dt><strong>n=3 ReCom Mix slider</strong></dt>
           <dd>Frozen at run start (see ReCom). Listed here too because the Annealing popup is where it lives in the GUI.</dd>
         </dl>
@@ -211,7 +212,8 @@
         <dl>
           <dt><strong>Random Seed</strong></dt>
           <dd>Sets the RNG state at the start of the run. <code>0</code> (default) leaves the RNG random, so every run is different. Any non-zero integer makes a run reproducible <em>on the same machine, with the same Mosaic version, with the same shapefile</em>. Cross-machine or cross-version runs may diverge slightly due to floating-point ordering inside numpy / igraph; the seed buys you reproducibility, not bit-exactness across environments.</dd>
-          <dt><strong>Hot start</strong> (File menu)</dt>
+          <dt><strong>Hot start</strong> (Debug menu)</dt>
+
           <dd>Instead of beginning from a random seed plan, load an existing precinct-to-district assignment as the starting point. Pick a CSV with an id column and a district column (1-indexed; the format matches Mosaic's own assignment export), then map the id column to your shapefile. Mosaic validates that every precinct is assigned, the district count matches Number of Districts, and each district is contiguous before the run will use it. Useful for polishing a published map or resuming from a prior result. Clear it from the same menu to return to random seeding.</dd>
         </dl>
 
@@ -272,27 +274,27 @@
 
           <dt><strong>County Splits</strong></dt>
           <dd>
-            <p>Penalty on splitting counties across districts. Two terms: <em>excess splits</em> beyond the minimum forced by county population, plus the shortfall in <em>clean districts</em> (districts whose precincts all lie within one county).</p>
+            <p>Penalty on splitting counties across districts. Two terms: <em>excess splits</em> beyond the minimum forced by county population, plus the shortfall in <em>single-county districts</em> (districts whose precincts all lie within one county). In the GUI this score shares one row labeled <strong>County Splits and Bias</strong>, which also houses the <a href="#run-config">County-Edge Bias</a> toggle (a proposal-time steer, distinct from this post-hoc penalty).</p>
             <table class="meta">
               <tr><th>Unit</th><td>weighted score</td></tr>
               <tr><th>Direction</th><td>lower is better</td></tr>
-              <tr><th>Contribution</th><td><code>10 × (excess_splits + (max_clean − clean_districts))</code></td></tr>
+              <tr><th>Contribution</th><td><code>10 × (excess_splits + (max_single_county − single_county_districts))</code></td></tr>
               <tr><th>Tunables</th><td>none directly. <code>max_clean</code> depends on the run-config Population Tolerance (Population popup &rarr; Population Tolerance).</td></tr>
             </table>
           </dd>
 
           <dt><strong>Population Deviation</strong></dt>
           <dd>
-            <p>Two-component imbalance penalty. Districts within the safe-harbor band contribute zero. Beyond it, the metric sums mean squared excess and max squared excess, so a single outlier cannot be masked by balanced averages.</p>
+            <p>Sum-of-squares imbalance penalty. Districts within the safe-harbor band contribute zero. Beyond it, the metric sums each district's squared excess deviation, normalized by district count &mdash; a smoother optimization landscape than the older mean-plus-max form.</p>
             <table class="meta">
               <tr><th>Unit</th><td>scaled sum of squares</td></tr>
               <tr><th>Direction</th><td>lower is better; zero indicates all districts inside the safe-harbor</td></tr>
-              <tr><th>Contribution</th><td><code>(mean(excess²) + max(excess²)) × 50,000</code>, where <code>excess = max(0, |dev_frac| − safe_harbor)</code></td></tr>
-              <tr><th>Tunables</th><td><span class="gui">Population popup &rarr; Safe Harbor slider</span> (<code>pop_deviation_safe_harbor</code>, default 0.25%). Clamped at run start to not exceed Population Tolerance.</td></tr>
+              <tr><th>Contribution</th><td><code>sum(excess²) × 100,000 / n_districts</code>, where <code>excess = max(0, |dev_frac| − safe_harbor)</code></td></tr>
+              <tr><th>Tunables</th><td><span class="gui">Population popup &rarr; Safe Harbor slider</span> (<code>pop_deviation_safe_harbor</code>, default 0.0%). Clamped at run start to not exceed Population Tolerance.</td></tr>
             </table>
           </dd>
 
-          <dt><strong>Polsby-Popper compactness</strong></dt>
+          <dt><strong>Compactness (Polsby-Popper)</strong></dt>
           <dd>
             <p>Compactness penalty. Per-district <code>PP = 4π·area / perimeter²</code> ranges from 0 (elongated) to 1 (circle). The score chart displays <code>mean(PP)</code> directly; the optimizer minimizes <code>(1 − mean(PP)) × 100</code>.</p>
             <table class="meta">
@@ -333,14 +335,20 @@
             </table>
           </dd>
 
-          <dt><strong>Mean-Median</strong></dt>
+          <dt><strong>Mean-Median Difference</strong></dt>
           <dd>
             <p><code>mean(district Dem share) − median(district Dem share)</code>. Non-zero values indicate the mean and median districts disagree on partisan balance. Sign: negative = D advantage, positive = R advantage.</p>
             <table class="meta">
-              <tr><th>Unit</th><td>signed share difference (display); penalty in squared percentage points</td></tr>
-              <tr><th>Direction</th><td>distance from target</td></tr>
-              <tr><th>Contribution</th><td><code>((raw − target) × 100)²</code></td></tr>
-              <tr><th>Tunables</th><td><span class="gui">Score panel &rarr; Mean-Median row &rarr; Target MM slider</span> (<code>target_mean_median</code>, default 0.000; negative aims at a D-favoring plan, positive at R)</td></tr>
+              <tr><th>Unit</th><td>signed share difference (display); contribution [0, 100]</td></tr>
+              <tr><th>Direction</th><td>set by mode: <strong>Fair</strong> drives <code>raw</code> toward 0; <strong>D</strong> / <strong>R</strong> drive it toward a one-party advantage</td></tr>
+              <tr><th>Contribution</th><td><code>d × 100</code> (or <code>d² × 100</code> with the quadratic toggle). Normalized deviation <code>d</code>: Fair <code>= min(1, |raw| / bound)</code>; D/R ramp linearly from 0 to 1 across <code>[−bound, +bound]</code></td></tr>
+              <tr><th>Tunables</th><td>
+                <ul>
+                  <li><span class="gui">Score panel &rarr; Mean-Median row &rarr; Fair / D / R radio</span> (<code>mm_mode</code>, default Fair)</li>
+                  <li><span class="gui">Partisanship popup &rarr; Mean-Median / Efficiency Gap shape &rarr; MM bound</span> (<code>mm_bound</code>, default 0.20 &mdash; the <code>|raw|</code> at which the penalty saturates at 100)</li>
+                  <li><span class="gui">Partisanship popup &rarr; Use quadratic penalty</span> (<code>partisan_quadratic_penalty</code>, default off; shared with Efficiency Gap)</li>
+                </ul>
+              </td></tr>
             </table>
           </dd>
 
@@ -348,13 +356,14 @@
           <dd>
             <p><code>(wasted Dem votes − wasted Rep votes) / total votes</code>. Wasted votes are losing-side votes plus winning-side votes above 50%. Robust mode integrates the gap over a Gaussian swing in closed form; Static mode evaluates at the input shares only. Sign: negative = D bias, positive = R bias.</p>
             <table class="meta">
-              <tr><th>Unit</th><td>signed share (display); penalty in squared percentage points</td></tr>
-              <tr><th>Direction</th><td>distance from target</td></tr>
-              <tr><th>Contribution</th><td><code>((raw − target) × 100)²</code></td></tr>
+              <tr><th>Unit</th><td>signed share (display); contribution [0, 100]</td></tr>
+              <tr><th>Direction</th><td>set by mode: <strong>Fair</strong> drives <code>raw</code> toward 0; <strong>D</strong> / <strong>R</strong> drive it toward a one-party advantage</td></tr>
+              <tr><th>Contribution</th><td><code>d × 100</code> (or <code>d² × 100</code> with the quadratic toggle). Normalized deviation <code>d</code>: Fair <code>= min(1, |raw| / bound)</code>; D/R ramp linearly from 0 to 1 across <code>[−bound, +bound]</code></td></tr>
               <tr><th>Tunables</th><td>
                 <ul>
-                  <li><span class="gui">Score panel &rarr; Efficiency Gap row &rarr; Target EG slider</span> (<code>target_efficiency_gap</code>, default 0.000; negative aims D, positive R)</li>
-                  <li><span class="gui">Partisanship popup &rarr; Efficiency Gap mode radio</span> (<code>use_robust_eg</code>, default Robust)</li>
+                  <li><span class="gui">Score panel &rarr; Efficiency Gap row &rarr; Fair / D / R radio</span> (<code>eg_mode</code>, default Fair)</li>
+                  <li><span class="gui">Partisanship popup &rarr; Mean-Median / Efficiency Gap shape &rarr; EG bound</span> (<code>eg_bound</code>, default 0.35) and <span class="gui">Use quadratic penalty</span> (shared with Mean-Median)</li>
+                  <li><span class="gui">Partisanship popup &rarr; Efficiency Gap mode radio</span> (<code>use_robust_eg</code>, default Robust). Robust integrates the gap over a Gaussian swing in closed form; Static evaluates at the input shares only</li>
                   <li>Shared partisan calibration when Robust is selected</li>
                 </ul>
               </td></tr>
@@ -425,7 +434,7 @@
             </table>
           </dd>
 
-          <dt><strong>Hinge</strong></dt>
+          <dt><strong>Supermajority/Hinge</strong></dt>
           <dd>
             <p>Probability that the selected party wins at least <code>hinge_threshold</code> seats, under the swing model. Penalty curve matches Chance of Majority &mdash; in fact Chance of Majority is exactly Hinge with <code>hinge_threshold = ⌈n/2⌉</code>; Hinge is the generalisation that lets you pick a different seat threshold (supermajority, blocking minority, etc.).</p>
             <table class="meta">
@@ -434,7 +443,7 @@
               <tr><th>Contribution</th><td><code>(1 − p)^1.5 × 100</code></td></tr>
               <tr><th>Tunables</th><td>
                 <ul>
-                  <li><span class="gui">Score panel &rarr; Supermajority/Hinge row &rarr; Threshold slider</span> (<code>hinge_threshold</code>, default 1; clipped to <code>[1, n_districts]</code>)</li>
+                  <li><span class="gui">Score panel &rarr; Supermajority/Hinge row &rarr; Threshold slider</span> (<code>hinge_threshold</code>, GUI default 8, slider range 1&ndash;14; clipped to <code>[1, n_districts]</code>)</li>
                   <li><span class="gui">Score panel &rarr; Supermajority/Hinge row &rarr; D / R checkboxes</span> (<code>hinge_dem</code>)</li>
                   <li>Shared partisan calibration</li>
                 </ul>
@@ -453,13 +462,13 @@
           <dd>Draws grey lines along county boundaries on top of the current colouring. Useful for eyeballing how often district boundaries follow county lines.</dd>
           <dt><strong>Splits</strong></dt>
           <dd>Dims counties that lie entirely inside a single district, leaving split counties at full saturation. Quick visual diagnostic for the County Splits score: more colour = more splits.</dd>
-          <dt><strong>Precinct Results</strong></dt>
+          <dt><strong>Pct. Results</strong> (Precinct Results)</dt>
           <dd>Colours each precinct by its Dem vs Rep share (Classic Mosaic red &harr; blue palette). Independent of district boundaries; shows the partisan terrain Mosaic is working over. Requires election columns at load.</dd>
-          <dt><strong>District Results</strong></dt>
+          <dt><strong>Dist. Results</strong> (District Results)</dt>
           <dd>Colours each district by its aggregate Dem share. The map view of the same data the Mean-Median, Efficiency Gap, and Competitiveness metrics summarise.</dd>
           <dt><strong>Compactness</strong></dt>
           <dd>Colours each district by its Polsby-Popper score (round = greener, elongated = redder). Spot the ugly district at a glance.</dd>
-          <dt><strong>Population Deviation</strong></dt>
+          <dt><strong>Pop. Dev.</strong> (Population Deviation)</dt>
           <dd>Colours each district by signed deviation from ideal population. Underpopulated districts in one direction, overpopulated in the other.</dd>
           <dt><strong>Labels</strong></dt>
           <dd>Draws the district number at each district's interior. Number matches the labels in the District Info panel and the exported CSVs.</dd>
@@ -471,12 +480,18 @@
       <!-- Charts ──────────────────────────────────────────────────────────── -->
       <section id="charts" class="prose-block mt-16">
         <h2 class="text-2xl font-bold tracking-tight">Reading the charts</h2>
-        <p>The left side of the GUI shows live charts you can toggle from the <strong>Views</strong> menu. The most useful ones during a run:</p>
+        <p>Two menus control what you see, and they are easy to confuse: the <strong>Scores</strong> menu toggles which score <em>rows</em> appear in the left-hand config column, while the <strong>Views</strong> menu toggles the right-side <em>charts and panels</em> below. The same names (e.g. Mean-Median, Reock) appear in both menus for that reason. The most useful panels during a run:</p>
         <dl>
           <dt><strong>Score History</strong></dt>
           <dd>Total <code>PlanScore.total</code> over iterations (lower is better). Trends down as annealing cools and the search becomes pickier.</dd>
           <dt><strong>Per-metric panels</strong></dt>
-          <dd>One chart per enabled metric, plotted in its native units. Metrics with targets (Mean-Median, Efficiency Gap) draw a horizontal target line for reference.</dd>
+          <dd>One chart per enabled metric, plotted in its native units. Partisan metrics draw a reference line where relevant.</dd>
+          <dt><strong>Score Contributors</strong></dt>
+          <dd>Bar chart showing the share of the total score each enabled metric contributes right now. The quickest way to see which weight is actually driving the optimizer.</dd>
+          <dt><strong>District Info</strong></dt>
+          <dd>Per-district table: population, deviation from ideal, and (when election data is loaded) Dem share. District numbers match the map labels and the exported CSVs. Refreshes on an adjustable interval to stay cheap on long runs.</dd>
+          <dt><strong>Win Chance / Partisanship</strong></dt>
+          <dd>Partisan diagnostic panels: per-district win probabilities and the partisan distribution of the current plan. Available once election columns are loaded.</dd>
           <dt><strong>Temperature</strong></dt>
           <dd>The annealing temperature over time. In GUIDED mode the curve is non-linear by design; in STATIC mode it's a clean geometric decay.</dd>
           <dt><strong>Entropy / Acceptance</strong></dt>
@@ -521,7 +536,7 @@
           <dt><strong>Can I run multiple chains in parallel?</strong></dt>
           <dd>Not yet from inside Mosaic. As a workaround, run multiple Mosaic instances in separate folders with different seeds.</dd>
           <dt><strong>Mosaic feels slow / the GUI is laggy.</strong></dt>
-          <dd>Two knobs in the View menu help. <strong>Limit plots</strong> trims the score-history buffer to keep chart rendering fast on long runs (the underlying score data isn't lost, just downsampled for display). <strong>Map render interval</strong> sets how often the map redraws during a run; raise it from the default to give the algorithm more CPU. The algorithm itself runs at the same speed either way; both knobs only affect rendering.</dd>
+          <dd>Two knobs in the Appearance menu help. <strong>Limit plots</strong> trims the score-history buffer to keep chart rendering fast on long runs (the underlying score data isn't lost, just downsampled for display). <strong>Map render interval</strong> sets how often the map redraws during a run; raise it from the default to give the algorithm more CPU. The algorithm itself runs at the same speed either way; both knobs only affect rendering.</dd>
         </dl>
       </section>
 

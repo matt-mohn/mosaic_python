@@ -111,8 +111,10 @@
     <div class="max-w-3xl mx-auto px-6 py-16">
       <p class="text-lg text-ink leading-relaxed">
         Mosaic is a desktop tool for ReCom + simulated annealing redistricting.
-        Load a shapefile, configure scoring, and watch each iteration redraw
-        the map and update the metrics in real time.
+        Load a shapefile, weight the metrics you care about, and watch each
+        iteration redraw the map and update the scores in real time. Cool the
+        chain toward fairer, more compact, or more competitive maps &mdash; or
+        start from an existing plan and refine it.
       </p>
     </div>
   </section>
@@ -134,7 +136,34 @@
           </div>
           <h3 class="mt-4 text-base font-semibold text-ink">Live map</h3>
           <p class="mt-2 text-sm text-ink-soft leading-relaxed">
-            The choropleth redraws each iteration as ReCom merges and re-splits districts.
+            The choropleth redraws each iteration as ReCom merges and re-splits districts. Overlay counties, splits, partisanship, compactness, or population deviation.
+          </p>
+        </div>
+
+        <div class="p-6 rounded-xl border border-line bg-white">
+          <div class="w-10 h-10 rounded-lg bg-navy-soft flex items-center justify-center">
+            <svg class="w-5 h-5 text-navy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/>
+              <polyline points="17 18 23 18 23 12"/>
+            </svg>
+          </div>
+          <h3 class="mt-4 text-base font-semibold text-ink">Simulated annealing</h3>
+          <p class="mt-2 text-sm text-ink-soft leading-relaxed">
+            A guided cooling schedule self-tunes to the acceptance rate, so the same settings hold across different states and weight mixes. A static geometric schedule is there when you need to reproduce a published method.
+          </p>
+        </div>
+
+        <div class="p-6 rounded-xl border border-line bg-white">
+          <div class="w-10 h-10 rounded-lg bg-navy-soft flex items-center justify-center">
+            <svg class="w-5 h-5 text-navy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/>
+              <polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/>
+              <line x1="4" y1="4" x2="9" y2="9"/>
+            </svg>
+          </div>
+          <h3 class="mt-4 text-base font-semibold text-ink">ReCom engine</h3>
+          <p class="mt-2 text-sm text-ink-soft leading-relaxed">
+            Two-way recombination by default, with an optional three-way (n=3) mix to escape local minima and single-precinct polish flips that ramp in late to clean up borders.
           </p>
         </div>
 
@@ -150,7 +179,20 @@
           </div>
           <h3 class="mt-4 text-base font-semibold text-ink">Weighted scoring</h3>
           <p class="mt-2 text-sm text-ink-soft leading-relaxed">
-            Compactness, county splits, population deviation, mean-median, efficiency gap, and more.
+            Mix and weight compactness (Polsby-Popper, Reock), county splits, population deviation, mean-median, efficiency gap, competitiveness, and expected seats.
+          </p>
+        </div>
+
+        <div class="p-6 rounded-xl border border-line bg-white">
+          <div class="w-10 h-10 rounded-lg bg-navy-soft flex items-center justify-center">
+            <svg class="w-5 h-5 text-navy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="8" r="7"/>
+              <polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/>
+            </svg>
+          </div>
+          <h3 class="mt-4 text-base font-semibold text-ink">Holistic ratings</h3>
+          <p class="mt-2 text-sm text-ink-soft leading-relaxed">
+            Single 0&ndash;100 ratings for compactness, splitting, proportionality, and competitiveness that fold several sub-measures into one interpretable number you can score and optimize against.
           </p>
         </div>
 
@@ -161,9 +203,9 @@
               <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
           </div>
-          <h3 class="mt-4 text-base font-semibold text-ink">CSV export</h3>
+          <h3 class="mt-4 text-base font-semibold text-ink">Export &amp; hot start</h3>
           <p class="mt-2 text-sm text-ink-soft leading-relaxed">
-            Save final assignments, score histories, and per-district metrics for further analysis.
+            Save final assignments, score histories, and per-district metrics as CSV. Reload any saved assignment as a hot start to refine an existing map instead of starting from random.
           </p>
         </div>
 

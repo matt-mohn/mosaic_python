@@ -201,10 +201,11 @@
     <ul>
       <li>
         <strong>Population</strong> &mdash; numeric, no missing values, no negatives,
-        positive total. Mosaic auto-detects common names: <code>POP</code>,
-        <code>TOTPOP</code>, <code>population</code>, <code>POP100</code>, and the
-        census <code>P0010001</code>. If yours uses something else you can pick it
-        in the column-picker dialog after load.
+        positive total. Mosaic auto-detects common names such as <code>POP</code>,
+        <code>TOTPOP</code>, <code>POPULATION</code>, <code>TOTAL_POP</code>,
+        <code>POP_TOTAL</code>, <code>POP100</code>, and the census
+        <code>P0010001</code> / <code>P001001</code>. If yours uses something else
+        you can pick it in the column-picker dialog after load.
       </li>
       <li>
         <strong>Precinct ID</strong> &mdash; any column that uniquely identifies
@@ -239,6 +240,13 @@
     <p>
       The Redistricting Data Hub, VEST, and MGGG sources above already ship in
       projected CRSs.
+    </p>
+    <p>
+      Note: the bundled North Carolina sample
+      (<code>North_Carolina_Simplified.shp</code>) is in a geographic CRS
+      (<code>EPSG:4269</code>, NAD83 lat/long), so its Polsby-Popper /
+      compactness scores show exactly the distortion described above. Treat them
+      as illustrative, not authoritative.
     </p>
 
     <!-- ── Worked example ────────────────────────────────────────────────── -->
@@ -293,6 +301,13 @@
       instead of a precinct *boundaries* file.
     </p>
 
+    <h3>"N of M polygons have zero area"</h3>
+    <p>
+      Some rows have degenerate (zero-area) polygons. Mosaic cannot redistrict
+      degenerate features. Repair or remove those rows in QGIS or your GIS tool
+      and reload.
+    </p>
+
     <h3>"Population column has N null / NaN value(s)"</h3>
     <p>
       Population must be present on every row. Clean the data in your GIS tool
@@ -306,7 +321,10 @@
       regions that don't touch the mainland. Common in coastal states (HI, AK,
       Outer Banks, barrier islands). ReCom requires a connected graph, so for
       now the only fix is to remove those features from the shapefile manually
-      and reload. The error message lists the row indices to remove.
+      and reload. The message reports the mainland (largest component) plus the
+      number of smaller groups and how many precincts they total, and lists the
+      row indices to remove (capped at the first 10, with a count of any
+      remaining).
     </p>
 
     <p class="mt-10">
