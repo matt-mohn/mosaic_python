@@ -83,7 +83,7 @@
       <ul class="mt-3 space-y-1.5 text-sm text-ink-soft">
         <li>&bull; A Windows 10 / 11 PC, or a Mac running macOS 12 or newer</li>
         <li>&bull; An internet connection (first launch downloads about 200&nbsp;MB)</li>
-        <li>&bull; About 5 minutes of patience for the first launch</li>
+        <li>&bull; A few minutes of patience for the first launch (2&ndash;3 minutes typically, longer on a slow connection)</li>
       </ul>
       <p class="mt-3 text-sm text-ink-soft">
         You do <em>not</em> need to install Python yourself. Mosaic ships with a
@@ -107,7 +107,7 @@
         Download mosaic_python.zip
       </a>
       <p class="mt-3 text-xs text-ink-mute">
-        About 4&nbsp;MB. Saved to your usual Downloads folder.
+        A few MB. Saved to your usual Downloads folder.
       </p>
     </section>
 
@@ -144,7 +144,7 @@
             tool (<code class="font-mono text-xs">uv</code>) on the first run;
             no installer is "signed" yet.
           </li>
-          <li>A black window opens and starts downloading dependencies. This takes 2&ndash;3 minutes the first time. Subsequent launches are instant.</li>
+          <li>A black window opens and starts downloading dependencies. This takes 2&ndash;3 minutes typically the first time, longer on a slow connection. Subsequent launches are instant.</li>
           <li>When the Mosaic window appears, you're set. Leave the black window open while you use Mosaic; closing it closes the app.</li>
         </ol>
       </div>
@@ -161,7 +161,7 @@
             unidentified developer; click <strong>Open</strong> in the dialog. You only need
             to do this the first time &mdash; later launches can use a normal double-click.
           </li>
-          <li>A Terminal window opens and starts downloading dependencies. This takes 2&ndash;3 minutes the first time. Subsequent launches are instant.</li>
+          <li>A Terminal window opens and starts downloading dependencies. This takes 2&ndash;3 minutes typically the first time, longer on a slow connection. Subsequent launches are instant.</li>
           <li>When the Mosaic window appears, you're set. Leave the Terminal window open while you use Mosaic; closing it closes the app.</li>
         </ol>
         <p class="mt-3 text-xs text-ink-mute">
@@ -212,6 +212,32 @@
       </details>
 
       <details class="mt-3 border-t border-line pt-3">
+        <summary class="cursor-pointer font-medium text-sm">Windows: first run prompts to install the Microsoft Visual C++ Runtime</summary>
+        <p class="mt-2 text-sm text-ink-soft">
+          On a fresh Windows PC the launcher may find the Microsoft Visual C++
+          Runtime (a system component Mosaic depends on) missing. It opens the
+          download page at
+          <code class="font-mono text-xs">https://aka.ms/vs/17/release/vc_redist.x64.exe</code>
+          and stops before launching. Save and run
+          <code class="font-mono text-xs">VC_redist.x64.exe</code>, accept the
+          permission prompt, then double-click
+          <code class="font-mono text-xs">run_mosaic.bat</code> again.
+        </p>
+      </details>
+
+      <details class="mt-3 border-t border-line pt-3">
+        <summary class="cursor-pointer font-medium text-sm">Mac: first run prompts to install the Command Line Tools</summary>
+        <p class="mt-2 text-sm text-ink-soft">
+          If the macOS Command Line Tools aren't installed, the launcher triggers
+          <code class="font-mono text-xs">xcode-select --install</code> and exits.
+          A system dialog appears &mdash; click <strong>Install</strong> and wait
+          for it to finish (10&ndash;15 minutes), then double-click
+          <code class="font-mono text-xs">run_mosaic.command</code> again. This
+          happens only once per machine.
+        </p>
+      </details>
+
+      <details class="mt-3 border-t border-line pt-3">
         <summary class="cursor-pointer font-medium text-sm">"python: command not found" or similar</summary>
         <p class="mt-2 text-sm text-ink-soft">
           The launcher handles Python itself via <code class="font-mono text-xs">uv</code>. If you see this error, the
@@ -225,7 +251,7 @@
         <summary class="cursor-pointer font-medium text-sm">First launch is stuck at "Installing dependencies"</summary>
         <p class="mt-2 text-sm text-ink-soft">
           The first run downloads about 200&nbsp;MB of scientific Python
-          packages. On a slow connection this can take 5&ndash;10 minutes.
+          packages &mdash; 2&ndash;3 minutes typically, longer on a slow connection.
           Watch the black window (Windows) or Terminal (Mac) for progress;
           if it has been completely silent for more than 15 minutes,
           something is wrong. Close the window and try again.
