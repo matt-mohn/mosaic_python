@@ -52,7 +52,7 @@ def _build_score_breakdown(ps, cfg) -> dict:
             result[name] = contrib / total * 100.0
     _add("Cut Edges",      cfg.weight_cut_edges * ps.cut_edges)
     _add("Excess Splits",    cfg.weight_county_excess  * ps.county_excess_score)
-    _add("Unified Counties", cfg.weight_county_unified * ps.county_unified_score)
+    _add("Single-County Districts", cfg.weight_county_unified * ps.county_unified_score)
     _add("Holistic Splitting", cfg.weight_holistic_splitting * ps.holistic_splitting)
     _add("Compactness", cfg.weight_polsby_popper * ps.polsby_popper)
     _add("Reock", cfg.weight_reock * ps.reock)
