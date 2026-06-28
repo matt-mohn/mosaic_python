@@ -173,8 +173,15 @@ class MapView:
         self._dem_votes: Optional[np.ndarray] = None
         self._gop_votes: Optional[np.ndarray] = None
         self._pp_data = None
+        self._reock_data = None
         self._populations: Optional[np.ndarray] = None
         self._precinct_centroids: Optional[np.ndarray] = None  # (N, 2) projected pixel coords
+        # Geographic renumbering: (k,) 1-indexed label per stable color index,
+        # or None for default stable_index+1. Label-only; colors are unaffected.
+        self.district_label_map: Optional[np.ndarray] = None
+        # Cache of precise label positions: (assignment_copy, [(d, cx, cy), ...]).
+        # Lets a renumber (text-only change) skip the distance transform.
+        self._label_centers_cache = None
         self._proj_scale: float = 1.0
         self._proj_offset: tuple[float, float] = (0.0, 0.0)
         self._proj_bounds: tuple[float, float] = (0.0, 0.0)  # (b0, b1)
@@ -184,7 +191,7 @@ class MapView:
         self.partisan_overlay: bool = False          # colour each precinct by its own partisan lean
         self.district_partisan_overlay: bool = False  # colour each district by its aggregate partisan lean
         self.splits_view: bool = False
-        self.compactness_view: bool = False          # colour each district by Polsby-Popper score
+        self.compactness_view: bool = False          # colour each district by combined PP+Reock compactness
         self.pop_dev_view: bool = False              # colour each district by population deviation
         self.show_labels: bool = False               # show district number labels
         self.fast_labels: bool = False               # True: cheap centroid; False: pole-of-inaccessibility
@@ -204,6 +211,7 @@ class MapView:
         dem_votes: Optional[np.ndarray] = None,
         gop_votes: Optional[np.ndarray] = None,
         pp_data=None,
+        reock_data=None,
         populations: Optional[np.ndarray] = None,
     ) -> None:
         """
@@ -214,6 +222,7 @@ class MapView:
         self._dem_votes = dem_votes
         self._gop_votes = gop_votes
         self._pp_data = pp_data
+        self._reock_data = reock_data
         self._populations = populations
         W, H = self._w, self._h
         bounds = gdf.total_bounds
@@ -260,6 +269,7 @@ class MapView:
             else:
                 centroids.append((0.0, 0.0))
         self._precinct_centroids = np.array(centroids, dtype=np.float64)
+        self._label_centers_cache = None   # geometry changed; drop stale positions
 
         self._loaded = True
 
@@ -311,7 +321,9 @@ class MapView:
         return lut
 
     def _build_compactness_lut(self, assignment: np.ndarray, n_districts: int) -> np.ndarray:
-        """Per-precinct LUT coloured by each district's Polsby-Popper score."""
+        """Per-precinct LUT coloured by each district's combined compactness: a
+        50/50 blend of Polsby-Popper and Reock (the same mix the Compactness
+        score uses). Falls back to Polsby-Popper alone if Reock data is absent."""
         n = self._n_precincts
         pd = self._pp_data
         dist_area  = np.bincount(assignment, weights=pd.areas,
@@ -328,7 +340,13 @@ class MapView:
                 np.add.at(dist_perim, ev_d[is_cut], elen[is_cut])
         safe_perim = np.where(dist_perim > 0, dist_perim, 1.0)
         pp_d = np.clip(_FOUR_PI * dist_area / safe_perim ** 2, 0.0, 1.0)
-        colors_d = _interp_palette(_COMPACT_STOPS, _COMPACT_RGB, pp_d)
+        if self._reock_data is not None:
+            from mosaic.scoring.reock import reock_per_district
+            reock_d = reock_per_district(assignment, self._reock_data, n_districts)
+            compact_d = 0.5 * pp_d + 0.5 * reock_d
+        else:
+            compact_d = pp_d
+        colors_d = _interp_palette(_COMPACT_STOPS, _COMPACT_RGB, compact_d)
         lut = np.zeros((n + 1, 4), dtype=np.uint8)
         lut[:n, :3] = colors_d[assignment]
         lut[:n, 3]  = 255
@@ -524,13 +542,18 @@ class MapView:
             else:
                 stable_colors = assignment
 
-            # Build mapping: current district -> stable label number
+            # Build mapping: current district -> stable label number. With a
+            # geographic renumber active, the displayed number is label_map of
+            # the stable color index (label-only; the color is still the stable
+            # index, so renumbering moves numbers, not colors).
+            lm = self.district_label_map
+            use_lm = lm is not None and len(lm) == n_districts
             dist_to_label = {}
             for d in range(n_districts):
                 mask = assignment == d
                 if mask.any():
-                    # Use the stable color index as the label (1-indexed for display)
-                    dist_to_label[d] = int(stable_colors[mask][0]) + 1
+                    si = int(stable_colors[mask][0])
+                    dist_to_label[d] = int(lm[si]) if use_lm else si + 1
 
             # Label placement is the hot path while annealing runs (the map
             # re-renders every accepted step).  We have two modes:
@@ -542,36 +565,50 @@ class MapView:
             #     U-shaped districts, but costs ~10-100ms per render.  Used
             #     when the algorithm is paused/idle and the user is actually
             #     inspecting the map.
-            district_centers = []
-            if self.fast_labels:
-                pc = self._precinct_centroids
-                for d in range(n_districts):
-                    mask = assignment == d
-                    if not mask.any():
-                        continue
-                    cx, cy = pc[mask].mean(axis=0)
-                    label = str(dist_to_label.get(d, d + 1))
-                    district_centers.append((d, float(cx), float(cy), label))
-            else:
-                from scipy.ndimage import distance_transform_edt
-                pm = self._pixel_map
-                pm_valid = pm >= 0
-                # Per-pixel district id (only meaningful where pm_valid)
-                pm_safe = np.where(pm_valid, pm, 0)
-                pixel_district = assignment[pm_safe]
+            # Label POSITIONS (d, cx, cy) depend only on the assignment and the
+            # placement mode, NOT on the displayed numbers. The precise path
+            # runs a per-district distance transform (~10-100ms); cache its
+            # output keyed by assignment so a geographic renumber -- which moves
+            # no district, only the text -- reuses positions instead of paying
+            # the transform again. Only the precise path is cached (the fast
+            # path is microseconds and its assignment changes every frame).
+            centers = None
+            if not self.fast_labels and self._label_centers_cache is not None:
+                c_assign, c_centers = self._label_centers_cache
+                if (len(c_assign) == len(assignment)
+                        and np.array_equal(c_assign, assignment)):
+                    centers = c_centers
+            if centers is None:
+                centers = []
+                if self.fast_labels:
+                    pc = self._precinct_centroids
+                    for d in range(n_districts):
+                        mask = assignment == d
+                        if not mask.any():
+                            continue
+                        cx, cy = pc[mask].mean(axis=0)
+                        centers.append((d, float(cx), float(cy)))
+                else:
+                    from scipy.ndimage import distance_transform_edt
+                    pm = self._pixel_map
+                    pm_valid = pm >= 0
+                    # Per-pixel district id (only meaningful where pm_valid)
+                    pm_safe = np.where(pm_valid, pm, 0)
+                    pixel_district = assignment[pm_safe]
 
-                for d in range(n_districts):
-                    d_mask = pm_valid & (pixel_district == d)
-                    if not d_mask.any():
-                        continue
-                    dist = distance_transform_edt(d_mask)
-                    cy, cx = np.unravel_index(int(dist.argmax()), dist.shape)
-                    label = str(dist_to_label.get(d, d + 1))
-                    district_centers.append((d, float(cx), float(cy), label))
+                    for d in range(n_districts):
+                        d_mask = pm_valid & (pixel_district == d)
+                        if not d_mask.any():
+                            continue
+                        dist = distance_transform_edt(d_mask)
+                        cy, cx = np.unravel_index(int(dist.argmax()), dist.shape)
+                        centers.append((d, float(cx), float(cy)))
+                    self._label_centers_cache = (assignment.copy(), centers)
 
-            # Sort by approximate area (larger districts first for priority)
+            # Sort by approximate area (larger districts first for priority).
+            # sorted() returns a new list so we never mutate the cached centers.
             areas = np.bincount(assignment, minlength=n_districts)
-            district_centers.sort(key=lambda x: -areas[x[0]])
+            centers = sorted(centers, key=lambda c: -areas[c[0]])
 
             # Greedy collision avoidance — scale glyph size with border_thickness
             # so labels stay legible at high-DPI exports.
@@ -580,7 +617,8 @@ class MapView:
             placed_boxes = []
             labels_to_draw = []
 
-            for d, cx, cy, label in district_centers:
+            for d, cx, cy in centers:
+                label = str(dist_to_label.get(d, d + 1))
                 half_w = len(label) * char_w / 2 + 2
                 half_h = font_h / 2 + 2
                 box = (cx - half_w, cy - half_h, cx + half_w, cy + half_h)

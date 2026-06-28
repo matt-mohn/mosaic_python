@@ -224,7 +224,10 @@
       <li>
         <strong>Vote totals</strong> &mdash; one pair (Democratic, Republican)
         per election. Required for partisan scores (mean-median, efficiency gap,
-        expected seats, etc.). Mosaic supports one election per run.
+        expected seats, etc.). Mosaic supports one election per run, and
+        auto-detects a recognized D/R column pair (e.g. <code>baseline_d</code> /
+        <code>baseline_r</code>), pre-filling it in the column-picker dialog; pick
+        your own pair there if the names differ.
       </li>
     </ul>
 
@@ -319,12 +322,19 @@
     <p>
       Your shapefile contains islands or exclaves &mdash; physically separate
       regions that don't touch the mainland. Common in coastal states (HI, AK,
-      Outer Banks, barrier islands). ReCom requires a connected graph, so for
-      now the only fix is to remove those features from the shapefile manually
-      and reload. The message reports the mainland (largest component) plus the
-      number of smaller groups and how many precincts they total, and lists the
-      row indices to remove (capped at the first 10, with a count of any
-      remaining).
+      Outer Banks, barrier islands). Mosaic normally handles these for you: when
+      it builds the adjacency graph it reconnects each detached component to the
+      mainland with a deterministic <em>virtual</em> bridge edge (nearest
+      precinct, same county preferred) that is invisible to scoring, so a
+      well-formed shapefile loads and runs with no manual cleanup.
+    </p>
+    <p>
+      This error now appears only when bridging can't find a valid link &mdash;
+      typically degenerate or empty geometry. The message reports the mainland
+      (largest component) plus the number of smaller groups and how many
+      precincts they total, and lists the row indices involved (capped at the
+      first 10, with a count of any remaining). Fix or remove those rows in your
+      GIS tool and reload.
     </p>
 
     <p class="mt-10">

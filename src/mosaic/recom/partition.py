@@ -167,15 +167,3 @@ def _try_partition(
 def get_district_nodes(assignment: np.ndarray, district: int) -> np.ndarray:
     """Get array of node IDs assigned to a district."""
     return np.where(assignment == district)[0]
-
-
-def get_district_populations(
-    populations: np.ndarray,
-    assignment: np.ndarray,
-    num_districts: int,
-) -> np.ndarray:
-    """Get population of each district."""
-    return np.array([
-        populations[assignment == d].sum()
-        for d in range(num_districts)
-    ])

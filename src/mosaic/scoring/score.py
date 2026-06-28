@@ -10,13 +10,34 @@ Adding a new metric:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
 
 from mosaic.scoring.precompute import PPData
 from mosaic.scoring.reock import ReockData
+
+# Scorer imports hoisted to module level. These were previously imported inside
+# score_plan() to dodge circular imports, but no scorer module imports score.py
+# (verified), so the lazy imports were pure per-call overhead in the hot loop
+# (~25 sys.modules lookups every iteration). None at module scope is safe.
+from mosaic.scoring.county_splits import score_county_splits
+from mosaic.scoring.holistic_compactness import holistic_compactness_from_scores
+from mosaic.scoring.holistic_proportionality import holistic_proportionality_from_shares
+from mosaic.scoring.holistic_competitiveness import holistic_competitiveness_from_shares
+from mosaic.scoring.holistic_splitting import score_holistic_splitting
+from mosaic.scoring.polsby_popper import score_polsby_popper
+from mosaic.scoring.reock import score_reock
+from mosaic.scoring.alignment import score_alignment
+from mosaic.scoring.population import score_pop_deviation
+from mosaic.scoring.precompute import build_county_district_matrix
+from mosaic.scoring.partisan import (
+    district_dem_shares, k_to_sigma, build_p_wins_matrix,
+    score_mean_median, score_efficiency_gap,
+    score_dem_seats,
+    score_majority_chance, score_hinge_chance,
+)
 
 
 @dataclass
@@ -31,6 +52,10 @@ class ScoreConfig:
     weight_holistic_compactness: float = 0.0
     weight_pop_deviation: float = 0.0
     pop_deviation_safe_harbor: float = 0.0   # fractional; 0 = no safe harbor
+    weight_alignment: float = 0.0       # least-change vs a reference plan
+    alignment_party_focus: str = "none"      # "none" | "rep" | "dem": whose voters
+    alignment_restrict_to_party: bool = False  # only score that party's won districts
+    alignment_win_threshold: float = 0.535     # two-party share to count as "won"
     # Partisan metrics (require election data; all off by default)
     weight_mean_median: float = 0.0
     mm_mode: str = "fair"               # "fair" | "favor_dem" | "favor_rep"
@@ -42,7 +67,6 @@ class ScoreConfig:
     partisan_quadratic_penalty: bool = False   # advanced toggle in Partisanship Settings popup
     weight_dem_seats: float = 0.0
     dem_seats_favor_dem: bool = True   # True = optimize toward more D seats, False = more R
-    weight_competitiveness: float = 0.0
     weight_holistic_proportionality: float = 0.0
     weight_holistic_competitiveness: float = 0.0
     weight_majority_chance_dem: float = 0.0
@@ -68,6 +92,9 @@ class PlanScore:
     pop_deviation: float = 0.0          # mean squared excess dev × 10,000
     pop_dev_max: float = 0.0            # max |deviation| as % (display only)
     pop_dev_mean: float = 0.0           # mean |deviation| as % (display only)
+    alignment: float = 0.0             # 100 * weighted mean (1 - cohesion) penalty
+    alignment_mean_ret: float = 0.0    # mean district cohesion as % (display only)
+    alignment_min_ret: float = 0.0     # worst-district cohesion as % (display only)
     county_excess_splits: int = 0
     county_unified_districts: int = 0
     # Partisan raw metric values (before target penalty; for display)
@@ -75,7 +102,6 @@ class PlanScore:
     efficiency_gap: float = 0.0        # actual EG (at swung shares when robust)
     dem_seats: float = 0.0             # expected number of Dem seats (raw, for display)
     dem_seats_penalty: float = 0.0     # directional linear [0, 100] penalty (lower = better)
-    competitiveness: float = 0.0       # mean non-competitiveness in [0, 1]
     holistic_proportionality: float = 0.0  # [0, 100] penalty (lower = more proportional)
     holistic_competitiveness: float = 0.0  # [0, 100] penalty (lower = more competitive)
     majority_chance_dem: float = 0.0   # P(Dems win >= ceil(n/2) districts)
@@ -94,41 +120,49 @@ def score_plan(
     tolerance: Optional[float] = None,
     pp_data: Optional[PPData] = None,
     reock_data: Optional[ReockData] = None,
+    alignment_data=None,
     county_data=None,
     n_districts: Optional[int] = None,
     dem_votes: Optional[np.ndarray] = None,
     gop_votes: Optional[np.ndarray] = None,
+    real_edge_mask: Optional[np.ndarray] = None,
+    force_pop_components: bool = False,
 ) -> PlanScore:
     """
     Compute the weighted plan score.
 
     cut_edge_indices is always required (already in the hot loop).
     All other kwargs are only used when the corresponding weight is > 0.
-    """
-    from mosaic.scoring.county_splits import score_county_splits
-    from mosaic.scoring.holistic_compactness import holistic_compactness_from_scores
-    from mosaic.scoring.holistic_proportionality import holistic_proportionality_from_shares
-    from mosaic.scoring.holistic_competitiveness import holistic_competitiveness_from_shares
-    from mosaic.scoring.holistic_splitting import score_holistic_splitting
-    from mosaic.scoring.polsby_popper import score_polsby_popper
-    from mosaic.scoring.reock import score_reock
-    from mosaic.scoring.population import score_pop_deviation
-    from mosaic.scoring.precompute import CountyData
-    from mosaic.scoring.partisan import (
-        district_dem_shares, k_to_sigma,
-        score_mean_median, score_efficiency_gap,
-        score_dem_seats, score_competitiveness,
-        score_majority_chance, score_hinge_chance,
-    )
 
-    cut_edges = len(cut_edge_indices)
+    real_edge_mask, when given, is a boolean array over ctx.edge_u/edge_v that
+    is False for virtual bridge edges; the cut-edge count then excludes them so
+    island bridges stay invisible to scoring. Without it, all cut edges count.
+    """
+    if real_edge_mask is not None and len(cut_edge_indices):
+        cut_edges = int(real_edge_mask[cut_edge_indices].sum())
+    else:
+        cut_edges = len(cut_edge_indices)
     total = config.weight_cut_edges * cut_edges
     cs_excess_score = cs_unified_score = pp_raw = reock_raw = hc_raw = hsplit_raw = pd_raw = 0.0
+    align_raw = 0.0
+    align_mean_ret = align_min_ret = 0.0
     cs_excess = cs_unified = 0
-    mm_raw = eg_raw = seats_raw = comp_raw = 0.0
+    mm_raw = eg_raw = seats_raw = 0.0
     seats_penalty = 0.0
     hprop_raw = hprop_pen = hcmp_raw = hcmp_pen = 0.0
     maj_d_raw = maj_r_raw = hinge_raw = 0.0
+
+    # The county-side scorers (excess/unified) and holistic_splitting all need
+    # the identical CxD population matrix. Build it once here and share it so
+    # the per-iteration cost is paid a single time when more than one is active.
+    _co_di_pop = None
+    _need_cxd = bool(config.weight_county_excess or config.weight_county_unified
+                     or config.weight_holistic_splitting)
+    if _need_cxd and assignment is not None and county_ids is not None \
+            and county_data is not None and n_districts is not None:
+        _co_di_pop = build_county_district_matrix(
+            assignment, county_ids, n_districts, county_data,
+        )
 
     if (config.weight_county_excess or config.weight_county_unified) \
             and assignment is not None \
@@ -137,7 +171,7 @@ def score_plan(
         cs_excess_score, cs_unified_score, cs_excess, cs_unified = score_county_splits(
             assignment, county_ids, populations, ideal_pop,
             tolerance or 0.05, n_districts,
-            county_data=county_data,
+            county_data=county_data, co_di_pop=_co_di_pop,
         )
         total += config.weight_county_excess * cs_excess_score
         total += config.weight_county_unified * cs_unified_score
@@ -147,7 +181,7 @@ def score_plan(
             and n_districts is not None:
         _hs_rc, _hs_rd, hsplit_raw = score_holistic_splitting(
             assignment, county_ids, populations, n_districts,
-            county_data=county_data,
+            county_data=county_data, co_di_pop=_co_di_pop,
         )
         total += config.weight_holistic_splitting * hsplit_raw
 
@@ -174,7 +208,11 @@ def score_plan(
         total += config.weight_holistic_compactness * hc_raw
 
     pd_max = pd_mean = 0.0
-    if config.weight_pop_deviation and assignment is not None \
+    # force_pop_components makes pd_max available to the Tolerance Ratchet even
+    # when the deviation score is unweighted; the penalty (weighted by 0) is
+    # then a no-op, so only the cheap bincount is paid.
+    if (config.weight_pop_deviation or force_pop_components) \
+            and assignment is not None \
             and populations is not None and ideal_pop is not None \
             and n_districts is not None:
         pd_raw, pd_max, pd_mean = score_pop_deviation(
@@ -183,6 +221,47 @@ def score_plan(
             return_components=True,
         )
         total += config.weight_pop_deviation * pd_raw
+
+    if config.weight_alignment and assignment is not None \
+            and alignment_data is not None and populations is not None \
+            and n_districts is not None:
+        # Ask 1 — whose voters: measure retention in a party's votes if focused
+        # and that party's per-precinct votes are present; else fall back to pop.
+        focus = config.alignment_party_focus
+        if focus == "rep" and gop_votes is not None:
+            align_weights = gop_votes
+        elif focus == "dem" and dem_votes is not None:
+            align_weights = dem_votes
+        else:
+            focus = "none"
+            align_weights = populations
+
+        # Ask 2 — which districts: restrict to reference districts the focus
+        # party "wins" (two-party share > threshold). Uses the reference's own
+        # per-district vote totals cached at load, so the set is frozen to the
+        # reference plan, not recomputed as the proposed map evolves.
+        align_mask = None
+        if config.alignment_restrict_to_party and focus in ("rep", "dem") \
+                and alignment_data.alt_dem_by_district is not None \
+                and alignment_data.alt_gop_by_district is not None:
+            dd = alignment_data.alt_dem_by_district
+            gg = alignment_data.alt_gop_by_district
+            tot = dd + gg
+            party_v = gg if focus == "rep" else dd
+            with np.errstate(invalid="ignore", divide="ignore"):
+                share = np.where(tot > 0, party_v / tot, 0.0)
+            align_mask = share > config.alignment_win_threshold
+
+        align_raw, align_mean_ret, align_min_ret = score_alignment(
+            assignment,
+            alignment_data.alt_assignment,
+            align_weights,
+            alignment_data.n_alt_districts,
+            n_districts,
+            district_mask=align_mask,
+            return_components=True,
+        )
+        total += config.weight_alignment * align_raw
 
     # Partisan metrics — only run when election data is available
     has_election = (dem_votes is not None and gop_votes is not None
@@ -195,6 +274,10 @@ def score_plan(
         _sigma_d = k_to_sigma(config.election_win_prob_at_55)
         _sigma_comb = float(np.sqrt(
             config.election_swing_sigma ** 2 + _sigma_d ** 2))
+        # majority_chance and hinge_chance (both always computed below) need the
+        # identical (M, n) Gauss-Hermite win-prob matrix. Build it once here.
+        _p_wins = build_p_wins_matrix(
+            _shares, _sigma_d, config.election_swing_sigma)
 
         mm_raw, mm_penalty = score_mean_median(
             assignment, dem_votes, gop_votes, n_districts,
@@ -231,16 +314,6 @@ def score_plan(
         if config.weight_dem_seats:
             total += config.weight_dem_seats * seats_penalty
 
-        comp_raw = score_competitiveness(
-            assignment, dem_votes, gop_votes, n_districts,
-            win_prob_at_55=config.election_win_prob_at_55,
-            swing_sigma=config.election_swing_sigma,
-            _shares=_shares,
-            _sigma_d=_sigma_d,
-        )
-        if config.weight_competitiveness:
-            total += config.weight_competitiveness * comp_raw * 100
-
         # Holistic scores piggyback on the shared partisan calibration so they
         # rank plans consistently with the rest of the partisan stack.
         hprop_raw, hprop_pen = holistic_proportionality_from_shares(
@@ -261,6 +334,7 @@ def score_plan(
             swing_sigma=config.election_swing_sigma,
             _shares=_shares,
             _sigma_d=_sigma_d,
+            _p_wins=_p_wins,
         )
         if config.weight_majority_chance_dem:
             total += config.weight_majority_chance_dem * maj_d_pen
@@ -277,6 +351,7 @@ def score_plan(
                 swing_sigma=config.election_swing_sigma,
                 _shares=_shares,
                 _sigma_d=_sigma_d,
+                _p_wins=_p_wins,
             )
             hinge_raw = p_hinge_d
             hinge_pen = (1.0 - p_hinge_d) ** 1.5 * 100.0
@@ -290,6 +365,7 @@ def score_plan(
                 swing_sigma=config.election_swing_sigma,
                 _shares=_shares,
                 _sigma_d=_sigma_d,
+                _p_wins=_p_wins,
             )
             hinge_raw = 1.0 - p_hinge_d   # P(R wins >= threshold)
             hinge_pen = (1.0 - hinge_raw) ** 1.5 * 100.0
@@ -310,11 +386,13 @@ def score_plan(
         pop_deviation=pd_raw,
         pop_dev_max=pd_max,
         pop_dev_mean=pd_mean,
+        alignment=align_raw,
+        alignment_mean_ret=align_mean_ret,
+        alignment_min_ret=align_min_ret,
         mean_median=mm_raw,
         efficiency_gap=eg_raw,
         dem_seats=seats_raw,
         dem_seats_penalty=seats_penalty,
-        competitiveness=comp_raw,
         holistic_proportionality=hprop_pen,
         holistic_competitiveness=hcmp_pen,
         majority_chance_dem=maj_d_raw,

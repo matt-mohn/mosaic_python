@@ -3,6 +3,7 @@
 import logging
 import threading
 import time
+import warnings
 import webbrowser
 from pathlib import Path
 from typing import Optional
@@ -10,6 +11,9 @@ from typing import Optional
 log = logging.getLogger("mosaic")
 
 _DOCS_URL = "https://matt-mohn.github.io/mosaic_python/"
+_UPDATE_CHECK_URL = (
+    "https://raw.githubusercontent.com/matt-mohn/mosaic_python/main/pyproject.toml"
+)
 _DOCS_SHAPEFILE_URL = "https://matt-mohn.github.io/mosaic_python/shapefiles.html"
 
 _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
@@ -157,20 +161,20 @@ _CONTRIB_BAR_METRICS = [
     ("Excess Splits",    "Co.Exc", (190, 170, 130, 220)),
     ("Single-County Districts", "1-Co Dist", (160, 200, 130, 220)),
     ("Population Deviation", "PopDev", (220, 200, 70,  220)),
-    ("Compactness",     "PP",    (90,  160, 220, 220)),
+    ("Alignment",       "Align", (150, 120, 210, 220)),
+    ("Polsby-Popper",   "PP",    (90,  160, 220, 220)),
     ("Reock",           "Reock", (60,  190, 200, 220)),
     ("Mean-Median",     "MM",     (240, 140, 60,  220)),
     ("Efficiency Gap",  "EG",     (225, 75,  75,  220)),
-    ("Competitiveness", "Cmptv",  (70,  200, 120, 220)),
     ("Dem Seats",       "Seats",  (180, 80,  220, 220)),
     ("D Majority",      "D Maj",  (70,  130, 210, 220)),
     ("R Majority",      "R Maj",  (210, 70,  70,  220)),
     ("Hinge",           "Hinge",  (140, 90,  200, 220)),
     # Holistic block — single-rating composites
-    ("Holistic Compactness",     "H-Comp",  (220, 160, 60,  220)),
+    ("Compactness",              "Comp",    (220, 160, 60,  220)),
     ("Holistic Splitting",       "H-Split", (200, 140, 50,  220)),
-    ("Holistic Proportionality", "H-Prop",  (170, 90,  50,  220)),
-    ("Holistic Competitiveness", "H-Cmptv", (50,  150, 90,  220)),
+    ("Proportionality",          "Prop",    (170, 90,  50,  220)),
+    ("Competitiveness",          "Cmptv",   (50,  150, 90,  220)),
 ]
 
 # ── Layout constants ──────────────────────────────────────────────────────────
@@ -219,6 +223,20 @@ _HINTS: dict[str, str] = {
         "Districts inside the safe-harbor band are unpenalized; the rest "
         "contribute proportional to how far out they are."
     ),
+    "alignment": (
+        "How close the plan stays to a loaded reference plan - a least-change "
+        "penalty. A reference district kept whole costs nothing; one split "
+        "apart costs more. Load a reference CSV first; 0 = identical to it."
+    ),
+    "alignment_focus": (
+        "Whose retention to measure: all residents, or a party's voters - so a "
+        "district scores on how many of its own partisans stayed together. "
+        "Needs election data."
+    ),
+    "alignment_restrict": (
+        "Score only the reference districts the focus party already wins, so "
+        "you keep your own seats. Needs a party focus and election data."
+    ),
     "compactness": (
         "Polsby-Popper: ratio of district area to a circle with the same perimeter. "
         "1.0 = perfectly round, lower means stretched or jagged. "
@@ -226,29 +244,26 @@ _HINTS: dict[str, str] = {
     ),
     "reock": (
         "Reock: ratio of district area to its bounding-circle area. "
-        "1.0 = perfect circle, lower means stretched in extent. "
-        "Complementary to Polsby-Popper — PP measures boundary smoothness, Reock measures overall roundness. "
-        "Optimizer uses (1 - Reock) as the penalty."
+        "1.0 = perfect circle, lower means stretched. Complements Polsby-Popper, "
+        "which measures boundary smoothness rather than overall roundness."
     ),
     "holistic_compactness": (
-        "Single 0-100 compactness rating blending mean Polsby-Popper and mean Reock 50/50, "
-        "each linearly normalised over a fixed band. Higher = more compact. "
-        "Useful when you want one compactness dial instead of tuning PP and Reock separately."
+        "One 0-100 compactness dial blending Polsby-Popper and Reock 50/50. "
+        "Higher = more compact. Use it instead of tuning the two separately."
     ),
     "holistic_splitting": (
-        "Single 0-100 splitting rating blending county-direction and district-direction splits 50/50. "
-        "Uses a sqrt-of-fractions kernel that rewards lopsided splits over even ones, "
-        "and population-weights so a split big city costs more than a split tiny county."
+        "One 0-100 splitting dial blending county and district splits 50/50. "
+        "Rewards lopsided splits over even ones, weighted by population so "
+        "splitting a big city costs more."
     ),
     "holistic_proportionality": (
-        "Single 0-100 rating of seat-share vs vote-share fairness. "
-        "Pulls the plan toward integer-proportional seats given statewide vote share; "
-        "antimajoritarian plans (majority-vote, minority-seat) get an instant 100 penalty."
+        "One 0-100 rating of seat share vs vote share. Pulls toward proportional "
+        "seats for the statewide vote; antimajoritarian plans get an instant 100."
     ),
     "holistic_competitiveness": (
-        "Single 0-100 competitiveness rating using a soft-Bernoulli kernel. "
-        "Rewards districts near 50/50 win probability more sharply than the linear "
-        "Competitiveness score. Saturates above 75% competitive-equivalent districts."
+        "One 0-100 rating that rewards districts near a 50/50 win probability. "
+        "The credit tapers off as seats get safer, and caps once about 75% of "
+        "districts are competitive."
     ),
     "mean_median": (
         "Gap between the mean and median Democratic vote share across districts. "
@@ -259,14 +274,9 @@ _HINTS: dict[str, str] = {
         "Captures classic gerrymander signatures (packing and cracking). "
         "0 = neutral; sign shows which party benefits."
     ),
-    "competitiveness": (
-        "Counts districts within a competitive vote-share band (close to 50/50). "
-        "Penalty grows when too few districts are competitive."
-    ),
     "dem_seats": (
-        "Expected number of Democratic-won districts under a partisan-swing model. "
-        "Penalty is directional: D-toggle pushes the plan toward more Dem seats, "
-        "R-toggle toward fewer. Linear [0, 100] — no target, just pull toward the favored party."
+        "Expected Democratic-won districts under the swing model. Directional: "
+        "the D toggle pulls toward more Dem seats, R toward fewer."
     ),
     "majority_chance": (
         "Probability that the selected party wins a majority of seats under "
@@ -277,6 +287,18 @@ _HINTS: dict[str, str] = {
         "(e.g. 2/3 supermajority). Targets minority-veto or override-proof seat counts."
     ),
 }
+
+
+def _fmt_dur(secs: float) -> str:
+    """Duration as M:SS, promoting to H:MM:SS only once it passes an hour (no
+    leading 0: hour mark on short runs). Lives in fixed-width table columns, so
+    a field growing a digit never reflows the rest of the readout."""
+    secs = max(0, int(secs))
+    h, rem = divmod(secs, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
 
 
 class MosaicApp:
@@ -317,6 +339,15 @@ class MosaicApp:
         # running (cheap centroid labels -> pole-of-inaccessibility labels).
         self._labels_were_fast: bool = False
 
+        # Renumber settings. Source of truth for the Advanced > Renumber controls.
+        # _renumber_enabled mirrors the "Renumber districts after run" check and
+        # the radio's None option; _renumber_rule is the last chosen sweep.
+        self._renumber_enabled: bool = True
+        self._renumber_rule: str = "nw_se"      # "nw_se" | "n_s"
+        # Cached precinct centroids (x, y) in gdf CRS, keyed by gdf identity, so
+        # repeated renumbers don't recompute geometry.centroid each time.
+        self._renumber_centroids = None         # (gdf_id, x_arr, y_arr) | None
+
         # Local history buffers — incremental delta copy, self-compacting
         self._buf_score     = _SeriesBuffer()
         self._buf_acc       = _SeriesBuffer()
@@ -327,7 +358,6 @@ class MosaicApp:
         self._buf_mm        = _SeriesBuffer()
         self._buf_eg        = _SeriesBuffer()
         self._buf_seats     = _SeriesBuffer()
-        self._buf_comp      = _SeriesBuffer()
         self._buf_pp        = _SeriesBuffer()
         self._buf_reock     = _SeriesBuffer()
         self._buf_hc        = _SeriesBuffer()
@@ -337,6 +367,8 @@ class MosaicApp:
         self._buf_popdev     = _SeriesBuffer()
         self._buf_popdev_max = _SeriesBuffer()
         self._buf_popdev_mean = _SeriesBuffer()
+        self._buf_align_mean = _SeriesBuffer()
+        self._buf_align_min  = _SeriesBuffer()
         self._buf_cuts      = _SeriesBuffer()
         self._buf_maj_dem   = _SeriesBuffer()
         self._buf_maj_rep   = _SeriesBuffer()
@@ -413,6 +445,7 @@ class MosaicApp:
         self._build_advanced_save_popup()
         self._build_opt_popup()
         self._build_partisan_popup()
+        self._build_alignment_settings_popup()
         self._build_help_popup()
         self._build_temperature_panel()
         self._build_score_contrib_panel()
@@ -423,9 +456,9 @@ class MosaicApp:
         self._build_mm_panel()
         self._build_eg_panel()
         self._build_dem_seats_panel()
-        self._build_comp_panel()
         self._build_pp_panel()
         self._build_reock_panel()
+        self._build_alignment_panel()
         self._build_hc_panel()
         self._build_hsplit_panel()
         self._build_hprop_panel()
@@ -504,10 +537,22 @@ class MosaicApp:
                             "score_row_popdev", dpg.get_value(self._svis_popdev),
                             self._popdev_enabled, self._on_popdev_score_toggle),
                     )
+                    self._svis_alignment = dpg.add_menu_item(
+                        label="Alignment", check=True, default_value=False,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_alignment", dpg.get_value(self._svis_alignment),
+                            self._alignment_enabled, self._on_alignment_toggle),
+                    )
                     dpg.add_separator()
                     # Compactness
-                    self._svis_pp = dpg.add_menu_item(
+                    self._svis_hc = dpg.add_menu_item(
                         label="Compactness", check=True, default_value=True,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_hc", dpg.get_value(self._svis_hc),
+                            self._hc_enabled, self._on_hc_toggle),
+                    )
+                    self._svis_pp = dpg.add_menu_item(
+                        label="Polsby-Popper", check=True, default_value=False,
                         callback=lambda: self._set_score_row_vis(
                             "score_row_pp", dpg.get_value(self._svis_pp),
                             self._pp_enabled, self._on_pp_toggle),
@@ -532,11 +577,17 @@ class MosaicApp:
                             "score_row_eg", dpg.get_value(self._svis_eg),
                             self._eg_enabled, self._on_eg_toggle),
                     )
-                    self._svis_comp = dpg.add_menu_item(
+                    self._svis_hprop = dpg.add_menu_item(
+                        label="Proportionality", check=True, default_value=False,
+                        callback=lambda: self._set_score_row_vis(
+                            "score_row_hprop", dpg.get_value(self._svis_hprop),
+                            self._hprop_enabled, self._on_hprop_toggle),
+                    )
+                    self._svis_hcmp = dpg.add_menu_item(
                         label="Competitiveness", check=True, default_value=True,
                         callback=lambda: self._set_score_row_vis(
-                            "score_row_comp", dpg.get_value(self._svis_comp),
-                            self._comp_enabled, self._on_comp_toggle),
+                            "score_row_hcmp", dpg.get_value(self._svis_hcmp),
+                            self._hcmp_enabled, self._on_hcmp_toggle),
                     )
                     self._svis_seats = dpg.add_menu_item(
                         label="Expected Dem Seats", check=True, default_value=False,
@@ -558,29 +609,11 @@ class MosaicApp:
                     )
                     dpg.add_separator()
                     # Holistic — single-rating composites
-                    self._svis_hc = dpg.add_menu_item(
-                        label="Holistic Compactness", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_hc", dpg.get_value(self._svis_hc),
-                            self._hc_enabled, self._on_hc_toggle),
-                    )
                     self._svis_hsplit = dpg.add_menu_item(
                         label="Holistic Splitting", check=True, default_value=False,
                         callback=lambda: self._set_score_row_vis(
                             "score_row_hsplit", dpg.get_value(self._svis_hsplit),
                             self._hsplit_enabled, self._on_hsplit_toggle),
-                    )
-                    self._svis_hprop = dpg.add_menu_item(
-                        label="Holistic Proportionality", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_hprop", dpg.get_value(self._svis_hprop),
-                            self._hprop_enabled, self._on_hprop_toggle),
-                    )
-                    self._svis_hcmp = dpg.add_menu_item(
-                        label="Holistic Competitiveness", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_hcmp", dpg.get_value(self._svis_hcmp),
-                            self._hcmp_enabled, self._on_hcmp_toggle),
                     )
 
                 with dpg.menu(label="Views"):
@@ -597,10 +630,18 @@ class MosaicApp:
                         label="Population Deviation", check=True, default_value=False,
                         callback=self._on_panel_popdev_toggle,
                     )
+                    self._panel_alignment_item = dpg.add_menu_item(
+                        label="Alignment", check=True, default_value=False,
+                        callback=self._on_panel_alignment_toggle,
+                    )
                     dpg.add_separator()
                     # Compactness
-                    self._panel_pp_item = dpg.add_menu_item(
+                    self._panel_hc_item = dpg.add_menu_item(
                         label="Compactness", check=True, default_value=False,
+                        callback=self._on_panel_hc_toggle,
+                    )
+                    self._panel_pp_item = dpg.add_menu_item(
+                        label="Polsby-Popper", check=True, default_value=False,
                         callback=self._on_panel_pp_toggle,
                     )
                     self._panel_reock_item = dpg.add_menu_item(
@@ -617,9 +658,13 @@ class MosaicApp:
                         label="Efficiency Gap", check=True, default_value=False,
                         callback=self._on_panel_eg_toggle,
                     )
-                    self._panel_comp_item = dpg.add_menu_item(
+                    self._panel_hprop_item = dpg.add_menu_item(
+                        label="Proportionality", check=True, default_value=False,
+                        callback=self._on_panel_hprop_toggle,
+                    )
+                    self._panel_hcmp_item = dpg.add_menu_item(
                         label="Competitiveness", check=True, default_value=False,
-                        callback=self._on_panel_comp_toggle,
+                        callback=self._on_panel_hcmp_toggle,
                     )
                     self._panel_seats_item = dpg.add_menu_item(
                         label="Expected Dem Seats", check=True, default_value=False,
@@ -635,21 +680,9 @@ class MosaicApp:
                     )
                     dpg.add_separator()
                     # Holistic — single-rating composites
-                    self._panel_hc_item = dpg.add_menu_item(
-                        label="Holistic Compactness", check=True, default_value=False,
-                        callback=self._on_panel_hc_toggle,
-                    )
                     self._panel_hsplit_item = dpg.add_menu_item(
                         label="Holistic Splitting", check=True, default_value=False,
                         callback=self._on_panel_hsplit_toggle,
-                    )
-                    self._panel_hprop_item = dpg.add_menu_item(
-                        label="Holistic Proportionality", check=True, default_value=False,
-                        callback=self._on_panel_hprop_toggle,
-                    )
-                    self._panel_hcmp_item = dpg.add_menu_item(
-                        label="Holistic Competitiveness", check=True, default_value=False,
-                        callback=self._on_panel_hcmp_toggle,
                     )
                     dpg.add_separator()
                     # Views-only (no corresponding score)
@@ -679,19 +712,22 @@ class MosaicApp:
                         label="Open Help...",
                         callback=lambda: dpg.configure_item("popup_help", show=True),
                     )
+                    dpg.add_menu_item(
+                        label="Check for updates...",
+                        callback=self._on_check_updates,
+                    )
 
-                with dpg.menu(label="Debug", tag="menu_debug") as self._debug_menu:
+                with dpg.menu(label="Advanced", tag="menu_debug") as self._debug_menu:
                     self._hot_start_load_item = dpg.add_menu_item(
                         label="Load Hot Start...",
                         callback=self._on_load_hot_start,
                     )
                     self._tooltip(
                         self._hot_start_load_item,
-                        "Load an existing plan to start from instead of a "
-                        "random seed. Expects a CSV with a precinct id column "
-                        "and a 1-indexed district column -- the same format "
-                        "Mosaic exports with Save Assignments. Its district "
-                        "count must match the Districts setting.",
+                        "Start from an existing plan instead of a random seed: "
+                        "a CSV with a precinct id and a 1-indexed district "
+                        "column, the format Save Assignments exports. District "
+                        "count must match Districts.",
                     )
                     self._hot_start_clear_item = dpg.add_menu_item(
                         label="Clear Hot Start",
@@ -702,6 +738,28 @@ class MosaicApp:
                         self._hot_start_clear_item,
                         "Discard the loaded hot start and go back to a random "
                         "seed on the next run.",
+                    )
+
+                    dpg.add_separator()
+                    self._renumber_after_run = dpg.add_menu_item(
+                        label="Renumber districts after run",
+                        check=True, default_value=True,
+                        callback=self._on_renumber_after_run_toggle,
+                    )
+                    self._tooltip(
+                        self._renumber_after_run,
+                        "When a run finishes, renumber districts by geography "
+                        "(numbers only -- colors stay put). Choose the sweep in "
+                        "Renumber options. On by default.",
+                    )
+                    self._renumber_options_item = dpg.add_menu_item(
+                        label="Renumber options...",
+                        callback=self._on_open_renumber_options,
+                    )
+                    self._tooltip(
+                        self._renumber_options_item,
+                        "Pick how districts are renumbered: None (off), "
+                        "NW to SE, or North to South.",
                     )
 
             with dpg.child_window(height=_TOP_H, border=False,
@@ -730,7 +788,7 @@ class MosaicApp:
                         )
                         dpg.configure_item(self._hot_start_info, show=False)
 
-                        dpg.add_spacer(height=8)
+                        dpg.add_spacer(height=6)
                         self.theme.text("Run Parameters", "heading")
                         dpg.add_separator()
                         _inp_w = (_LEFT_W - 24) // 2
@@ -745,10 +803,9 @@ class MosaicApp:
                                 self._tooltip(
                                     self._num_districts,
                                     "Number of districts to draw (default 5, "
-                                    "range 2 to 500). Must match the chamber "
-                                    "size you are mapping. A hot start is "
-                                    "rejected if its plan has a different "
-                                    "district count.",
+                                    "range 2 to 500). Match the chamber size "
+                                    "you're mapping; a hot start with a "
+                                    "different count is rejected.",
                                 )
                             with dpg.group():
                                 self.theme.text("Iterations", "subheading")
@@ -767,7 +824,7 @@ class MosaicApp:
                                     "thorough cooling.",
                                 )
 
-                        dpg.add_spacer(height=8)
+                        dpg.add_spacer(height=6)
                         self.theme.text("Controls", "heading")
                         dpg.add_separator()
                         _btn_w = (_LEFT_W - 30) // 2
@@ -802,26 +859,75 @@ class MosaicApp:
                                 width=_btn_w, enabled=False,
                             )
 
-                        dpg.add_spacer(height=8)
+                        dpg.add_spacer(height=6)
                         self.theme.text("Status", "heading")
                         dpg.add_separator()
                         self._status_txt = dpg.add_text("Status: Idle")
                         self._iter_txt   = dpg.add_text("Iteration: 0 / 0")
-                        self._timer_txt  = dpg.add_text(
-                            "Time: 0:00  |  0 iter/sec")
+                        # Timer readout as a fixed 3-column table. width=-1 fills
+                        # the panel and SizingStretchSame splits it into equal
+                        # columns by WIDTH, not content -- so a value gaining a
+                        # digit clips inside its own column instead of shoving the
+                        # neighbours (flicker-free, no mono font). Thin gray
+                        # dividers via borders_innerV (theme table_border_light).
+                        with dpg.theme() as _timer_theme:
+                            with dpg.theme_component(dpg.mvTable):
+                                dpg.add_theme_style(
+                                    dpg.mvStyleVar_CellPadding, 9, 3,
+                                    category=dpg.mvThemeCat_Core)
+                        with dpg.table(
+                            header_row=False, borders_innerH=False,
+                            borders_outerH=False, borders_innerV=True,
+                            borders_outerV=False, width=-1,
+                            policy=dpg.mvTable_SizingStretchSame,
+                        ) as _timer_table:
+                            dpg.add_table_column()
+                            dpg.add_table_column()
+                            dpg.add_table_column()
+                            with dpg.table_row():
+                                self._time_txt = dpg.add_text("Time: 0:00")
+                                self._ips_txt  = dpg.add_text("Iter/sec: 0.0")
+                                self._eta_txt  = dpg.add_text("Est. left: --")
+                        dpg.bind_item_theme(_timer_table, _timer_theme)
                         self._progress   = dpg.add_progress_bar(
                             default_value=0.0, width=_LEFT_W - 30,
                         )
                         dpg.add_spacer(height=4)
-                        self._score_txt = dpg.add_text("Score: --")
-                        self._best_txt  = dpg.add_text(
-                            "Best:  --   (iteration --)")
-                        self._temp_txt  = dpg.add_text("Temperature: --")
-                        self._acc_txt   = dpg.add_text("Entropy: --")
-                        self._succ_txt  = dpg.add_text("Accepted steps: --")
+                        # Two equal columns: score/best/temperature on the left,
+                        # entropy/accepted/flip on the right. width=-1 + StretchSame
+                        # fixes the divider at the halfway mark regardless of text.
+                        # The bound theme widens CellPadding so the thin gray inner
+                        # border (borders_innerV, theme table_border_light) has
+                        # breathing room before the right-hand column.
+                        with dpg.theme() as _stats_theme:
+                            with dpg.theme_component(dpg.mvTable):
+                                dpg.add_theme_style(
+                                    dpg.mvStyleVar_CellPadding, 12, 3,
+                                    category=dpg.mvThemeCat_Core)
+                        with dpg.table(
+                            header_row=False, borders_innerH=False,
+                            borders_outerH=False, borders_innerV=True,
+                            borders_outerV=False, width=-1,
+                            policy=dpg.mvTable_SizingStretchSame,
+                        ) as _stats_table:
+                            dpg.add_table_column()
+                            dpg.add_table_column()
+                            with dpg.table_row():
+                                self._score_txt = dpg.add_text("Score: --")
+                                self._acc_txt   = dpg.add_text("Entropy: --")
+                            with dpg.table_row():
+                                self._best_txt  = dpg.add_text(
+                                    "Best:  --   (iter. --)")
+                                self._succ_txt  = dpg.add_text(
+                                    "Accepted steps: --")
+                            with dpg.table_row():
+                                self._temp_txt  = dpg.add_text("Temperature: --")
+                                self._flip_txt  = dpg.add_text("Flip rate: 0.0%")
+                        dpg.bind_item_theme(_stats_table, _stats_theme)
 
                     # ── Right column (map + plots) ────────────────────────────
-                    with dpg.child_window(width=-1, border=False):
+                    with dpg.child_window(width=-1, border=False,
+                                          no_scrollbar=True):
 
                         self.theme.text("District Map", "heading")
                         with dpg.child_window(
@@ -882,8 +988,8 @@ class MosaicApp:
                             )
                             self._tooltip(
                                 self._compactness_view,
-                                "Shade each district by how compact its shape "
-                                "is.",
+                                "Shade each district by its compactness "
+                                "(Polsby-Popper + Reock blend).",
                             )
                             self._pop_dev_view = dpg.add_checkbox(
                                 label="Pop. Dev.",
@@ -1075,22 +1181,53 @@ class MosaicApp:
                                     format="%.1f", width=_SCORE_COL_W - 100,
                                 )
 
+                        with dpg.group(tag="score_row_alignment", show=False):
+                            with dpg.group(horizontal=True):
+                                self._alignment_enabled = dpg.add_checkbox(
+                                    default_value=False,
+                                    callback=self._on_alignment_toggle,
+                                )
+                                self._alignment_lbl = self.theme.text(
+                                    "Alignment", "secondary",
+                                )
+                                self._hint(self._alignment_lbl, "alignment")
+                                dpg.add_button(label="↗", width=24,
+                                    callback=lambda: self._show_panel(
+                                        "panel_alignment", self._panel_alignment_item))
+                                dpg.add_button(label="...", width=24,
+                                    callback=lambda: dpg.configure_item(
+                                        "popup_alignment_settings",
+                                        show=not dpg.is_item_shown("popup_alignment_settings")))
+                            with dpg.group(tag="alignment_controls", show=False):
+                                # Status line: red until a reference plan is loaded.
+                                # Load / Clear and all partisan options live in the
+                                # "..." settings popup.
+                                self._alignment_info = self.theme.text(
+                                    "No plan loaded", "error",
+                                )
+                                self._w_alignment = dpg.add_slider_int(
+                                    label="Weight",
+                                    default_value=25, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 100,
+                                )
+                            dpg.add_spacer(height=4)
+
                     # Col 2: shape + partisan bias
                     with dpg.child_window(width=_SCORE_COL_W, height=-1,
                                           border=False):
-                        with dpg.group(tag="score_row_pp", show=True):
+                        with dpg.group(tag="score_row_pp", show=False):
                             with dpg.group(horizontal=True):
                                 self._pp_enabled = dpg.add_checkbox(
-                                    default_value=True,
+                                    default_value=False,
                                     callback=self._on_pp_toggle,
                                 )
                                 self._pp_lbl = self.theme.text(
-                                    "Compactness (Polsby-Popper)", "accent_green",
+                                    "Polsby-Popper", "secondary",
                                 )
                                 self._hint(self._pp_lbl, "compactness")
                                 dpg.add_button(label="↗", width=24,
                                     callback=lambda: self._show_panel("panel_pp", self._panel_pp_item))
-                            with dpg.group(tag="pp_controls", show=True):
+                            with dpg.group(tag="pp_controls", show=False):
                                 self._w_polsby_popper = dpg.add_slider_int(
                                     label="Weight",
                                     default_value=25, min_value=0, max_value=100,
@@ -1118,22 +1255,22 @@ class MosaicApp:
                                 )
                             dpg.add_spacer(height=4)
 
-                        with dpg.group(tag="score_row_hc", show=False):
+                        with dpg.group(tag="score_row_hc", show=True):
                             with dpg.group(horizontal=True):
                                 self._hc_enabled = dpg.add_checkbox(
-                                    default_value=False,
+                                    default_value=True,
                                     callback=self._on_hc_toggle,
                                 )
                                 self._hc_lbl = self.theme.text(
-                                    "Holistic Compactness", "secondary",
+                                    "Compactness", "accent_green",
                                 )
                                 self._hint(self._hc_lbl, "holistic_compactness")
                                 dpg.add_button(label="↗", width=24,
                                     callback=lambda: self._show_panel("panel_hc", self._panel_hc_item))
-                            with dpg.group(tag="hc_controls", show=False):
+                            with dpg.group(tag="hc_controls", show=True):
                                 self._w_holistic_compactness = dpg.add_slider_int(
                                     label="Weight",
-                                    default_value=25, min_value=0, max_value=100,
+                                    default_value=50, min_value=0, max_value=100,
                                     width=_SCORE_COL_W - 100,
                                 )
                             dpg.add_spacer(height=4)
@@ -1203,7 +1340,7 @@ class MosaicApp:
                                     callback=self._on_hprop_toggle,
                                 )
                                 self._hprop_lbl = self.theme.text(
-                                    "Holistic Proportionality",
+                                    "Proportionality",
                                     "disabled_deep",
                                 )
                                 self._hint(self._hprop_lbl, "holistic_proportionality")
@@ -1220,35 +1357,14 @@ class MosaicApp:
 
                     # Col 3: outcome metrics
                     with dpg.child_window(width=-1, height=-1, border=False):
-                        with dpg.group(tag="score_row_comp", show=True):
-                            with dpg.group(horizontal=True):
-                                self._comp_enabled = dpg.add_checkbox(
-                                    default_value=False, enabled=False,
-                                    callback=self._on_comp_toggle,
-                                )
-                                self._comp_lbl = self.theme.text(
-                                    "Competitiveness",
-                                    "disabled_deep",
-                                )
-                                self._hint(self._comp_lbl, "competitiveness")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel("panel_comp", self._panel_comp_item))
-                            with dpg.group(tag="comp_controls", show=False):
-                                self._w_competitiveness = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=1, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
-                                )
-                            dpg.add_spacer(height=4)
-
-                        with dpg.group(tag="score_row_hcmp", show=False):
+                        with dpg.group(tag="score_row_hcmp", show=True):
                             with dpg.group(horizontal=True):
                                 self._hcmp_enabled = dpg.add_checkbox(
                                     default_value=False, enabled=False,
                                     callback=self._on_hcmp_toggle,
                                 )
                                 self._hcmp_lbl = self.theme.text(
-                                    "Holistic Competitiveness",
+                                    "Competitiveness",
                                     "disabled_deep",
                                 )
                                 self._hint(self._hcmp_lbl, "holistic_competitiveness")
@@ -1370,8 +1486,8 @@ class MosaicApp:
             label="Run Config -- Population",
             tag="popup_population", show=False,
             modal=True, no_close=True,
-            width=420, height=260,
-            pos=[(_VP_W - 420) // 2, (_VP_H - 260) // 2],
+            width=420, height=340,
+            pos=[(_VP_W - 420) // 2, (_VP_H - 340) // 2],
         ):
             self._tolerance = dpg.add_slider_float(
                 label="Population Tolerance",
@@ -1382,6 +1498,23 @@ class MosaicApp:
                 self._tolerance,
                 "Mosaic will only explore solutions where each district differs "
                 "from ideal by no more than this percentage in either direction.",
+            )
+            dpg.add_spacer(height=6)
+            with dpg.group(horizontal=True):
+                dpg.add_text("Tolerance Ratchet:")
+                self._tolerance_ratchet_mode = dpg.add_radio_button(
+                    ["Off", "Standard", "Strict"],
+                    default_value="Off", horizontal=True,
+                    callback=self._on_popdev_score_toggle,
+                )
+            self._tooltip(
+                self._tolerance_ratchet_mode,
+                "Gradually tightens Population Tolerance toward 0.25% over the "
+                "back of the run - never below the deviation the map already "
+                "hit, so it can't strand a plan.\n"
+                "  Off: fixed.\n"
+                "  Standard: tightens on each new best.\n"
+                "  Strict: tightens every eligible step.",
             )
             dpg.add_spacer(height=10)
             dpg.add_separator()
@@ -1420,12 +1553,10 @@ class MosaicApp:
             )
             self._tooltip(
                 self._seed,
-                "Set a non-zero seed to make a run reproducible. 0 leaves "
-                "the RNG random so each run differs.\n\n"
-                "Reproducibility is best-effort: identical results require the "
-                "same machine, same Mosaic version, and same shapefile. "
-                "Cross-machine or cross-version runs may diverge slightly due "
-                "to floating-point ordering in numpy/igraph.",
+                "Set a non-zero seed to make a run reproducible; 0 leaves the "
+                "RNG random. Best-effort: identical results need the same "
+                "machine, Mosaic version, and shapefile - float ordering in "
+                "numpy/igraph can differ across environments.",
             )
             dpg.add_spacer(height=8)
             dpg.add_button(
@@ -1574,8 +1705,8 @@ class MosaicApp:
             self._tooltip(
                 self._n3_pct,
                 "Fraction of steps that merge 3 districts (vs 2) and re-split. "
-                "Helps escape local minima at the cost of ~2.4x per-step time. "
-                "Set to 0 for mass-generation runs (no overhead).",
+                "Escapes local minima better, at ~2.4x per-step cost. "
+                "Set to 0 for mass-generation runs.",
             )
 
             dpg.add_spacer(height=6)
@@ -1586,11 +1717,9 @@ class MosaicApp:
             )
             self._tooltip(
                 self._flip_enabled,
-                "Adds single-precinct boundary flips alongside ReCom. "
-                "Probability ramps along a two-piece logistic pinned to 5% "
-                "at the start, 50% at the crossover, and 85% at the end -- "
-                "leaving >=15% ReCom throughout so the chain can still "
-                "escape local minima. Polishes borders late in the run.",
+                "Adds single-precinct boundary flips alongside ReCom to polish "
+                "borders late in the run. The flip rate ramps from 5% early to "
+                "85% at the end, always leaving at least 15% ReCom.",
             )
             self._flip_midpoint = dpg.add_slider_int(
                 label="50% crossover (% of run)",
@@ -1599,15 +1728,77 @@ class MosaicApp:
             )
             self._tooltip(
                 self._flip_midpoint,
-                "Progress point where the flip rate hits 50%. The rate ramps "
-                "from 5% at the start to 85% at the end, crossing 50% here. "
-                "Higher = flips stay rare until later in the run.",
+                "Where in the run the flip rate hits 50%. "
+                "Higher = flips stay rare until later.",
             )
 
             dpg.add_spacer(height=8)
             dpg.add_button(
                 label="Close",
                 callback=lambda: dpg.configure_item("popup_opt", show=False),
+                width=80,
+            )
+
+    def _build_alignment_settings_popup(self):
+        with dpg.window(
+            label="Alignment Settings",
+            tag="popup_alignment_settings", show=False,
+            modal=False, width=400, height=340,
+            pos=[(_VP_W - 400) // 2, (_VP_H - 340) // 2],
+        ):
+            self.theme.text(
+                "Load a reference plan, then choose whose voters to align "
+                "and which districts to score.", "muted",
+            )
+            dpg.add_separator()
+            dpg.add_spacer(height=6)
+
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="Load reference plan...",
+                    callback=self._on_load_alignment,
+                )
+                dpg.add_button(
+                    label="Clear",
+                    callback=self._on_clear_alignment,
+                )
+            dpg.add_spacer(height=8)
+
+            # Ask 1 — whose share retention is measured in (needs election data).
+            dpg.add_text("Focus:")
+            self._alignment_focus = dpg.add_radio_button(
+                items=["All residents", "Republican", "Democratic"],
+                default_value="All residents", horizontal=True,
+                callback=self._on_alignment_focus,
+            )
+            self._hint(self._alignment_focus, "alignment_focus")
+            dpg.add_spacer(height=6)
+
+            # Ask 2 — restrict scoring to the focus party's won districts.
+            # Meaningless without a party focus, so disabled when neutral.
+            self._alignment_restrict = dpg.add_checkbox(
+                label="Only districts that party wins",
+                default_value=False, enabled=False,
+            )
+            self._hint(self._alignment_restrict, "alignment_restrict")
+            dpg.add_spacer(height=6)
+
+            self._alignment_win_threshold = dpg.add_slider_float(
+                label="District win threshold (two-party share)",
+                default_value=0.535, min_value=0.50, max_value=0.70,
+                format="%.3f", width=220,
+            )
+            self._tooltip(
+                self._alignment_win_threshold,
+                "A reference district counts as 'won' (and is scored) when the "
+                "focus party's two-party share exceeds this. 0.535 ~ win by 7pts; "
+                "raise it to ignore near-coin-flip seats.",
+            )
+            dpg.add_spacer(height=10)
+            dpg.add_button(
+                label="Close",
+                callback=lambda: dpg.configure_item(
+                    "popup_alignment_settings", show=False),
                 width=80,
             )
 
@@ -1791,7 +1982,7 @@ class MosaicApp:
 
     def _build_partisanship_panel(self):
         # Create 12 themes for partisan color gradient (using map_view palette)
-        from mosaic.gui.map_view import _PARTISAN_BREAKS, _PARTISAN_RGBA
+        from mosaic.gui.map_view import _PARTISAN_RGBA
         self._partisan_bar_themes = []
         for rgba in _PARTISAN_RGBA:
             with dpg.theme() as t:
@@ -1925,30 +2116,9 @@ class MosaicApp:
                 "muted",
             )
 
-    def _build_comp_panel(self):
-        with dpg.window(
-            label="Competitiveness", tag="panel_comp",
-            show=False, width=500, height=280,
-            pos=[_LEFT_W + 80, 80],
-            on_close=lambda: dpg.set_value(self._panel_comp_item, False),
-        ):
-            with dpg.group(tag="comp_plot_grp"):
-                with dpg.plot(height=-1, width=-1):
-                    dpg.add_plot_legend()
-                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="comp_x")
-                    with dpg.plot_axis(dpg.mvYAxis, label="Competitive Districts", tag="comp_y"):
-                        dpg.add_line_series([], [], label="Competitive", tag="comp_series")
-            self.theme.track(
-                dpg.add_text(
-                    "Load election data to use this panel.",
-                    tag="comp_inactive_lbl", show=False,
-                ),
-                "muted",
-            )
-
     def _build_pp_panel(self):
         with dpg.window(
-            label="Compactness", tag="panel_pp",
+            label="Polsby-Popper", tag="panel_pp",
             show=False, width=500, height=280,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_pp_item, False),
@@ -2000,7 +2170,7 @@ class MosaicApp:
 
     def _build_hc_panel(self):
         with dpg.window(
-            label="Holistic Compactness", tag="panel_hc",
+            label="Compactness", tag="panel_hc",
             show=False, width=500, height=280,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_hc_item, False),
@@ -2009,8 +2179,8 @@ class MosaicApp:
                 with dpg.plot(height=-1, width=-1):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="hc_x")
-                    with dpg.plot_axis(dpg.mvYAxis, label="Holistic (100 = best)", tag="hc_y"):
-                        dpg.add_line_series([], [], label="Holistic", tag="hc_series")
+                    with dpg.plot_axis(dpg.mvYAxis, label="Compactness (100 = best)", tag="hc_y"):
+                        dpg.add_line_series([], [], label="Compactness", tag="hc_series")
             self._tooltip(
                 "hc_plot_grp",
                 "Combined PP + Reock rating; higher is more compact.",
@@ -2052,7 +2222,7 @@ class MosaicApp:
 
     def _build_hprop_panel(self):
         with dpg.window(
-            label="Holistic Proportionality", tag="panel_hprop",
+            label="Proportionality", tag="panel_hprop",
             show=False, width=500, height=280,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_hprop_item, False),
@@ -2061,8 +2231,8 @@ class MosaicApp:
                 with dpg.plot(height=-1, width=-1):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="hprop_x")
-                    with dpg.plot_axis(dpg.mvYAxis, label="Holistic Proportionality (100 = best)", tag="hprop_y"):
-                        dpg.add_line_series([], [], label="Holistic Prop", tag="hprop_series")
+                    with dpg.plot_axis(dpg.mvYAxis, label="Proportionality (100 = best)", tag="hprop_y"):
+                        dpg.add_line_series([], [], label="Proportionality", tag="hprop_series")
             self._tooltip(
                 "hprop_plot_grp",
                 "Bias-from-proportional rating; higher = closer to proportional.",
@@ -2078,7 +2248,7 @@ class MosaicApp:
 
     def _build_hcmp_panel(self):
         with dpg.window(
-            label="Holistic Competitiveness", tag="panel_hcmp",
+            label="Competitiveness", tag="panel_hcmp",
             show=False, width=500, height=280,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_hcmp_item, False),
@@ -2087,11 +2257,11 @@ class MosaicApp:
                 with dpg.plot(height=-1, width=-1):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="hcmp_x")
-                    with dpg.plot_axis(dpg.mvYAxis, label="Holistic Competitiveness (100 = best)", tag="hcmp_y"):
-                        dpg.add_line_series([], [], label="Holistic Cmptv", tag="hcmp_series")
+                    with dpg.plot_axis(dpg.mvYAxis, label="Competitiveness (100 = best)", tag="hcmp_y"):
+                        dpg.add_line_series([], [], label="Competitiveness", tag="hcmp_series")
             self._tooltip(
                 "hcmp_plot_grp",
-                "Soft-Bernoulli competitiveness rating; higher = more districts near toss-up.",
+                "Competitiveness rating; higher = more districts near a toss-up.",
             )
             self.theme.track(
                 dpg.add_text(
@@ -2132,6 +2302,40 @@ class MosaicApp:
                 ),
                 "muted",
             )
+
+    def _build_alignment_panel(self):
+        with dpg.window(
+            label="Alignment", tag="panel_alignment",
+            show=False, width=500, height=280,
+            pos=[_LEFT_W + 100, 100],
+            on_close=lambda: dpg.set_value(self._panel_alignment_item, False),
+        ):
+            with dpg.group(tag="alignment_plot_grp"):
+                with dpg.plot(height=-1, width=-1):
+                    dpg.add_plot_legend()
+                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration",
+                                      tag="alignment_x")
+                    with dpg.plot_axis(dpg.mvYAxis,
+                                       label="Cohesion % (100 = intact)",
+                                       tag="alignment_y"):
+                        dpg.add_line_series([], [], label="Mean",
+                                            tag="alignment_mean_series")
+                        dpg.add_line_series([], [], label="Worst district",
+                                            tag="alignment_min_series")
+            self._tooltip(
+                "alignment_plot_grp",
+                "Share of each reference district that stays intact. "
+                "Mean across districts and the single worst-hit district. "
+                "Higher is closer to the reference plan.",
+            )
+            self.theme.track(
+                dpg.add_text(
+                    "Load a reference plan and apply the score to use this panel.",
+                    tag="alignment_inactive_lbl", show=False,
+                ),
+                "muted",
+            )
+        dpg.set_axis_limits("alignment_y", 0.0, 100.0)
 
     def _build_cut_edges_panel(self):
         with dpg.window(
@@ -2196,7 +2400,7 @@ class MosaicApp:
         ("Dist",        50,  "dist"),
         ("Population",  95,  "pop"),
         ("Pop Dev",     80,  "pdev"),
-        ("Compactness", 100, "pp"),
+        ("Polsby-Popper", 110, "pp"),
         ("Dem %",       70,  "demp"),
         ("Rep %",       70,  "repp"),
         ("Margin",      75,  "margin"),
@@ -2275,6 +2479,7 @@ class MosaicApp:
             n_dist = self.state.num_districts
             current_iter = self.state.current_iteration
             status = self.state.status
+            label_map = self.state.district_label_map
 
         # Throttle: while running, only refresh every N iterations (per the
         # slider).  When idle/paused, always show fresh data.  An update is
@@ -2339,7 +2544,9 @@ class MosaicApp:
                 dem_pct = np.where(total_d > 0, dem_d / total_d * 100.0, np.nan)
                 rep_pct = np.where(total_d > 0, gop_d / total_d * 100.0, np.nan)
 
-        # Stable district -> displayed label (matches map labelling)
+        # Stable district -> displayed label (matches map labelling). A
+        # geographic renumber maps the stable color index through label_map.
+        use_lm = label_map is not None and len(label_map) == n_dist
         d_to_label = {}
         if initial is not None and len(initial) == len(assignment):
             from mosaic.gui.map_view import stable_color_mapping
@@ -2347,13 +2554,18 @@ class MosaicApp:
             for d in range(n_dist):
                 mask = assignment == d
                 if mask.any():
-                    d_to_label[d] = int(stable_colors[mask][0]) + 1
+                    si = int(stable_colors[mask][0])
+                    d_to_label[d] = int(label_map[si]) if use_lm else si + 1
         else:
             for d in range(n_dist):
-                d_to_label[d] = d + 1
+                d_to_label[d] = int(label_map[d]) if use_lm else d + 1
 
-        # Display order: row r shows the district whose stable label is r+1.
-        label_to_d = {lab - 1: d for d, lab in d_to_label.items()}
+        # Display order: rows sorted by displayed label ascending. Labels are
+        # 1..k for the default/geographic numbering but can be non-contiguous
+        # under "Infer from alignment" (reference numbers + fresh ids), so we
+        # order by the label value rather than assuming label == row + 1.
+        ordered_ds = [d for d, _ in sorted(d_to_label.items(),
+                                           key=lambda kv: kv[1])]
 
         # Rebuild rows only when district count changes
         if self._dist_table_built_rows != n_dist:
@@ -2365,7 +2577,7 @@ class MosaicApp:
             self._dist_table_built_rows = n_dist
 
         for r in range(n_dist):
-            d = label_to_d.get(r, r)
+            d = ordered_ds[r] if r < len(ordered_ds) else r
             lab = d_to_label.get(d, d + 1)
             dpg.set_value(f"di_r{r}_dist", str(lab))
             dpg.set_value(f"di_r{r}_pop", f"{int(pop_d[d]):,}")
@@ -2434,6 +2646,61 @@ class MosaicApp:
                         self._contrib_bar_series.append(s)
             dpg.set_axis_limits("contrib_y", 0.0, 100.0)
 
+    @staticmethod
+    def _version_tuple(v):
+        """Parse 'X.Y.Z' to a comparable tuple; () if unparseable."""
+        try:
+            return tuple(int(x) for x in v.split("."))
+        except (ValueError, AttributeError):
+            return ()
+
+    def _on_check_updates(self):
+        """Manual update check (Advanced menu). Compares the local version to the
+        public repo's pyproject version. Synchronous — it's user-initiated — with
+        a short timeout so it can't hang the UI for long."""
+        import urllib.request
+        import re as _re
+        latest = None
+        try:
+            with urllib.request.urlopen(_UPDATE_CHECK_URL, timeout=5) as resp:
+                text = resp.read().decode("utf-8")
+            m = _re.search(r'^version\s*=\s*["\']([^"\']+)["\']', text, _re.M)
+            latest = m.group(1) if m else None
+        except Exception:
+            latest = None
+        self._show_update_result(latest)
+
+    def _show_update_result(self, latest) -> None:
+        cur = __version__
+        if latest is None:
+            msg = ("Couldn't reach GitHub to check for updates. "
+                   "Check your connection and try again.")
+        elif self._version_tuple(latest) > self._version_tuple(cur):
+            msg = (f"A newer version is available: v{latest} (you have v{cur}).\n\n"
+                   "Update with:\n"
+                   "  pip install -U git+https://github.com/matt-mohn/mosaic_python")
+        else:
+            msg = f"You're up to date (v{cur})."
+        if dpg.does_item_exist("popup_update"):
+            dpg.delete_item("popup_update")
+        w, h = 520, 220
+        try:
+            vp_w = dpg.get_viewport_client_width()
+            vp_h = dpg.get_viewport_client_height()
+            pos = [max(20, (vp_w - w) // 2), max(20, (vp_h - h) // 2)]
+        except Exception:
+            pos = [200, 150]
+        with dpg.window(label="Check for updates", tag="popup_update",
+                        modal=False, show=True, width=w, height=h, pos=pos,
+                        no_collapse=True):
+            self.theme.text("Mosaic updates", "heading")
+            dpg.add_text(msg, wrap=480)
+            dpg.add_separator()
+            dpg.add_button(
+                label="OK",
+                callback=lambda: dpg.delete_item("popup_update"),
+            )
+
     def _build_help_popup(self):
         with dpg.window(
             label="Help", tag="popup_help",
@@ -2467,7 +2734,7 @@ class MosaicApp:
                     "3. Set district count and iterations\n"
                     "4. Enable and weight the scores in the left-hand panel\n"
                     "5. Optionally load an existing plan as a hot start via "
-                    "Debug > Load Hot Start\n"
+                    "Advanced > Load Hot Start\n"
                     "6. Start - pause / reset / revert to best as needed\n"
                     "7. Save Assignments writes a CSV",
                     wrap=420,
@@ -2528,6 +2795,15 @@ class MosaicApp:
             AlgorithmStatus.PAUSED,
         )
 
+        # ── Auto-renumber on run completion (Advanced checkbox) ──────────────────
+        # Fire once on the running -> COMPLETED transition.
+        if (status == AlgorithmStatus.COMPLETED
+                and getattr(self, "_last_seen_status", None)
+                    != AlgorithmStatus.COMPLETED
+                and self._renumber_enabled):
+            self._apply_renumber(self._renumber_rule)
+        self._last_seen_status = status
+
         # ── Inspection complete → show shapefile dialog ────────────────────────
         if snap["shp_inspect_ready"]:
             self.state.update(shp_inspect_ready=False)
@@ -2563,13 +2839,15 @@ class MosaicApp:
             gop_ref = (self.runner.election_arrays[0][1]
                        if self.runner.election_arrays else None)
             pp_data_ref  = self.runner.pp_data
+            reock_data_ref = self.runner.reock_data
             pop_ref      = self.runner.populations
             mv = self.map_view
             def _bg_load():
                 try:
                     mv.load(gdf_ref, county_array=county_array_ref,
                             dem_votes=dem_ref, gop_votes=gop_ref,
-                            pp_data=pp_data_ref, populations=pop_ref)
+                            pp_data=pp_data_ref, reock_data=reock_data_ref,
+                            populations=pop_ref)
                     self._map_ready = True
                 except Exception as exc:
                     import sys as _sys
@@ -2613,9 +2891,11 @@ class MosaicApp:
                     if self.state.initial_assignment is not None else None
                 )
                 _n_dist = self.state.num_districts
+                _label_map = self.state.district_label_map
             else:
                 _assignment = _initial = None
                 _n_dist = 0
+                _label_map = self.state.district_label_map
 
         # Label-mode tracking: cheap centroid while running, precise
         # pole-of-inaccessibility when idle.  On the transition running ->
@@ -2630,6 +2910,8 @@ class MosaicApp:
             map_needs = True
         self._labels_were_fast = labels_should_be_fast
 
+        if self.map_view is not None:
+            self.map_view.district_label_map = _label_map
         if (map_needs
                 and _assignment is not None
                 and self.map_view is not None):
@@ -2669,9 +2951,13 @@ class MosaicApp:
             else:
                 elapsed = et - st if et > 0 else time.time() - st
             ips = cur / elapsed if elapsed > 0 else 0
-            m, s = divmod(int(elapsed), 60)
-            dpg.set_value(self._timer_txt,
-                          f"Time: {m}:{s:02d}  |  {ips:.1f} iter/sec")
+            dpg.set_value(self._time_txt, f"Time: {_fmt_dur(elapsed)}")
+            dpg.set_value(self._ips_txt, f"Iter/sec: {ips:.1f}")
+            if is_running and ips > 0 and cur < max_it:
+                dpg.set_value(self._eta_txt,
+                              f"Est. left: {_fmt_dur((max_it - cur) / ips)}")
+            else:
+                dpg.set_value(self._eta_txt, "Est. left: --")
 
         # Score
         score   = snap["current_score"]
@@ -2681,7 +2967,7 @@ class MosaicApp:
             dpg.set_value(self._score_txt, f"Score: {score:.2f}")
         if best < float("inf"):
             dpg.set_value(self._best_txt,
-                          f"Best:  {best:.2f}   (iteration {best_it:,})")
+                          f"Best:  {best:.2f}   (iter. {best_it:,})")
 
         # Temperature & acceptance
         temp = snap["current_temperature"]
@@ -2702,6 +2988,8 @@ class MosaicApp:
 
         dpg.set_value(self._succ_txt,
                       f"Accepted steps: {snap['successful_steps']:,}")
+        dpg.set_value(self._flip_txt,
+                      f"Flip rate: {snap['current_flip_rate'] * 100.0:.1f}%")
 
         # ── Plots & side panels ──────────────────────────────────────────────
         self._update_plots_and_panels()
@@ -2770,7 +3058,6 @@ class MosaicApp:
             _md   = list(self.state.mm_history[self._buf_mm.read:])
             _ed   = list(self.state.eg_history[self._buf_eg.read:])
             _sed  = list(self.state.dem_seats_history[self._buf_seats.read:])
-            _cod  = list(self.state.competitive_count_history[self._buf_comp.read:])
             _pd   = list(self.state.pp_history[self._buf_pp.read:])
             _rd   = list(self.state.reock_history[self._buf_reock.read:])
             _hcd  = list(self.state.holistic_compactness_history[self._buf_hc.read:])
@@ -2780,6 +3067,8 @@ class MosaicApp:
             _pvd  = list(self.state.pop_deviation_history[self._buf_popdev.read:])
             _pvd_max  = list(self.state.pop_dev_max_history[self._buf_popdev_max.read:])
             _pvd_mean = list(self.state.pop_dev_mean_history[self._buf_popdev_mean.read:])
+            _almd = list(self.state.alignment_mean_ret_history[self._buf_align_mean.read:])
+            _alnd = list(self.state.alignment_min_ret_history[self._buf_align_min.read:])
             _cutd = list(self.state.cut_edges_history[self._buf_cuts.read:])
             _mjd  = list(self.state.majority_dem_history[self._buf_maj_dem.read:])
             _mjr  = list(self.state.majority_rep_history[self._buf_maj_rep.read:])
@@ -2794,7 +3083,6 @@ class MosaicApp:
         self._buf_mm.add(_md)
         self._buf_eg.add(_ed)
         self._buf_seats.add(_sed)
-        self._buf_comp.add(_cod)
         self._buf_pp.add([v * 100.0 for v in _pd])
         self._buf_reock.add([v * 100.0 for v in _rd])
         # Holistic charts: convert penalty (0=best) to rating (100=best) for display.
@@ -2805,6 +3093,8 @@ class MosaicApp:
         self._buf_popdev.add(_pvd)
         self._buf_popdev_max.add(_pvd_max)
         self._buf_popdev_mean.add(_pvd_mean)
+        self._buf_align_mean.add(_almd)
+        self._buf_align_min.add(_alnd)
         self._buf_cuts.add(_cutd)
         self._buf_maj_dem.add([v * 100.0 for v in _mjd])
         self._buf_maj_rep.add([v * 100.0 for v in _mjr])
@@ -2912,11 +3202,6 @@ class MosaicApp:
             dpg.configure_item("seats_inactive_lbl", show=not self._has_elections)
             if self._has_elections:
                 _render(self._buf_seats, "seats_series", "seats_x", "seats_y")
-        if dpg.is_item_shown("panel_comp"):
-            dpg.configure_item("comp_plot_grp",     show=self._has_elections)
-            dpg.configure_item("comp_inactive_lbl", show=not self._has_elections)
-            if self._has_elections:
-                _render(self._buf_comp, "comp_series", "comp_x", "comp_y")
         if dpg.is_item_shown("panel_majority"):
             dpg.configure_item("majority_plot_grp",     show=self._has_elections)
             dpg.configure_item("majority_inactive_lbl", show=not self._has_elections)
@@ -2962,7 +3247,10 @@ class MosaicApp:
             if self._has_elections:
                 _render(self._buf_hcmp, "hcmp_series", "hcmp_x", "hcmp_y")
         if dpg.is_item_shown("panel_popdev"):
-            popdev_on = dpg.get_value(self._popdev_enabled)
+            # The ratchet records deviation each iteration (force_pop_components),
+            # so the chart has real data even when the score weight is 0.
+            popdev_on = (dpg.get_value(self._popdev_enabled)
+                         or dpg.get_value(self._tolerance_ratchet_mode) != "Off")
             dpg.configure_item("popdev_plot_grp",     show=popdev_on)
             dpg.configure_item("popdev_inactive_lbl", show=not popdev_on)
             if popdev_on:
@@ -2972,6 +3260,18 @@ class MosaicApp:
                 dpg.fit_axis_data("popdev_x")
                 y_max = max(self._buf_popdev_max.ys) if self._buf_popdev_max.ys else 1.0
                 dpg.set_axis_limits("popdev_y", 0.0, max(y_max * 1.15, 2.0))
+        if dpg.is_item_shown("panel_alignment"):
+            align_on = (dpg.get_value(self._alignment_enabled)
+                        and self.runner is not None
+                        and self.runner.alignment_data is not None)
+            dpg.configure_item("alignment_plot_grp",     show=align_on)
+            dpg.configure_item("alignment_inactive_lbl", show=not align_on)
+            if align_on:
+                _render(self._buf_align_mean, "alignment_mean_series",
+                        "alignment_x", "alignment_y")
+                _render(self._buf_align_min, "alignment_min_series",
+                        "alignment_x", "alignment_y")
+                dpg.set_axis_limits("alignment_y", 0.0, 100.0)
         if dpg.is_item_shown("panel_cut_edges"):
             _render(self._buf_cuts, "cuts_series", "cuts_x", "cuts_y")
 
@@ -3000,7 +3300,7 @@ class MosaicApp:
 
         # Partisanship panel — live bar chart from current assignment
         if dpg.is_item_shown("panel_partisanship"):
-            from mosaic.gui.map_view import _PARTISAN_BREAKS, _PARTISAN_RGBA
+            from mosaic.gui.map_view import _PARTISAN_BREAKS
             with self.state._lock:
                 _pa = (self.state.current_assignment.copy()
                        if self.state.current_assignment is not None else None)
@@ -3076,10 +3376,11 @@ class MosaicApp:
             self._buf_score, self._buf_acc, self._buf_temp,
             self._buf_cs_score, self._buf_cs_excess, self._buf_cs_clean,
             self._buf_mm, self._buf_eg, self._buf_seats,
-            self._buf_comp, self._buf_pp, self._buf_reock, self._buf_hc,
+            self._buf_pp, self._buf_reock, self._buf_hc,
             self._buf_hsplit, self._buf_hprop, self._buf_hcmp,
             self._buf_popdev,
             self._buf_popdev_max, self._buf_popdev_mean, self._buf_cuts,
+            self._buf_align_mean, self._buf_align_min,
             self._buf_maj_dem, self._buf_maj_rep, self._buf_hinge,
         ):
             buf.clear()
@@ -3088,8 +3389,9 @@ class MosaicApp:
             "score_series", "acc_series", "panel_temp_series",
             "cs_score_series", "cs_excess_series", "cs_clean_series",
             "mm_series", "eg_series", "seats_series",
-            "comp_series", "pp_series", "reock_series",
+            "pp_series", "reock_series",
             "popdev_max_series", "popdev_mean_series", "cuts_series",
+            "alignment_mean_series", "alignment_min_series",
             "maj_dem_series", "maj_rep_series", "hinge_series",
         ):
             dpg.set_value(tag, empty)
@@ -3100,8 +3402,9 @@ class MosaicApp:
             "cs_excess_x", "cs_excess_y",
             "cs_clean_x", "cs_clean_y",
             "mm_x", "mm_y", "eg_x", "eg_y",
-            "seats_x", "seats_y", "comp_x", "comp_y",
+            "seats_x", "seats_y",
             "pp_x", "pp_y", "popdev_x", "popdev_y", "cuts_x", "cuts_y",
+            "alignment_x", "alignment_y",
             "maj_x", "maj_y", "hinge_x", "hinge_y",
         ):
             dpg.set_axis_limits_auto(ax)
@@ -3113,6 +3416,7 @@ class MosaicApp:
         dpg.set_axis_limits("maj_y",    0.0, 100.0)
         dpg.set_axis_limits("hinge_y",  0.0, 1.0)
         dpg.set_axis_limits("popdev_y", 0.0, 5.0)
+        dpg.set_axis_limits("alignment_y", 0.0, 100.0)
         for s in self._partisan_bar_series:
             dpg.set_value(s, empty)
         for s in self._win_chance_bar_series:
@@ -3172,12 +3476,14 @@ class MosaicApp:
                 if self.map_view:
                     self.map_view.district_partisan_overlay = False
 
-        # Compactness and Pop. Deviation map views
-        has_pp   = self.runner is not None and self.runner.pp_data is not None
+        # Compactness and Pop. Deviation map views. PP alone is enough to shade;
+        # the overlay blends in Reock when reock_data is present and falls back
+        # to PP-only when it isn't (don't gate the overlay on Reock).
+        has_compact = self.runner is not None and self.runner.pp_data is not None
         has_pops = self.runner is not None and self.runner.populations is not None
-        dpg.configure_item(self._compactness_view, enabled=has_pp)
+        dpg.configure_item(self._compactness_view, enabled=has_compact)
         dpg.configure_item(self._pop_dev_view,     enabled=has_pops)
-        if not has_pp and dpg.get_value(self._compactness_view):
+        if not has_compact and dpg.get_value(self._compactness_view):
             dpg.set_value(self._compactness_view, False)
             if self.map_view:
                 self.map_view.compactness_view = False
@@ -3192,7 +3498,6 @@ class MosaicApp:
             (self._mm_enabled,       self._mm_lbl),
             (self._eg_enabled,       self._eg_lbl),
             (self._hprop_enabled,    self._hprop_lbl),
-            (self._comp_enabled,     self._comp_lbl),
             (self._hcmp_enabled,     self._hcmp_lbl),
             (self._seats_enabled,    self._seats_lbl),
             (self._majority_enabled, self._majority_lbl),
@@ -3205,7 +3510,6 @@ class MosaicApp:
                 (self._mm_enabled,       "mm_controls"),
                 (self._eg_enabled,       "eg_controls"),
                 (self._hprop_enabled,    "hprop_controls"),
-                (self._comp_enabled,     "comp_controls"),
                 (self._hcmp_enabled,     "hcmp_controls"),
                 (self._seats_enabled,    "seats_controls"),
                 (self._majority_enabled, "majority_controls"),
@@ -3221,7 +3525,6 @@ class MosaicApp:
             (self._panel_eg_item,         "panel_eg"),
             (self._panel_hprop_item,      "panel_hprop"),
             (self._panel_seats_item,      "panel_dem_seats"),
-            (self._panel_comp_item,       "panel_comp"),
             (self._panel_hcmp_item,       "panel_hcmp"),
             (self._panel_majority_item,   "panel_majority"),
             (self._panel_hinge_item,      "panel_hinge"),
@@ -3275,6 +3578,20 @@ class MosaicApp:
                            "accent_green" if en else "secondary")
         dpg.configure_item("reock_controls", show=en)
 
+    def _on_alignment_toggle(self):
+        en = dpg.get_value(self._alignment_enabled)
+        self.theme.retoken(self._alignment_lbl,
+                           "accent_green" if en else "secondary")
+        dpg.configure_item("alignment_controls", show=en)
+
+    def _on_alignment_focus(self):
+        # "Only districts that party wins" is meaningless without a party;
+        # gray it out and force it off when focus is neutral.
+        neutral = dpg.get_value(self._alignment_focus) == "All residents"
+        if neutral:
+            dpg.set_value(self._alignment_restrict, False)
+        dpg.configure_item(self._alignment_restrict, enabled=not neutral)
+
     def _on_hc_toggle(self):
         en = dpg.get_value(self._hc_enabled)
         self.theme.retoken(self._hc_lbl,
@@ -3301,8 +3618,11 @@ class MosaicApp:
 
     def _on_popdev_score_toggle(self):
         en = dpg.get_value(self._popdev_enabled)
+        # Green when weighted OR when the Tolerance Ratchet is on -- the ratchet
+        # drives population deviation even if this score's own weight is 0.
+        ratchet_on = dpg.get_value(self._tolerance_ratchet_mode) != "Off"
         self.theme.retoken(self._popdev_lbl,
-                           "accent_green" if en else "secondary")
+                           "accent_green" if (en or ratchet_on) else "secondary")
         dpg.configure_item("popdev_controls", show=en)
 
     def _on_mm_toggle(self):
@@ -3316,12 +3636,6 @@ class MosaicApp:
         self.theme.retoken(self._eg_lbl,
                            "accent_green" if en else "disabled")
         dpg.configure_item("eg_controls", show=en)
-
-    def _on_comp_toggle(self):
-        en = dpg.get_value(self._comp_enabled)
-        self.theme.retoken(self._comp_lbl,
-                           "accent_green" if en else "disabled")
-        dpg.configure_item("comp_controls", show=en)
 
     def _on_seats_toggle(self):
         en = dpg.get_value(self._seats_enabled)
@@ -3416,9 +3730,6 @@ class MosaicApp:
     def _on_panel_seats_toggle(self):
         dpg.configure_item("panel_dem_seats", show=dpg.get_value(self._panel_seats_item))
 
-    def _on_panel_comp_toggle(self):
-        dpg.configure_item("panel_comp", show=dpg.get_value(self._panel_comp_item))
-
     def _on_panel_pp_toggle(self):
         dpg.configure_item("panel_pp", show=dpg.get_value(self._panel_pp_item))
 
@@ -3439,6 +3750,9 @@ class MosaicApp:
 
     def _on_panel_popdev_toggle(self):
         dpg.configure_item("panel_popdev", show=dpg.get_value(self._panel_popdev_item))
+
+    def _on_panel_alignment_toggle(self):
+        dpg.configure_item("panel_alignment", show=dpg.get_value(self._panel_alignment_item))
 
     def _on_panel_cuts_toggle(self):
         dpg.configure_item("panel_cut_edges", show=dpg.get_value(self._panel_cuts_item))
@@ -3686,7 +4000,7 @@ class MosaicApp:
             dpg.add_file_extension(".shp", color=(120, 220, 120, 255))
             dpg.add_file_extension(".*")
 
-    # ── Hot start (Debug menu) ────────────────────────────────────────────────
+    # ── Hot start (Advanced menu) ────────────────────────────────────────────────
 
     def _on_load_hot_start(self):
         log.info("Hot start: menu clicked")
@@ -3882,6 +4196,195 @@ class MosaicApp:
         )
         self._update_hot_start_display(None)
 
+    # ── Alignment reference plan ─────────────────────────────────────────
+    # Mirrors the hot-start CSV flow, but loads a *reference* plan for the
+    # Alignment score. Deliberately permissive: a reference plan may have a
+    # different district count and need not be contiguous/pop-balanced.
+    def _on_load_alignment(self):
+        if self.runner is None or self.runner.gdf is None:
+            self._show_alignment_error(
+                "Load a shapefile before loading a reference plan.")
+            return
+        import sys
+        if sys.platform == "darwin":
+            self._pick_alignment_dpg()
+        else:
+            self._pick_alignment_tk()
+
+    def _pick_alignment_tk(self):
+        import tkinter as tk
+        from tkinter import filedialog
+        from mosaic.paths import mosaic_data_dir
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            path = filedialog.askopenfilename(
+                title="Select Reference Plan CSV",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+                initialdir=str(mosaic_data_dir()),
+            )
+            root.destroy()
+        except Exception:
+            log.exception("Alignment: tk file dialog failed")
+            self._show_alignment_error(
+                "File dialog could not be opened. See log for details.")
+            return
+        if not path:
+            return
+        self._show_alignment_column_picker(path)
+
+    def _pick_alignment_dpg(self):
+        if dpg.does_item_exist("__alignment_file_dialog"):
+            dpg.delete_item("__alignment_file_dialog")
+        from mosaic.paths import mosaic_data_dir
+        with dpg.file_dialog(
+            directory_selector=False, show=True, modal=True,
+            callback=lambda s, d: self._show_alignment_column_picker(
+                d.get("file_path_name", "") if isinstance(d, dict) else ""),
+            cancel_callback=lambda *_: None,
+            default_path=str(mosaic_data_dir()),
+            width=700, height=450, tag="__alignment_file_dialog",
+            label="Select Reference Plan CSV",
+        ):
+            dpg.add_file_extension(".csv", color=(120, 220, 120, 255))
+            dpg.add_file_extension(".*")
+
+    def _show_alignment_column_picker(self, path: str) -> None:
+        if not path:
+            return
+        from mosaic.io.hot_start import read_csv_columns, HotStartError
+        try:
+            columns = read_csv_columns(path)
+        except (HotStartError, Exception) as e:
+            self._show_alignment_error(f"Could not read CSV header: {e}")
+            return
+        if not columns:
+            self._show_alignment_error("CSV appears to be empty.")
+            return
+
+        gdf_id_col = self.runner.id_col_name if self.runner else ""
+        default_id = gdf_id_col if gdf_id_col in columns else columns[0]
+        default_district = next(
+            (c for c in columns if c.lower() == "district"),
+            columns[-1] if len(columns) > 1 else columns[0],
+        )
+        if dpg.does_item_exist("popup_alignment_picker"):
+            dpg.delete_item("popup_alignment_picker")
+        try:
+            vp_w = dpg.get_viewport_client_width()
+            vp_h = dpg.get_viewport_client_height()
+            popup_pos = [max(20, (vp_w - 520) // 2), max(20, (vp_h - 240) // 2)]
+        except Exception:
+            popup_pos = [200, 150]
+
+        with dpg.window(
+            label="Reference Plan: Map CSV columns",
+            tag="popup_alignment_picker", modal=True, show=True,
+            width=520, height=240, pos=popup_pos,
+        ):
+            self.theme.text("CSV column mapping", "heading")
+            dpg.add_text(f"File: {Path(path).name}")
+            dpg.add_text(
+                f"Shapefile ID column: {gdf_id_col} "
+                f"(CSV values will be matched against these)", wrap=480,
+            )
+            dpg.add_separator()
+            id_combo = dpg.add_combo(
+                items=columns, default_value=default_id,
+                label="Precinct ID column (in CSV)", width=240,
+            )
+            district_combo = dpg.add_combo(
+                items=columns, default_value=default_district,
+                label="District column (in CSV)", width=240,
+            )
+            dpg.add_spacer(height=8)
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="Load", width=100,
+                    callback=lambda: self._apply_alignment(
+                        path, dpg.get_value(id_combo),
+                        dpg.get_value(district_combo)),
+                )
+                dpg.add_button(
+                    label="Cancel", width=100,
+                    callback=lambda: dpg.delete_item("popup_alignment_picker"),
+                )
+
+    def _apply_alignment(self, path, csv_id_col, csv_district_col) -> None:
+        if not path:
+            return
+        if dpg.does_item_exist("popup_alignment_picker"):
+            dpg.delete_item("popup_alignment_picker")
+        from mosaic.scoring.alignment import (
+            precompute_alignment_data, AlignmentError,
+        )
+        # Pass election votes (if loaded) so the reference's per-district
+        # partisan shares are cached for the "only districts that party wins"
+        # restriction. Votes are in gdf row order, matching the reference.
+        _dem = _gop = None
+        if self.runner.election_arrays:
+            _dem, _gop = self.runner.election_arrays[0]
+        try:
+            data = precompute_alignment_data(
+                path, gdf=self.runner.gdf,
+                gdf_id_col=self.runner.id_col_name,
+                csv_id_col=csv_id_col, csv_district_col=csv_district_col,
+                dem_votes=_dem, gop_votes=_gop,
+            )
+        except AlignmentError as e:
+            self._show_alignment_error(str(e))
+            return
+        except Exception as e:
+            log.exception("Unexpected alignment load error")
+            self._show_alignment_error(f"Unexpected error: {e}")
+            return
+
+        self.runner.alignment_data = data
+        n_run = dpg.get_value(self._num_districts)
+        note = f", run {n_run}" if data.n_alt_districts != n_run else ""
+        dpg.set_value(
+            self._alignment_info,
+            f"{data.filename} ({data.n_alt_districts} dist{note})",
+        )
+        self.theme.retoken(self._alignment_info, "accent_green")
+        log.info(
+            f"Alignment reference set: {data.filename}, "
+            f"{data.n_alt_districts} districts"
+        )
+        if not dpg.get_value(self._alignment_enabled):
+            dpg.set_value(self._alignment_enabled, True)
+            self._on_alignment_toggle()
+
+    def _on_clear_alignment(self):
+        if self.runner is not None:
+            self.runner.alignment_data = None
+        dpg.set_value(self._alignment_info, "No plan loaded")
+        self.theme.retoken(self._alignment_info, "error")
+
+    def _show_alignment_error(self, message: str) -> None:
+        if dpg.does_item_exist("popup_alignment_error"):
+            dpg.delete_item("popup_alignment_error")
+        w, h = 620, 320
+        try:
+            vp_w = dpg.get_viewport_client_width()
+            vp_h = dpg.get_viewport_client_height()
+            popup_pos = [max(20, (vp_w - w) // 2), max(20, (vp_h - h) // 2)]
+        except Exception:
+            popup_pos = [200, 150]
+        with dpg.window(
+            label="Alignment Error", tag="popup_alignment_error",
+            modal=False, show=True, width=w, height=h, pos=popup_pos,
+            no_collapse=True,
+        ):
+            self.theme.text("Reference plan could not be loaded:", "heading")
+            dpg.add_text(message, wrap=580)
+            dpg.add_separator()
+            dpg.add_button(
+                label="OK",
+                callback=lambda: dpg.delete_item("popup_alignment_error"),
+            )
+
     def _update_hot_start_display(self, info) -> None:
         if info is None:
             dpg.configure_item(self._hot_start_info, show=False)
@@ -3950,6 +4453,7 @@ class MosaicApp:
             current_assignment=None,
             best_assignment=None,
             initial_assignment=None,
+            district_label_map=None,
             hot_start_assignment=None,
             hot_start_filename="",
         )
@@ -3976,7 +4480,6 @@ class MosaicApp:
             self.state.mm_history = []
             self.state.eg_history = []
             self.state.dem_seats_history = []
-            self.state.competitive_count_history = []
             self.state.pp_history = []
             self.state.reock_history = []
             self.state.holistic_compactness_history = []
@@ -4025,7 +4528,6 @@ class MosaicApp:
             self.state.mm_history               = self.state.mm_history[:n_score]
             self.state.eg_history               = self.state.eg_history[:n_score]
             self.state.dem_seats_history        = self.state.dem_seats_history[:n_score]
-            self.state.competitive_count_history = self.state.competitive_count_history[:n_score]
             self.state.pp_history               = self.state.pp_history[:n_score]
             self.state.reock_history            = self.state.reock_history[:n_score]
             self.state.holistic_compactness_history = self.state.holistic_compactness_history[:n_score]
@@ -4062,10 +4564,11 @@ class MosaicApp:
         for buf in (
             self._buf_score, self._buf_cs_score, self._buf_cs_excess,
             self._buf_cs_clean, self._buf_mm, self._buf_eg,
-            self._buf_seats, self._buf_comp, self._buf_pp, self._buf_reock,
+            self._buf_seats, self._buf_pp, self._buf_reock,
             self._buf_hc, self._buf_hsplit, self._buf_hprop, self._buf_hcmp,
             self._buf_popdev,
             self._buf_popdev_max, self._buf_popdev_mean, self._buf_cuts,
+            self._buf_align_mean, self._buf_align_min,
             self._buf_maj_dem, self._buf_maj_rep,
         ):
             buf.trim_to(best_iter, n_score)
@@ -4107,7 +4610,6 @@ class MosaicApp:
         cs_on      = dpg.get_value(self._cs_enabled)
         mm_on      = dpg.get_value(self._mm_enabled)
         eg_on      = dpg.get_value(self._eg_enabled)
-        comp_on    = dpg.get_value(self._comp_enabled)
         seats_on   = dpg.get_value(self._seats_enabled)
         maj_on     = dpg.get_value(self._majority_enabled)
         robust_eg = dpg.get_value(self._eg_mode) == "Robust (recommended)"
@@ -4130,6 +4632,14 @@ class MosaicApp:
                    if dpg.get_value(self._hcmp_enabled) else 0.0)
         w_pd   = (dpg.get_value(self._w_pop_deviation)
                   if dpg.get_value(self._popdev_enabled) else 0.0)
+        # Alignment only counts when enabled AND a reference plan is loaded.
+        _align_on = (dpg.get_value(self._alignment_enabled)
+                     and self.runner is not None
+                     and self.runner.alignment_data is not None)
+        w_align = dpg.get_value(self._w_alignment) if _align_on else 0.0
+        _align_focus = {
+            "All residents": "none", "Republican": "rep", "Democratic": "dem",
+        }[dpg.get_value(self._alignment_focus)]
         # Safe harbor cannot exceed population tolerance
         _tol    = dpg.get_value(self._tolerance) / 100.0
         _harbor = min(dpg.get_value(self._pop_dev_harbor) / 100.0, _tol)
@@ -4146,6 +4656,10 @@ class MosaicApp:
             weight_holistic_compactness=w_hc,
             weight_pop_deviation=w_pd,
             pop_deviation_safe_harbor=_harbor,
+            weight_alignment=w_align,
+            alignment_party_focus=_align_focus,
+            alignment_restrict_to_party=dpg.get_value(self._alignment_restrict),
+            alignment_win_threshold=dpg.get_value(self._alignment_win_threshold),
             weight_mean_median=dpg.get_value(self._w_mean_median) if mm_on else 0.0,
             mm_mode=_DIR_TO_MODE[dpg.get_value(self._mm_dir)],
             mm_bound=dpg.get_value(self._mm_bound),
@@ -4156,7 +4670,6 @@ class MosaicApp:
             use_robust_eg=robust_eg,
             weight_dem_seats=dpg.get_value(self._w_dem_seats) if seats_on else 0.0,
             dem_seats_favor_dem=(dpg.get_value(self._dem_seats_dir) == "D"),
-            weight_competitiveness=dpg.get_value(self._w_competitiveness) if comp_on else 0.0,
             weight_holistic_proportionality=w_hprop,
             weight_holistic_competitiveness=w_hcmp,
             weight_majority_chance_dem=(dpg.get_value(self._w_majority)
@@ -4192,6 +4705,9 @@ class MosaicApp:
         self.state.update(
             num_districts=dpg.get_value(self._num_districts),
             pop_tolerance=_tol,
+            tolerance_ratchet_mode={
+                "Off": "off", "Standard": "standard", "Strict": "strict",
+            }[dpg.get_value(self._tolerance_ratchet_mode)],
             max_iterations=dpg.get_value(self._iterations),
             seed=seed,
             score_config=score_cfg,
@@ -4229,7 +4745,6 @@ class MosaicApp:
             self.state.mm_history = []
             self.state.eg_history = []
             self.state.dem_seats_history = []
-            self.state.competitive_count_history = []
             self.state.pp_history = []
             self.state.reock_history = []
             self.state.holistic_compactness_history = []
@@ -4251,23 +4766,28 @@ class MosaicApp:
             current_cut_edges=0,
             current_iteration=0,
             successful_steps=0,
+            current_flip_rate=0.0,
             current_temperature=0.0,
             accepted_worse=0,
             rejected_worse=0,
             best_assignment=None,
             current_assignment=None,
+            district_label_map=None,
             score_breakdown={},
         )
         # Reset status bar and score readouts
         dpg.set_value(self._status_txt, "Status: Idle")
         dpg.set_value(self._iter_txt,   "Iteration: 0 / 0")
-        dpg.set_value(self._timer_txt,  "Time: 0:00  |  0 iter/sec")
+        dpg.set_value(self._time_txt,   "Time: 0:00")
+        dpg.set_value(self._ips_txt,    "Iter/sec: 0.0")
+        dpg.set_value(self._eta_txt,    "Est. left: --")
         dpg.set_value(self._progress,   0.0)
         dpg.set_value(self._score_txt,  "Score: --")
-        dpg.set_value(self._best_txt,   "Best:  --   (iteration --)")
+        dpg.set_value(self._best_txt,   "Best:  --   (iter. --)")
         dpg.set_value(self._temp_txt,   "Temperature: --")
         dpg.set_value(self._acc_txt,    "Entropy: --")
         dpg.set_value(self._succ_txt,   "Accepted steps: --")
+        dpg.set_value(self._flip_txt,   "Flip rate: 0.0%")
         self._clear_all_series()
         if self.map_view is not None and self.map_view._loaded:
             self.map_view.draw_blank()
@@ -4291,6 +4811,199 @@ class MosaicApp:
             return stable_color_mapping(best, initial, n_dist)
         return best
 
+    def _export_labeled_best_assignment(self) -> "np.ndarray | None":
+        """Best assignment with any geographic renumber applied, 0-indexed.
+
+        Exports add 1 to produce the district column, so we return the
+        geographic number minus 1. With no renumber active this is just the
+        stable-labeled assignment.
+        """
+        stable = self._stable_labeled_best_assignment()
+        if stable is None:
+            return None
+        lm = self.state.district_label_map
+        n_dist = self.state.num_districts or int(stable.max()) + 1
+        if lm is not None and len(lm) == n_dist:
+            return (lm[stable] - 1).astype(stable.dtype)
+        return stable
+
+    def _renumber_render(self, label_map) -> None:
+        """Store label_map in state and re-render the static map with it."""
+        self.state.update(district_label_map=label_map)
+        with self.state._lock:
+            assignment = (self.state.current_assignment.copy()
+                          if self.state.current_assignment is not None else None)
+            initial = (self.state.initial_assignment.copy()
+                       if self.state.initial_assignment is not None else None)
+            n_dist = self.state.num_districts
+        if self.map_view is not None and assignment is not None and n_dist > 0:
+            self.map_view.district_label_map = label_map
+            self.map_view.fast_labels = False   # static map: precise labels
+            self.map_view.render_assignment(assignment, n_dist, initial)
+
+    def _renumber_centroids_xy(self):
+        """Per-precinct centroid (x, y) in the gdf CRS, cached by gdf identity."""
+        gdf = self.runner.gdf
+        gid = id(gdf)
+        cached = self._renumber_centroids
+        if cached is not None and cached[0] == gid:
+            return cached[1], cached[2]
+        # Centroids are only used for relative geographic ordering of districts,
+        # so the geographic-CRS "results likely incorrect" warning is moot here.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", message=".*Results from 'centroid' are likely incorrect.*",
+            )
+            cents = gdf.geometry.centroid
+            x = np.asarray(cents.x, dtype=np.float64)
+            y = np.asarray(cents.y, dtype=np.float64)
+        self._renumber_centroids = (gid, x, y)
+        return x, y
+
+    def _apply_renumber(self, rule: "str | None") -> None:
+        """Apply (or clear, if rule is None) a geographic renumber to the
+        current static map. Numbers only -- colors are untouched. No-op while a
+        run is in progress. Does not write to the status bar.
+        """
+        if rule is None:
+            self._renumber_render(None)
+            return
+        if self.runner is None or self.runner.gdf is None \
+                or self.runner.populations is None:
+            return
+        with self.state._lock:
+            status = self.state.status
+            assignment = (self.state.current_assignment.copy()
+                          if self.state.current_assignment is not None else None)
+            initial = (self.state.initial_assignment.copy()
+                       if self.state.initial_assignment is not None else None)
+            n_dist = self.state.num_districts
+        if status in (AlgorithmStatus.RUNNING, AlgorithmStatus.PARTITIONING):
+            return
+        if assignment is None or n_dist <= 0:
+            return
+
+        # Rank by stable color index so numbers line up with colors/panels.
+        from mosaic.gui.map_view import stable_color_mapping
+        if initial is not None and len(initial) == len(assignment):
+            stable = stable_color_mapping(assignment, initial, n_dist)
+        else:
+            stable = assignment
+
+        if rule == "infer":
+            label_map = self._infer_label_map(stable, n_dist)
+            if label_map is None:        # no alignment plan loaded -> no-op
+                return
+        else:
+            from mosaic.renumber import geographic_label_map
+            x, y = self._renumber_centroids_xy()
+            pops = np.asarray(self.runner.populations, dtype=np.float64)
+            label_map = geographic_label_map(stable, x, y, pops, n_dist, rule=rule)
+        self._renumber_render(label_map)
+
+    def _infer_label_map(self, stable: np.ndarray, n_dist: int):
+        """Label map adopting the loaded reference plan's numbers, or None if no
+        alignment plan is loaded. District counts need not match: the matching
+        is rectangular and unmatched proposed districts get fresh numbers.
+
+        The overlap is measured in whatever the alignment is set to align on:
+        residents (population), D votes, or R votes -- mirroring the alignment
+        score's party-focus setting.
+        """
+        ad = getattr(self.runner, "alignment_data", None)
+        if ad is None or ad.alt_labels is None:
+            return None
+        from mosaic.renumber import infer_label_map_from_reference
+
+        focus = self.state.score_config.alignment_party_focus
+        dem = gop = None
+        if self.runner.election_arrays:
+            dem, gop = self.runner.election_arrays[0]
+        if focus == "rep" and gop is not None:
+            weights = np.asarray(gop, dtype=np.float64)
+        elif focus == "dem" and dem is not None:
+            weights = np.asarray(dem, dtype=np.float64)
+        else:
+            weights = np.asarray(self.runner.populations, dtype=np.float64)
+
+        return infer_label_map_from_reference(
+            stable, ad.alt_assignment, ad.alt_labels, weights,
+            n_dist, ad.n_alt_districts,
+        )
+
+    # ── Renumber control sync (Advanced menu check + options radio) ──────────────
+
+    _RENUMBER_RULE_TO_LABEL = {
+        "nw_se": "NW to SE",
+        "n_s": "North to South",
+        "infer": "Infer from alignment",
+    }
+    _RENUMBER_LABEL_TO_RULE = {v: k for k, v in _RENUMBER_RULE_TO_LABEL.items()}
+
+    def _alignment_loaded(self) -> bool:
+        return (self.runner is not None
+                and getattr(self.runner, "alignment_data", None) is not None)
+
+    def _renumber_radio_items(self) -> list:
+        items = ["None", "NW to SE", "North to South"]
+        if self._alignment_loaded():
+            items.append("Infer from alignment")
+        return items
+
+    def _renumber_rule_label(self) -> str:
+        """Radio label reflecting current renumber state."""
+        if not self._renumber_enabled:
+            return "None"
+        return self._RENUMBER_RULE_TO_LABEL.get(self._renumber_rule, "NW to SE")
+
+    def _sync_renumber_widgets(self) -> None:
+        dpg.set_value(self._renumber_after_run, self._renumber_enabled)
+        if dpg.does_item_exist("renumber_rule_radio"):
+            dpg.set_value("renumber_rule_radio", self._renumber_rule_label())
+
+    def _maybe_live_renumber(self) -> None:
+        """Reflect the current setting on the displayed static map immediately."""
+        self._apply_renumber(self._renumber_rule if self._renumber_enabled else None)
+
+    def _on_renumber_after_run_toggle(self, sender, app_data) -> None:
+        self._renumber_enabled = bool(app_data)
+        if self._renumber_enabled and self._renumber_rule not in ("nw_se", "n_s"):
+            self._renumber_rule = "nw_se"
+        self._sync_renumber_widgets()
+        self._maybe_live_renumber()
+
+    def _on_renumber_rule_change(self, sender, app_data) -> None:
+        if app_data == "None":
+            self._renumber_enabled = False
+        else:
+            self._renumber_enabled = True
+            self._renumber_rule = self._RENUMBER_LABEL_TO_RULE.get(app_data, "nw_se")
+        self._sync_renumber_widgets()
+        self._maybe_live_renumber()
+
+    def _on_open_renumber_options(self) -> None:
+        # "Infer from alignment" only appears when a reference plan is loaded;
+        # if it was selected and the plan is gone, fall back to the diagonal.
+        if self._renumber_rule == "infer" and not self._alignment_loaded():
+            self._renumber_rule = "nw_se"
+        if not dpg.does_item_exist("renumber_options_window"):
+            with dpg.window(label="Renumber Options",
+                            tag="renumber_options_window", show=False,
+                            no_collapse=True, width=240, height=170,
+                            pos=(140, 140)):
+                dpg.add_text("Renumber districts:")
+                dpg.add_separator()
+                dpg.add_radio_button(
+                    items=self._renumber_radio_items(),
+                    tag="renumber_rule_radio",
+                    default_value=self._renumber_rule_label(),
+                    callback=self._on_renumber_rule_change,
+                )
+        dpg.configure_item("renumber_rule_radio", items=self._renumber_radio_items())
+        dpg.set_value("renumber_rule_radio", self._renumber_rule_label())
+        dpg.configure_item("renumber_options_window", show=True)
+        dpg.focus_item("renumber_options_window")
+
     def _on_export(self):
         if self.runner is None or self.state.best_assignment is None:
             return
@@ -4309,7 +5022,7 @@ class MosaicApp:
                 id_col_name = col
 
         save_assignments(
-            self._stable_labeled_best_assignment(),
+            self._export_labeled_best_assignment(),
             output_path,
             precinct_ids=precinct_ids,
             id_col_name=id_col_name,
@@ -4332,7 +5045,7 @@ class MosaicApp:
         gop = self.runner.election_arrays[0][1] if self.runner.election_arrays else None
 
         save_metrics(
-            self._stable_labeled_best_assignment(),
+            self._export_labeled_best_assignment(),
             output_path,
             populations=self.runner.populations,
             ideal_pop=ideal_pop,
@@ -4400,6 +5113,7 @@ class MosaicApp:
             county_array=self.runner.county_array,
             dem_votes=dem, gop_votes=gop,
             pp_data=self.runner.pp_data,
+            reock_data=self.runner.reock_data,
             populations=self.runner.populations,
         )
 

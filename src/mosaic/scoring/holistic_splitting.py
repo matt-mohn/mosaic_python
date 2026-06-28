@@ -32,13 +32,64 @@ the optimizer). No rounding (continuous gradient).
 
 from __future__ import annotations
 
-from typing import Optional
 import numpy as np
 
 
 _MAX_SPLITTING    = 1.20
 _MIN_SPLITTING    = 1.00
 _WORST_MULTIPLIER = 1.33
+
+
+# ── Numba fused kernel for the raw split scores ───────────────────────────────
+# Folds both directions into one (c, d) pass with per-c / per-d accumulators:
+# the county direction sums over districts (inner d loop), the district direction
+# accumulates per-d across the c outer loop. A whole district inside one county
+# (or whole county inside one district) collapses into its own bucket. No
+# fastmath. Exact == on pop sums is safe (integer pops, exact in float64).
+from numba import njit
+
+
+@njit(cache=True)
+def _hsplit_raw_numba(co, county_pops, district_pops, state_pop,
+                      n_counties, n_districts):
+    sqrt_partial_co = np.zeros(n_counties)
+    whole_co = np.zeros(n_counties)
+    sqrt_partial_d = np.zeros(n_districts)
+    whole_d = np.zeros(n_districts)
+    for c in range(n_counties):
+        cp = county_pops[c]
+        safe_cp = cp if cp > 0.0 else 1.0
+        for d in range(n_districts):
+            v = co[c, d]
+            dp = district_pops[d]
+            # County direction: whole district sitting inside this county.
+            if v == dp and v > 0.0:
+                whole_co[c] += v
+                vp_c = 0.0
+            else:
+                vp_c = v
+            sqrt_partial_co[c] += np.sqrt(vp_c / safe_cp)
+            # District direction: whole county sitting inside this district.
+            safe_dp = dp if dp > 0.0 else 1.0
+            if v == cp and v > 0.0:
+                whole_d[d] += v
+                vp_d = 0.0
+            else:
+                vp_d = v
+            sqrt_partial_d[d] += np.sqrt(vp_d / safe_dp)
+    raw_county = 0.0
+    for c in range(n_counties):
+        cp = county_pops[c]
+        safe_cp = cp if cp > 0.0 else 1.0
+        cs = sqrt_partial_co[c] + np.sqrt(whole_co[c] / safe_cp)
+        raw_county += cp / state_pop * cs
+    raw_district = 0.0
+    for d in range(n_districts):
+        dp = district_pops[d]
+        safe_dp = dp if dp > 0.0 else 1.0
+        ds = sqrt_partial_d[d] + np.sqrt(whole_d[d] / safe_dp)
+        raw_district += dp / state_pop * ds
+    return raw_county, raw_district
 
 
 def _best_target(n_counties: int, n_districts: int) -> float:
@@ -67,6 +118,7 @@ def score_holistic_splitting(
     populations: np.ndarray,
     n_districts: int,
     county_data=None,
+    co_di_pop=None,
 ) -> tuple[float, float, float]:
     """
     Args:
@@ -90,11 +142,14 @@ def score_holistic_splitting(
         pops_f      = populations.astype(np.float64)
         county_pops = np.bincount(county_ids, weights=pops_f, minlength=n_counties)
 
-    # CxD matrix: co_di_pop[c, d] = total pop of (county c ∩ district d)
-    flat_idx   = (county_ids * n_districts + assignment).astype(np.int64)
-    co_di_flat = np.bincount(flat_idx, weights=pops_f,
-                             minlength=n_counties * n_districts)
-    co_di_pop  = co_di_flat.reshape(n_counties, n_districts)
+    # CxD matrix: co_di_pop[c, d] = total pop of (county c ∩ district d).
+    # May be supplied by score_plan (shared with score_county_splits) to avoid
+    # rebuilding the identical matrix twice per iteration.
+    if co_di_pop is None:
+        flat_idx   = (county_ids * n_districts + assignment).astype(np.int64)
+        co_di_flat = np.bincount(flat_idx, weights=pops_f,
+                                 minlength=n_counties * n_districts)
+        co_di_pop  = co_di_flat.reshape(n_counties, n_districts)
 
     district_pops = co_di_pop.sum(axis=0)
     state_pop = float(county_pops.sum())
@@ -102,35 +157,13 @@ def score_holistic_splitting(
     if state_pop == 0.0 or n_counties == 0 or n_districts == 0:
         return 1.0, 1.0, 0.0
 
-    # ── County direction: how broken is each county ─────────────────────────
-    # Reduce step: aggregate whole-districts-inside-county into one bucket per
-    # county. Use exact equality — pop sums are exact in float64 since precinct
-    # pops are integers well below 2^53.
-    whole_d_in_c       = (co_di_pop == district_pops[None, :]) & (co_di_pop > 0)
-    whole_per_county   = np.where(whole_d_in_c, co_di_pop, 0.0).sum(axis=1)
-    partial_co_di_c    = np.where(whole_d_in_c, 0.0, co_di_pop)
-
-    safe_cp = np.where(county_pops > 0, county_pops, 1.0)
-    county_frac_partial   = partial_co_di_c / safe_cp[:, None]
-    whole_county_frac     = whole_per_county / safe_cp
-    sqrt_partial_per_co   = np.sqrt(county_frac_partial).sum(axis=1)
-    sqrt_whole_per_co     = np.sqrt(whole_county_frac)
-    county_scores         = sqrt_partial_per_co + sqrt_whole_per_co
-    # Zero-pop counties contribute zero (mask in the outer pop-weight).
-    raw_county = float((county_pops / state_pop * county_scores).sum())
-
-    # ── District direction: how many counties touch each district ───────────
-    whole_c_in_d         = (co_di_pop == county_pops[:, None]) & (co_di_pop > 0)
-    whole_per_district   = np.where(whole_c_in_d, co_di_pop, 0.0).sum(axis=0)
-    partial_co_di_d      = np.where(whole_c_in_d, 0.0, co_di_pop)
-
-    safe_dp = np.where(district_pops > 0, district_pops, 1.0)
-    district_frac_partial  = partial_co_di_d / safe_dp[None, :]
-    whole_district_frac    = whole_per_district / safe_dp
-    sqrt_partial_per_dist  = np.sqrt(district_frac_partial).sum(axis=0)
-    sqrt_whole_per_dist    = np.sqrt(whole_district_frac)
-    district_scores        = sqrt_partial_per_dist + sqrt_whole_per_dist
-    raw_district = float((district_pops / state_pop * district_scores).sum())
+    # ── Raw split scores in both directions (fused Numba kernel) ──
+    raw_county, raw_district = _hsplit_raw_numba(
+        co_di_pop, county_pops, district_pops, state_pop,
+        n_counties, n_districts,
+    )
+    raw_county = float(raw_county)
+    raw_district = float(raw_district)
 
     # ── Rating curves with asymmetric best-target ───────────────────────────
     if n_counties > n_districts:

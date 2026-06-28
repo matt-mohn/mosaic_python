@@ -180,10 +180,83 @@ def score_reock(
         float in [0, 100] — (1 - mean_Reock) * 100, where 0 = all
         districts perfectly compact under the K=16 approximation.
     """
+    # assignment is int32 in the hot loop; pass it straight through. Numba
+    # compiles an int32 specialization and uses the values only as array
+    # indices + loop bounds, so results are identical to the int64 cast this
+    # used to do — minus a full-precinct array copy every iteration.
     return float(_score_reock_numba(
         data.dir_ext_pts,
         data.dir_ext_proj,
-        assignment.astype(np.int64),
+        assignment,
         data.areas,
         n_districts,
     ))
+
+
+@njit(cache=True, fastmath=True)
+def _reock_per_district_numba(
+    dir_ext_pts: np.ndarray,
+    dir_ext_proj: np.ndarray,
+    assignment: np.ndarray,
+    areas: np.ndarray,
+    n_districts: int,
+) -> np.ndarray:
+    """Per-district Reock ratio in [0, 1] (same math as _score_reock_numba, but
+    returns the per-district array instead of the (1 - mean) penalty). Used only
+    for map shading, so it lives apart from the hot-loop scorer."""
+    k = dir_ext_pts.shape[0]
+    n = assignment.shape[0]
+
+    max_proj = np.full((k, n_districts), -1e30, dtype=np.float64)
+    max_idx = np.full((k, n_districts), -1, dtype=np.int64)
+    district_areas = np.zeros(n_districts, dtype=np.float64)
+
+    for i in range(n):
+        d = assignment[i]
+        district_areas[d] += areas[i]
+        for ki in range(k):
+            v = dir_ext_proj[ki, i]
+            if v > max_proj[ki, d]:
+                max_proj[ki, d] = v
+                max_idx[ki, d] = i
+
+    out = np.zeros(n_districts, dtype=np.float64)
+    for d in range(n_districts):
+        d_max_sq = 0.0
+        for ki in range(k):
+            pi = max_idx[ki, d]
+            if pi < 0:
+                continue
+            xi = dir_ext_pts[ki, pi, 0]
+            yi = dir_ext_pts[ki, pi, 1]
+            for kj in range(ki + 1, k):
+                pj = max_idx[kj, d]
+                if pj < 0:
+                    continue
+                dx = xi - dir_ext_pts[kj, pj, 0]
+                dy = yi - dir_ext_pts[kj, pj, 1]
+                ds = dx * dx + dy * dy
+                if ds > d_max_sq:
+                    d_max_sq = ds
+        r = np.sqrt(d_max_sq) / 2.0
+        if r > 0.0:
+            rk = district_areas[d] / (np.pi * r * r)
+            if rk > 1.0:
+                rk = 1.0
+            out[d] = rk
+    return out
+
+
+def reock_per_district(
+    assignment: np.ndarray,
+    data: ReockData,
+    n_districts: int,
+) -> np.ndarray:
+    """(n_districts,) per-district Reock ratio in [0, 1]; 0 = empty/degenerate."""
+    return _reock_per_district_numba(
+        data.dir_ext_pts,
+        data.dir_ext_proj,
+        assignment,
+        data.areas,
+        n_districts,
+    )

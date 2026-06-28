@@ -17,6 +17,9 @@ from mosaic.scoring.polsby_popper import score_polsby_popper
 from mosaic.scoring.reock import (
     ReockData, precompute_reock_data, score_reock,
 )
+from mosaic.scoring.alignment import (
+    AlignmentData, AlignmentError, precompute_alignment_data, score_alignment,
+)
 from mosaic.scoring.holistic_compactness import holistic_compactness_from_scores
 from mosaic.scoring.holistic_proportionality import holistic_proportionality_from_shares
 from mosaic.scoring.holistic_competitiveness import holistic_competitiveness_from_shares
@@ -29,7 +32,6 @@ from mosaic.scoring.partisan import (
     score_mean_median,
     score_efficiency_gap,
     score_dem_seats,
-    score_competitiveness,
     score_majority_chance,
 )
 
@@ -53,6 +55,10 @@ __all__ = [
     "ReockData",
     "precompute_reock_data",
     "score_reock",
+    "AlignmentData",
+    "AlignmentError",
+    "precompute_alignment_data",
+    "score_alignment",
     "holistic_compactness_from_scores",
     "holistic_proportionality_from_shares",
     "holistic_competitiveness_from_shares",
@@ -64,6 +70,5 @@ __all__ = [
     "score_mean_median",
     "score_efficiency_gap",
     "score_dem_seats",
-    "score_competitiveness",
     "score_majority_chance",
 ]

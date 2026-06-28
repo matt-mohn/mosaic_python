@@ -247,6 +247,16 @@ class ShapefileDialog:
             dpg.set_value(self._county_combo, "(none)")
             dpg.set_value(self._county_info, "")
 
+        # Auto-detected election: add a row and fill in the DEM/GOP columns.
+        if inspection.hint_election:
+            dem_col, gop_col = inspection.hint_election
+            self._on_add_election()
+            if self._election_active:
+                i = self._election_active[-1]
+                dpg.set_value(f"shp_elec_{i}_dem", dem_col)
+                dpg.set_value(f"shp_elec_{i}_gop", gop_col)
+                self._on_election_change(None, None, i)
+
         dpg.set_value(self._confirm_err, "")
         dpg.configure_item("shp_dialog", show=True)
 

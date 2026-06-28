@@ -19,6 +19,12 @@ _COUNTY_HINTS = {
     "cty", "county", "countyfp20", "countyfp", "county20",
     "cntyfp", "cntyfp20", "cty_code", "cntyvtd", "countyfips", "co_fips",
 }
+# Election (DEM, GOP) column pairs to auto-detect, tried in order. Each side is
+# a set of acceptable lowercased names; the first pair where BOTH sides resolve
+# to a present, numeric column wins. Add more pairs here to widen coverage.
+_ELECTION_PAIRS: tuple[tuple[set[str], set[str]], ...] = (
+    ({"baseline_d"}, {"baseline_r"}),
+)
 
 
 @dataclass
@@ -59,6 +65,7 @@ class ShapefileInspection:
     hint_pop_col: Optional[str] = None    # auto-detected suggestion
     hint_id_col: Optional[str] = None
     hint_county_col: Optional[str] = None
+    hint_election: Optional[tuple[str, str]] = None   # (dem_col, gop_col)
 
 
 # Census GEOID column names — used only for the no-fiona heuristic fallback
@@ -218,6 +225,7 @@ def inspect_shapefile(path: str | Path) -> ShapefileInspection:
             hint_pop_col=_hint(cols, _POP_HINTS, numeric_only=True, col_info=col_info),
             hint_id_col=_hint(cols, _ID_HINTS),
             hint_county_col=_hint(cols, _COUNTY_HINTS),
+            hint_election=_hint_election(cols, col_info),
         )
     except Exception as exc:
         log.error(f"inspect_shapefile failed: {exc}")
@@ -241,4 +249,23 @@ def _hint(
             if numeric_only and col_info and not col_info[c].is_numeric:
                 continue
             return c
+    return None
+
+
+def _hint_election(
+    cols: list[str],
+    col_info: dict[str, ColumnInfo] | None = None,
+) -> Optional[tuple[str, str]]:
+    """First (dem, gop) pair from _ELECTION_PAIRS where both columns are present
+    (case-insensitive) and numeric. Returns the original-cased names."""
+    lower = {c.lower(): c for c in cols}
+    for dem_names, gop_names in _ELECTION_PAIRS:
+        dem = next((lower[n] for n in dem_names if n in lower), None)
+        gop = next((lower[n] for n in gop_names if n in lower), None)
+        if dem is None or gop is None:
+            continue
+        if col_info and (not col_info[dem].is_numeric
+                         or not col_info[gop].is_numeric):
+            continue
+        return (dem, gop)
     return None

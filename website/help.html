@@ -139,6 +139,7 @@
         <a href="#shapefile"        class="block hover:text-ink transition">Loading a shapefile</a>
         <a href="#run-config"       class="block hover:text-ink transition">Run Config reference</a>
         <a href="#run-controls"     class="block hover:text-ink transition">Run controls</a>
+        <a href="#renumber"         class="block hover:text-ink transition">Renumbering districts</a>
         <a href="#metrics"          class="block hover:text-ink transition">Metrics glossary</a>
         <a href="#map-overlays"     class="block hover:text-ink transition">Map overlays</a>
         <a href="#charts"           class="block hover:text-ink transition">Reading the charts</a>
@@ -177,13 +178,15 @@
           <dt><strong>n=3 ReCom Mix</strong></dt>
           <dd>Probability per step of attempting a three-way recombination (merge 3 adjacent districts and re-split into 3) instead of the default two-way step. Three-way moves are slower but escape local minima better; 0.0 disables it.</dd>
           <dt><strong>Polish Flips</strong> (on by default)</dt>
-          <dd>Adds single-precinct boundary flips alongside ReCom to clean up district borders late in the run. The flip probability ramps along a two-piece logistic: about 5% at the start, rising to 50% at the crossover, and 85% by the end &mdash; so at least 15% of steps stay ReCom throughout and the chain can still escape local minima. The <strong>50% crossover</strong> slider (default 84% of the run) sets where the rate hits 50%; higher keeps flips rare until later.</dd>
+          <dd>Adds single-precinct boundary flips alongside ReCom to clean up district borders late in the run. The flip probability ramps along a two-piece logistic: about 5% at the start, rising to 50% at the crossover, and 85% by the end &mdash; so at least 15% of steps stay ReCom throughout and the chain can still escape local minima. The <strong>50% crossover</strong> slider (default 84% of the run) sets where the rate hits 50%; higher keeps flips rare until later. The live <strong>Flip rate</strong> readout in the status panel shows the current ramp value during a run.</dd>
         </dl>
 
         <h3>Population</h3>
         <dl>
           <dt><strong>Population Tolerance</strong></dt>
           <dd>Per-district deviation from the ideal population that Mosaic will accept as a valid plan. Any candidate that violates this is rejected at the recombination step (default 2.5%). Tighter is harder to satisfy and slower to converge.</dd>
+          <dt><strong>Tolerance Ratchet</strong> (Off / Standard / Strict)</dt>
+          <dd>Progressively tightens Population Tolerance over the back two-thirds of the run, from the value you set down toward 0.25%. The schedule only ever <em>tightens</em>, and never below the deviation the map has actually achieved &mdash; so it can't strand a plan it is unable to satisfy. <strong>Standard</strong> tightens only when a new best plan is found; <strong>Strict</strong> tightens at every eligible iteration; <strong>Off</strong> (default) leaves the tolerance fixed. Scoring always uses your fixed map-wide tolerance &mdash; the ratchet acts on the move-acceptance bound, squeezing population balance down as the run settles. While on, the Population Deviation score is tracked every iteration even at weight 0 &mdash; its score-row label turns green to signal the ratchet is driving it, and its chart records data regardless of weight.</dd>
           <dt><strong>Safe Harbor</strong></dt>
           <dd>The no-penalty band for the Population Deviation score (default 0.0%, i.e. off &mdash; every district outside perfect balance is penalized). Districts inside the band contribute 0 to that metric; districts outside contribute their squared excess deviation. Clamped at run-start to never exceed Population Tolerance.</dd>
         </dl>
@@ -212,7 +215,7 @@
         <dl>
           <dt><strong>Random Seed</strong></dt>
           <dd>Sets the RNG state at the start of the run. <code>0</code> (default) leaves the RNG random, so every run is different. Any non-zero integer makes a run reproducible <em>on the same machine, with the same Mosaic version, with the same shapefile</em>. Cross-machine or cross-version runs may diverge slightly due to floating-point ordering inside numpy / igraph; the seed buys you reproducibility, not bit-exactness across environments.</dd>
-          <dt><strong>Hot start</strong> (Debug menu)</dt>
+          <dt><strong>Hot start</strong> (Advanced menu)</dt>
 
           <dd>Instead of beginning from a random seed plan, load an existing precinct-to-district assignment as the starting point. Pick a CSV with an id column and a district column (1-indexed; the format matches Mosaic's own assignment export), then map the id column to your shapefile. Mosaic validates that every precinct is assigned, the district count matches Number of Districts, and each district is contiguous before the run will use it. Useful for polishing a published map or resuming from a prior result. Clear it from the same menu to return to random seeding.</dd>
         </dl>
@@ -251,6 +254,25 @@
           <dd>Restores the current assignment to the best-scoring plan seen so far in this run, without resetting the iteration counter or temperature. Useful when the algorithm has wandered into a worse region and you want to continue annealing from a known-good point. The score history charts keep their full trace.</dd>
           <dt><strong>Reset</strong></dt>
           <dd>Discards the current run entirely. Clears the map, the iteration counter, the score history, and the annealing state. The loaded shapefile and column choices are kept. Use this when you want to try a fresh run with new weights or a new seed.</dd>
+        </dl>
+      </section>
+
+      <!-- Renumbering ─────────────────────────────────────────────────────── -->
+      <section id="renumber" class="prose-block mt-16">
+        <h2 class="text-2xl font-bold tracking-tight">Renumbering districts</h2>
+        <p>By default Mosaic numbers districts in the arbitrary order it draws them. The <span class="gui">Advanced menu</span> can renumber a finished map by geography &mdash; numbers only. Colors stay put, so a district keeps its color and simply shows a different label on the map, in the District Info panel, and in exported CSVs. Renumbering is deterministic and never touches the assignment or any score.</p>
+        <dl>
+          <dt><strong>Renumber districts after run</strong> (on by default)</dt>
+          <dd>When a run finishes, relabel automatically using the rule chosen in Renumber options. Turn it off to keep the draw-order numbering.</dd>
+          <dt><strong>Renumber options</strong></dt>
+          <dd>Pick the rule:
+            <ul>
+              <li><strong>None</strong> &mdash; draw-order numbering (no renumber).</li>
+              <li><strong>NW to SE</strong> &mdash; diagonal sweep: district 1 sits furthest northwest, the last furthest southeast. Each axis is normalized so the diagonal stays balanced regardless of the state's shape.</li>
+              <li><strong>North to South</strong> &mdash; district 1 is northernmost, ties broken west-to-east.</li>
+              <li><strong>Infer from alignment</strong> &mdash; available only with a reference plan loaded (see the <a href="#metrics">Alignment</a> metric). Each proposed district adopts the <em>number</em> of the reference district it most overlaps, decided by a global maximum-overlap matching so two districts never claim the same number; any surplus districts get fresh numbers. Lets a new map carry the enacted map's district numbers.</li>
+            </ul>
+          </dd>
         </dl>
       </section>
 
@@ -294,9 +316,36 @@
             </table>
           </dd>
 
-          <dt><strong>Compactness (Polsby-Popper)</strong></dt>
+          <dt><strong>Alignment</strong></dt>
           <dd>
-            <p>Compactness penalty. Per-district <code>PP = 4π·area / perimeter²</code> ranges from 0 (elongated) to 1 (circle). The score chart displays <code>mean(PP)</code> directly; the optimizer minimizes <code>(1 − mean(PP)) × 100</code>.</p>
+            <p>Least-change penalty: how close the plan stays to a loaded <em>reference</em> plan (e.g. the enacted map). District numbering is irrelevant &mdash; only the partition matters. Each reference district is scored by its <em>cohesion</em>: the probability that two of its residents are still in the same proposed district (the sum of its squared overlap fractions). A district kept whole costs nothing; one split apart costs more, and a clean two-way split costs less than a shatter. The score is one-sided by design &mdash; it penalizes breaking old districts apart, not merging them &mdash; so population balance and the other weighted terms are what rule out the degenerate "everything in one district" plan. Load a reference CSV from the <span class="gui">Alignment row &rarr; "..." settings</span> before enabling.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>contribution [0, 100]; chart shows cohesion % in [0, 100]</td></tr>
+              <tr><th>Direction</th><td>lower contribution is better; 0 = identical to the reference plan</td></tr>
+              <tr><th>Contribution</th><td><code>100 × Σ wₐ(1 − cohesionₐ) / Σ wₐ</code>, where <code>cohesionₐ = Σₚ fₐₚ²</code> over reference district <code>a</code>'s share <code>f</code> in each proposed district <code>p</code>, weighted by <code>w</code> (population, or a party's votes)</td></tr>
+              <tr><th>Tunables</th><td>
+                <ul>
+                  <li><span class="gui">Alignment row &rarr; "..." &rarr; Load reference plan</span> (CSV with an id column and a district column; the district count need not match the run, and the reference need not be contiguous or population-balanced)</li>
+                  <li><span class="gui">Alignment row &rarr; "..." &rarr; Focus</span> (<code>alignment_party_focus</code>): measure retention in all residents (population), or in a party's votes &mdash; so each district scores on how many of <em>its</em> partisans stayed together. Needs election data; falls back to population without it</li>
+                  <li><span class="gui">Alignment row &rarr; "..." &rarr; Only districts that party wins</span> + <span class="gui">win threshold</span> (<code>alignment_restrict_to_party</code>, <code>alignment_win_threshold</code>, default 0.535): score only the reference districts the focus party already holds, to preserve your own seats. Needs a party focus and election data</li>
+                </ul>
+              </td></tr>
+            </table>
+          </dd>
+
+          <dt><strong>Compactness</strong></dt>
+          <dd>
+            <p>Mosaic's primary compactness score &mdash; on by default at weight 50. One dial that blends mean Polsby-Popper and mean Reock 50/50, each linearly normalized into [0, 100] over a fixed band, so you can optimize compactness without juggling the two separate weights.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
+              <tr><th>Direction</th><td>lower contribution is better</td></tr>
+              <tr><th>Contribution</th><td><code>100 − rating</code></td></tr>
+            </table>
+          </dd>
+
+          <dt><strong>Polsby-Popper</strong></dt>
+          <dd>
+            <p>Compactness penalty. Per-district <code>PP = 4π·area / perimeter²</code> ranges from 0 (elongated) to 1 (circle). The score chart displays <code>mean(PP)</code> directly; the optimizer minimizes <code>(1 − mean(PP)) × 100</code>. Off by default &mdash; the blended <strong>Compactness</strong> score (above) is Mosaic's primary compactness metric; enable Polsby-Popper on its own only when you want to tune it directly.</p>
             <table class="meta">
               <tr><th>Unit</th><td>contribution [0, 100]; chart shows mean PP in [0, 1]</td></tr>
               <tr><th>Direction</th><td>lower contribution is better</td></tr>
@@ -312,26 +361,6 @@
               <tr><th>Unit</th><td>contribution [0, 100]; chart shows mean Reock in [0, 1]</td></tr>
               <tr><th>Direction</th><td>lower contribution is better</td></tr>
               <tr><th>Contribution</th><td><code>(1 − mean(Reock)) × 100</code></td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Holistic Compactness</strong></dt>
-          <dd>
-            <p>One compactness dial that blends mean Polsby-Popper and mean Reock 50/50, each linearly normalized into [0, 100] over a fixed band. Use it when you want to optimize compactness without juggling two separate weights.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
-              <tr><th>Direction</th><td>lower contribution is better</td></tr>
-              <tr><th>Contribution</th><td><code>100 − rating</code></td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Holistic Splitting</strong></dt>
-          <dd>
-            <p>One splitting dial that blends county-direction and district-direction sub-ratings 50/50. Uses a sqrt-of-fractions kernel that rewards lopsided splits over even ones, population-weighted across counties and districts.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
-              <tr><th>Direction</th><td>lower contribution is better</td></tr>
-              <tr><th>Contribution</th><td><code>100 − rating</code></td></tr>
             </table>
           </dd>
 
@@ -370,7 +399,7 @@
             </table>
           </dd>
 
-          <dt><strong>Holistic Proportionality</strong></dt>
+          <dt><strong>Proportionality</strong></dt>
           <dd>
             <p>Single 0-100 rating of seat-share vs vote-share fairness. Antimajoritarian plans (majority-vote, minority-seat) get an instant 100 penalty.</p>
             <table class="meta">
@@ -381,17 +410,6 @@
           </dd>
 
           <dt><strong>Competitiveness</strong></dt>
-          <dd>
-            <p>Mean non-competitiveness across districts. A district contributes 0 at a 50% win probability and 1 at certainty.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>raw in [0, 1] (display); contribution in [0, 100]</td></tr>
-              <tr><th>Direction</th><td>lower is better</td></tr>
-              <tr><th>Contribution</th><td><code>raw × 100</code></td></tr>
-              <tr><th>Tunables</th><td>shared partisan calibration</td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Holistic Competitiveness</strong></dt>
           <dd>
             <p>Soft-Bernoulli competitiveness rating. Per-district kernel <code>1 − 4·(P_win − 0.5)²</code> rewards toss-ups; cap at 75% competitive-equivalent districts.</p>
             <table class="meta">
@@ -450,6 +468,16 @@
               </td></tr>
             </table>
           </dd>
+
+          <dt><strong>Holistic Splitting</strong></dt>
+          <dd>
+            <p>One splitting dial that blends county-direction and district-direction sub-ratings 50/50. Uses a sqrt-of-fractions kernel that rewards lopsided splits over even ones, population-weighted across counties and districts. (Sibling to the structural <strong>County Splits</strong> score &mdash; this is the 0&ndash;100 composite, that is the count-based penalty.)</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
+              <tr><th>Direction</th><td>lower contribution is better</td></tr>
+              <tr><th>Contribution</th><td><code>100 − rating</code></td></tr>
+            </table>
+          </dd>
         </dl>
       </section>
 
@@ -467,7 +495,7 @@
           <dt><strong>Dist. Results</strong> (District Results)</dt>
           <dd>Colours each district by its aggregate Dem share. The map view of the same data the Mean-Median, Efficiency Gap, and Competitiveness metrics summarise.</dd>
           <dt><strong>Compactness</strong></dt>
-          <dd>Colours each district by its Polsby-Popper score (round = greener, elongated = redder). Spot the ugly district at a glance.</dd>
+          <dd>Colours each district by its combined compactness &mdash; the same Polsby-Popper + Reock blend the Compactness score uses (round = greener, elongated = redder). Spot the ugly district at a glance.</dd>
           <dt><strong>Pop. Dev.</strong> (Population Deviation)</dt>
           <dd>Colours each district by signed deviation from ideal population. Underpopulated districts in one direction, overpopulated in the other.</dd>
           <dt><strong>Labels</strong></dt>
@@ -486,6 +514,8 @@
           <dd>Total <code>PlanScore.total</code> over iterations (lower is better). Trends down as annealing cools and the search becomes pickier.</dd>
           <dt><strong>Per-metric panels</strong></dt>
           <dd>One chart per enabled metric, plotted in its native units. Partisan metrics draw a reference line where relevant.</dd>
+          <dt><strong>Alignment</strong></dt>
+          <dd>When the Alignment metric is active, this panel plots <em>cohesion</em> &mdash; the share of each reference district that stays intact &mdash; as a mean across districts and the single worst-hit district. The axis is inverted relative to the score: higher here means closer to the reference, while the score row reports the penalty (lower is better).</dd>
           <dt><strong>Score Contributors</strong></dt>
           <dd>Bar chart showing the share of the total score each enabled metric contributes right now. The quickest way to see which weight is actually driving the optimizer.</dd>
           <dt><strong>District Info</strong></dt>
@@ -529,6 +559,8 @@
           <dd>Top-level crashes are written to <code>crashes/YYYYMMDD-HHMMSS.log</code> next to where you launched from. The file includes the traceback, Mosaic version, platform, and any context the runner had (current iteration, shapefile path). Attach it when filing an issue.</dd>
           <dt><strong>Mosaic won't load my shapefile.</strong></dt>
           <dd>See the <a href="shapefiles.html">shapefile guide</a> &mdash; in particular the <a href="shapefiles.html#problems">"If Mosaic refuses to load"</a> section, which maps each error message to the fix in the source data.</dd>
+          <dt><strong>My state has islands (HI, AK, the Outer Banks…). Do I need to remove them?</strong></dt>
+          <dd>No. When Mosaic builds the adjacency graph it automatically reconnects islands and exclaves to the mainland with <em>virtual</em> bridge edges, so ReCom can reach every precinct. The bridges are chosen deterministically by geography (nearest precinct, same county preferred) and are invisible to scoring &mdash; they never count as cut edges and the file on disk is never changed. The "disconnected components" error now appears only in the rare case where bridging can't find a valid link (e.g. degenerate geometry).</dd>
           <dt><strong>The launcher fails on first run.</strong></dt>
           <dd>See the <a href="install.html">install page</a> troubleshooting section &mdash; SmartScreen on Windows, Gatekeeper on Mac, and a few common <code>uv</code> install failure modes.</dd>
           <dt><strong>Why is the first iteration slow?</strong></dt>
@@ -552,6 +584,9 @@
         </p>
         <p>
           <strong>Relationship to canonical ReCom, MergeSplit, and GerryChain.</strong> Mosaic borrows the recombination proposal from ReCom but accepts each proposal under simulated annealing keyed to a weighted plan score, rather than under a Metropolis-Hastings rule designed to produce a known stationary distribution over valid partitions. That distinction matters: canonical ensemble samplers — ReCom in <a href="https://github.com/mggg/GerryChain">GerryChain</a> and the corrected MergeSplit variant in <a href="https://alarm-redist.org/redist/">redist</a> — are designed so that the distribution of accepted plans supports statistical inference (for example, "this enacted plan is an outlier compared to the distribution of valid plans"). Mosaic, with the simulated-annealing layer biasing the chain toward score improvements as it cools, instead produces an <em>optimized</em> plan under the user's weighted objectives. Mosaic runs should not be cited for ensemble-style outlier claims; use redist or GerryChain for that.
+        </p>
+        <p>
+          <strong>Islands and connectivity.</strong> ReCom needs a single connected adjacency graph. When a shapefile has islands or exclaves, Mosaic links each detached component to the mainland with one virtual bridge edge, chosen deterministically from geometry (nearest precinct, same county preferred). Virtual edges keep the graph connected so moves can reach an island, but they are excluded from the cut-edge count and every other score, and the shapefile on disk is never modified.
         </p>
         <p>
           Some features from the R version are implemented differently here, and some are still in progress.

@@ -26,36 +26,32 @@ from __future__ import annotations
 import numpy as np
 from scipy.special import ndtr, ndtri
 
-# Optional Numba JIT for the Poisson Binomial DP inner loop.
-try:
-    from numba import njit as _njit
+# Numba JIT for the Poisson Binomial DP inner loop.
+from numba import njit
 
-    @_njit(cache=True)
-    def _nb_pb_ge_batched(p_wins, threshold):
-        """JIT Poisson Binomial P(sum >= threshold) for M scenarios × n districts."""
-        M = p_wins.shape[0]
-        n = p_wins.shape[1]
-        dp = np.zeros((M, n + 1))
-        for i in range(M):
-            dp[i, 0] = 1.0
-        for j in range(n):
-            for i in range(M):
-                p = p_wins[i, j]
-                q = 1.0 - p
-                for k in range(n, 0, -1):
-                    dp[i, k] = dp[i, k] * q + dp[i, k - 1] * p
-                dp[i, 0] *= q
-        result = np.zeros(M)
-        for i in range(M):
-            s = 0.0
-            for k in range(threshold, n + 1):
-                s += dp[i, k]
-            result[i] = s
-        return result
 
-    _NUMBA_OK = True
-except ImportError:
-    _NUMBA_OK = False
+@njit(cache=True)
+def _nb_pb_ge_batched(p_wins, threshold):
+    """JIT Poisson Binomial P(sum >= threshold) for M scenarios × n districts."""
+    M = p_wins.shape[0]
+    n = p_wins.shape[1]
+    dp = np.zeros((M, n + 1))
+    for i in range(M):
+        dp[i, 0] = 1.0
+    for j in range(n):
+        for i in range(M):
+            p = p_wins[i, j]
+            q = 1.0 - p
+            for k in range(n, 0, -1):
+                dp[i, k] = dp[i, k] * q + dp[i, k - 1] * p
+            dp[i, 0] *= q
+    result = np.zeros(M)
+    for i in range(M):
+        s = 0.0
+        for k in range(threshold, n + 1):
+            s += dp[i, k]
+        result[i] = s
+    return result
 
 # Shared swing uncertainty (partisan-environment sigma).
 # Default 0.03 (3pp). User-configurable via ScoreConfig.election_swing_sigma.
@@ -262,40 +258,6 @@ def score_dem_seats(
     return raw, penalty
 
 
-def score_competitiveness(
-    assignment: np.ndarray,
-    dem_votes: np.ndarray,
-    gop_votes: np.ndarray,
-    n_districts: int,
-    win_prob_at_55: float = 0.9,
-    swing_sigma: float = _EG_SWING_SIGMA,
-    _shares: np.ndarray | None = None,
-    _sigma_d: float | None = None,
-) -> float:
-    """
-    Mean non-competitiveness = mean(|2*P(win) - 1|).
-    0 = all seats perfectly competitive, 1 = all seats completely safe.
-    """
-    if _sigma_d is None:
-        _sigma_d = k_to_sigma(win_prob_at_55)
-    sigma_comb = float(np.sqrt(swing_sigma ** 2 + _sigma_d ** 2))
-    if _shares is None:
-        _shares, _ = district_dem_shares(assignment, dem_votes, gop_votes, n_districts)
-    p_win = p_win_gaussian(_shares, sigma_comb)
-    return float(np.abs(2.0 * p_win - 1.0).mean())
-
-
-def _poisson_binomial_ge(p_wins: np.ndarray, threshold: int) -> float:
-    """P(sum of independent Bernoullis >= threshold) via exact DP. O(n^2)."""
-    n = len(p_wins)
-    dp = np.zeros(n + 1)
-    dp[0] = 1.0
-    for p in p_wins:
-        dp[1:] = dp[1:] * (1.0 - p) + dp[:-1] * p
-        dp[0] *= (1.0 - p)
-    return float(dp[threshold:].sum())
-
-
 def _poisson_binomial_ge_batched(p_wins_matrix: np.ndarray, threshold: int) -> np.ndarray:
     """
     Vectorized P(sum >= threshold) for M independent-Bernoulli scenarios at once.
@@ -303,17 +265,19 @@ def _poisson_binomial_ge_batched(p_wins_matrix: np.ndarray, threshold: int) -> n
     p_wins_matrix: (M, n) — row k is the win-prob vector for scenario k.
     Returns: (M,) float array.
     """
-    if _NUMBA_OK:
-        return _nb_pb_ge_batched(p_wins_matrix, threshold)
-    M, n = p_wins_matrix.shape
-    dp = np.zeros((M, n + 1))
-    dp[:, 0] = 1.0
-    for j in range(n):
-        p = p_wins_matrix[:, j]
-        q = 1.0 - p
-        dp[:, 1:] = dp[:, 1:] * q[:, None] + dp[:, :-1] * p[:, None]
-        dp[:, 0] *= q
-    return dp[:, threshold:].sum(axis=1)
+    return _nb_pb_ge_batched(p_wins_matrix, threshold)
+
+
+def build_p_wins_matrix(
+    shares: np.ndarray, sigma_d: float, swing_sigma: float,
+) -> np.ndarray:
+    """(M, n) Gauss-Hermite win-prob matrix used by both the majority-chance
+    and hinge scorers. Identical inputs -> identical matrix, so score_plan
+    builds it once per iteration and shares it across both scorers."""
+    inv_sigma_d = 1.0 / sigma_d
+    centered = (shares - 0.5) * inv_sigma_d
+    node_offsets = _GH_NODES * swing_sigma * inv_sigma_d   # (M,)
+    return ndtr(centered[None, :] + node_offsets[:, None])  # (M, n)
 
 
 def score_hinge_chance(
@@ -326,6 +290,7 @@ def score_hinge_chance(
     swing_sigma: float = _EG_SWING_SIGMA,
     _shares: np.ndarray | None = None,
     _sigma_d: float | None = None,
+    _p_wins: np.ndarray | None = None,
 ) -> float:
     """
     P(D wins >= dem_threshold districts), integrated over the shared swing.
@@ -334,6 +299,7 @@ def score_hinge_chance(
     P(R wins >= k) = P(D wins >= n - k + 1) → pass dem_threshold = n - k + 1.
 
     _shares / _sigma_d: pre-computed values from score_plan to avoid redundant work.
+    _p_wins: pre-built (M, n) win-prob matrix shared with score_majority_chance.
     Returns the probability (float in [0, 1]).
     """
     if _sigma_d is None:
@@ -341,13 +307,9 @@ def score_hinge_chance(
     if _shares is None:
         _shares, _ = district_dem_shares(assignment, dem_votes, gop_votes, n_districts)
 
-    inv_sigma_d = 1.0 / _sigma_d
-    centered    = (_shares - 0.5) * inv_sigma_d
-
-    # Build (M, n) win-prob matrix for all GH nodes at once, then one batched DP call
-    node_offsets = _GH_NODES * swing_sigma * inv_sigma_d   # (M,)
-    p_wins_matrix = ndtr(centered[None, :] + node_offsets[:, None])  # (M, n)
-    p_per_node = _poisson_binomial_ge_batched(p_wins_matrix, dem_threshold)  # (M,)
+    if _p_wins is None:
+        _p_wins = build_p_wins_matrix(_shares, _sigma_d, swing_sigma)
+    p_per_node = _poisson_binomial_ge_batched(_p_wins, dem_threshold)  # (M,)
     return float(np.dot(_GH_WEIGHTS, p_per_node)) / _GH_NORM
 
 
@@ -360,11 +322,13 @@ def score_majority_chance(
     swing_sigma: float = _EG_SWING_SIGMA,
     _shares: np.ndarray | None = None,
     _sigma_d: float | None = None,
+    _p_wins: np.ndarray | None = None,
 ) -> tuple[float, float, float, float]:
     """
     Probability each party wins a majority of districts, integrated over the shared swing.
 
     _shares / _sigma_d: pre-computed values from score_plan to avoid redundant work.
+    _p_wins: pre-built (M, n) win-prob matrix shared with score_hinge_chance.
 
     Returns:
         p_dem_maj   -- P(Dems win strict majority; no ties)
@@ -378,11 +342,9 @@ def score_majority_chance(
         _shares, _ = district_dem_shares(assignment, dem_votes, gop_votes, n_districts)
     majority = n_districts // 2 + 1   # strict majority: more seats than opponent, no ties
 
-    inv_sigma_d  = 1.0 / _sigma_d
-    centered     = (_shares - 0.5) * inv_sigma_d
-    node_offsets = _GH_NODES * swing_sigma * inv_sigma_d          # (M,)
-    p_wins_matrix = ndtr(centered[None, :] + node_offsets[:, None])  # (M, n)
-    p_per_node_dem = _poisson_binomial_ge_batched(p_wins_matrix, majority)  # (M,)
+    if _p_wins is None:
+        _p_wins = build_p_wins_matrix(_shares, _sigma_d, swing_sigma)
+    p_per_node_dem = _poisson_binomial_ge_batched(_p_wins, majority)  # (M,)
     p_dem = float(np.dot(_GH_WEIGHTS, p_per_node_dem)) / _GH_NORM
 
     if n_districts % 2 == 1:
@@ -392,7 +354,7 @@ def score_majority_chance(
         # Even districts: ties are possible, need separate calculation
         # P(R majority) = P(D wins <= n//2 - 1) = 1 - P(D wins >= n//2)
         tie_threshold = n_districts // 2
-        p_per_node_tie = _poisson_binomial_ge_batched(p_wins_matrix, tie_threshold)
+        p_per_node_tie = _poisson_binomial_ge_batched(_p_wins, tie_threshold)
         p_dem_ge_tie = float(np.dot(_GH_WEIGHTS, p_per_node_tie)) / _GH_NORM
         p_rep = 1.0 - p_dem_ge_tie
 

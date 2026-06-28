@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 import numpy as np
 import igraph as ig
-from typing import Optional, Tuple
+from typing import Optional
 
 
 @dataclass
@@ -37,6 +37,21 @@ class FbcScratch:
 
 try:
     from numba import njit as _njit
+
+    @_njit(cache=True)
+    def _nb_cut_edges(eu, ev, assignment, out):
+        """Emit indices of edges whose endpoints differ in district, ascending.
+
+        Bit-identical to np.where(assignment[eu] != assignment[ev])[0] (both
+        scan edges in ascending index order), but a single branchy pass with no
+        7529-wide fancy-gather / boolean temporaries. `out` must hold n_edges.
+        """
+        cnt = 0
+        for i in range(eu.shape[0]):
+            if assignment[eu[i]] != assignment[ev[i]]:
+                out[cnt] = i
+                cnt += 1
+        return cnt
 
     @_njit(cache=True)
     def _nb_build_csr(eu_m, ev_m, n_nodes, indptr, indices, degree, cursor):
@@ -299,16 +314,6 @@ try:
 
 except ImportError:
     _NUMBA_OK = False
-
-
-def random_spanning_tree_ig(graph: ig.Graph) -> ig.Graph:
-    """Generate a random spanning tree (random weights + MST). Used by partition."""
-    n_edges = graph.ecount()
-    if n_edges == 0:
-        raise ValueError("Cannot create spanning tree of graph with no edges")
-    weights = np.random.random(n_edges)
-    mst_edges = graph.spanning_tree(weights=weights, return_tree=False)
-    return graph.subgraph_edges(mst_edges)
 
 
 def find_balanced_cut_ig(
@@ -848,124 +853,3 @@ def _get_subtree_nodes_fast(root: int, children: list, n: int) -> np.ndarray:
             result[count] = child
             count += 1
     return result[:count]
-
-
-def _get_subtree_nodes(root: int, children: list) -> list:
-    """Get all nodes in subtree rooted at given node."""
-    result = []
-    stack = [root]
-    while stack:
-        v = stack.pop()
-        result.append(v)
-        stack.extend(children[v])
-    return result
-
-
-# ── Legacy NetworkX implementations (kept for compatibility) ──────────────────
-
-import networkx as nx
-from collections import deque
-
-
-def random_spanning_tree(graph: nx.Graph) -> nx.Graph:
-    """NetworkX version — slower, kept for compatibility."""
-    n_edges = graph.number_of_edges()
-    if n_edges == 0:
-        raise ValueError("Cannot create spanning tree of graph with no edges")
-    weights = np.random.random(n_edges)
-    for i, (u, v) in enumerate(graph.edges()):
-        graph[u][v]["weight"] = weights[i]
-    return nx.minimum_spanning_tree(graph)
-
-
-def get_tree_structure(tree: nx.Graph, root: int) -> Tuple[dict, dict]:
-    """Compute parent and children for a rooted tree via BFS."""
-    parent = {root: None}
-    children = {node: [] for node in tree.nodes()}
-    queue = deque([root])
-    visited = {root}
-    while queue:
-        node = queue.popleft()
-        for neighbor in tree.neighbors(node):
-            if neighbor not in visited:
-                visited.add(neighbor)
-                parent[neighbor] = node
-                children[node].append(neighbor)
-                queue.append(neighbor)
-    return parent, children
-
-
-def calc_subtree_populations(children: dict, root: int, populations: np.ndarray) -> dict:
-    """Calculate subtree populations using post-order traversal."""
-    subtree_pops = {}
-    stack = [root]
-    post_order = []
-    while stack:
-        node = stack.pop()
-        post_order.append(node)
-        for child in children[node]:
-            stack.append(child)
-    for node in reversed(post_order):
-        pop = populations[node]
-        for child in children[node]:
-            pop += subtree_pops[child]
-        subtree_pops[node] = pop
-    return subtree_pops
-
-
-def get_subtree_nodes(node: int, children: dict) -> list:
-    """Get all nodes in subtree."""
-    result = []
-    queue = deque([node])
-    while queue:
-        current = queue.popleft()
-        result.append(current)
-        queue.extend(children[current])
-    return result
-
-
-def find_balanced_cut(
-    graph: nx.Graph,
-    populations: np.ndarray,
-    target_pop: float,
-    tolerance: float,
-    max_attempts: int = 1000,
-    one_sided: bool = False,
-    timeout: float | None = None,
-) -> list | None:
-    """NetworkX version — kept for compatibility."""
-    total_pop = sum(populations[n] for n in graph.nodes())
-    min_pop = target_pop * (1 - tolerance)
-    max_pop = target_pop * (1 + tolerance)
-    start_time = time.perf_counter() if timeout else None
-
-    for attempt in range(max_attempts):
-        if start_time and (time.perf_counter() - start_time) > timeout:
-            return None
-        tree = random_spanning_tree(graph)
-        candidates = [n for n, d in tree.degree() if d > 1]
-        if not candidates:
-            continue
-        root = candidates[np.random.randint(len(candidates))]
-        parent, children = get_tree_structure(tree, root)
-        subtree_pops = calc_subtree_populations(children, root, populations)
-
-        for node in tree.nodes():
-            if node == root or parent.get(node) is None:
-                continue
-            tree_pop = subtree_pops[node]
-            other_pop = total_pop - tree_pop
-            if one_sided:
-                tree_valid = min_pop <= tree_pop <= max_pop
-                other_valid = min_pop <= other_pop <= max_pop
-                if tree_valid or other_valid:
-                    if tree_valid:
-                        return get_subtree_nodes(node, children)
-                    else:
-                        subtree = set(get_subtree_nodes(node, children))
-                        return [n for n in graph.nodes() if n not in subtree]
-            else:
-                if min_pop <= tree_pop <= max_pop and min_pop <= other_pop <= max_pop:
-                    return get_subtree_nodes(node, children)
-
-    return None
