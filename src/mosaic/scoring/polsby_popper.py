@@ -20,6 +20,52 @@ from mosaic.scoring.precompute import PPData
 _TWO_PI = 4.0 * 3.141592653589793
 
 
+# ── Numba fused kernel ────────────────────────────────────────────────────────
+# Folds the per-district area + perimeter accumulation and the final mean into
+# three sequential loops with zero temporaries. Perimeter is summed in three
+# isolated accumulators (base / eu-cut / ev-cut) combined in a fixed order. No
+# fastmath.
+from numba import njit
+
+
+@njit(cache=True)
+def _score_pp_numba(assignment, areas, ext_perim, eu, ev, elen,
+                    n_districts, two_pi):
+    n = assignment.shape[0]
+    m = eu.shape[0]
+    area = np.zeros(n_districts)
+    # Separate accumulators sum the base / eu-cut / ev-cut perimeters in
+    # isolation and combine as (base + eu) + ev, so a district's perimeter is
+    # summed in a fixed, stable order regardless of district size.
+    p_base = np.zeros(n_districts)
+    p_eu = np.zeros(n_districts)
+    p_ev = np.zeros(n_districts)
+    # Pass 1: per-precinct area + exterior perimeter, in precinct order.
+    for i in range(n):
+        d = assignment[i]
+        area[d] += areas[i]
+        p_base[d] += ext_perim[i]
+    # Pass 2: shared boundary of cut edges, eu-side then ev-side, in edge order.
+    for i in range(m):
+        if assignment[eu[i]] != assignment[ev[i]]:
+            p_eu[assignment[eu[i]]] += elen[i]
+    for i in range(m):
+        if assignment[eu[i]] != assignment[ev[i]]:
+            p_ev[assignment[ev[i]]] += elen[i]
+    # Pass 3: per-district PP, summed in district order.
+    total = 0.0
+    for d in range(n_districts):
+        perim = (p_base[d] + p_eu[d]) + p_ev[d]
+        sp = perim if perim > 0.0 else 1.0
+        pp = two_pi * area[d] / (sp * sp)
+        if pp > 1.0:
+            pp = 1.0
+        elif pp < 0.0:
+            pp = 0.0
+        total += pp
+    return (1.0 - total / n_districts) * 100.0
+
+
 def score_polsby_popper(
     assignment: np.ndarray,
     pp_data: PPData,
@@ -34,26 +80,8 @@ def score_polsby_popper(
     Returns:
         float in [0, 100] — (1 - mean_PP) * 100, where 0 = perfectly compact
     """
-    dist_area = np.bincount(assignment, weights=pp_data.areas,
-                             minlength=n_districts).astype(np.float64)
-    dist_perim = np.bincount(assignment, weights=pp_data.ext_perimeters,
-                              minlength=n_districts).astype(np.float64)
-
-    eu, ev, elen = pp_data.edge_u, pp_data.edge_v, pp_data.edge_len
-    if len(eu) > 0:
-        eu_dist = assignment[eu]
-        ev_dist = assignment[ev]
-        is_cut = eu_dist != ev_dist
-        if is_cut.any():
-            cut_len = elen[is_cut]
-            # bincount is a fully-vectorized C scatter-add; np.add.at is a
-            # Python-level loop and is the historical bottleneck here.
-            dist_perim += np.bincount(eu_dist[is_cut], weights=cut_len,
-                                       minlength=n_districts)
-            dist_perim += np.bincount(ev_dist[is_cut], weights=cut_len,
-                                       minlength=n_districts)
-
-    safe_perim = np.where(dist_perim > 0.0, dist_perim, 1.0)
-    pp = _TWO_PI * dist_area / (safe_perim ** 2)
-    pp = np.clip(pp, 0.0, 1.0)
-    return float((1.0 - pp.mean()) * 100.0)
+    return float(_score_pp_numba(
+        assignment, pp_data.areas, pp_data.ext_perimeters,
+        pp_data.edge_u, pp_data.edge_v, pp_data.edge_len,
+        n_districts, _TWO_PI,
+    ))

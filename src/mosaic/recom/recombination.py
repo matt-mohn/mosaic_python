@@ -2,7 +2,7 @@
 
 import numpy as np
 import igraph as ig
-from typing import Optional, Tuple
+from typing import Optional
 
 from mosaic.recom.tree import (
     FbcScratch,
@@ -11,6 +11,8 @@ from mosaic.recom.tree import (
     try_residual_balanced_cut,
     _NUMBA_OK,
 )
+if _NUMBA_OK:
+    from mosaic.recom.tree import _nb_cut_edges
 
 
 class GraphContext:
@@ -21,7 +23,8 @@ class GraphContext:
     edge endpoint arrays on each iteration. Also owns the persistent scratch
     buffers for the Numba fast path (find_balanced_cut_fast).
     """
-    __slots__ = ('graph', 'edge_u', 'edge_v', 'n_nodes', 'n_edges', 'scratch')
+    __slots__ = ('graph', 'edge_u', 'edge_v', 'n_nodes', 'n_edges', 'scratch',
+                 'real_edge_mask', 'n_virtual')
 
     def __init__(self, graph: ig.Graph):
         self.graph = graph
@@ -35,11 +38,27 @@ class GraphContext:
         else:
             self.edge_u = np.empty(0, dtype=np.int32)
             self.edge_v = np.empty(0, dtype=np.int32)
+        # Virtual bridge edges keep islands reachable for moves but must not be
+        # counted as cut edges. real_edge_mask[i] is False for a virtual edge.
+        if "virtual" in graph.edge_attributes():
+            virt = np.asarray(graph.es["virtual"], dtype=bool)
+        else:
+            virt = np.zeros(self.n_edges, dtype=bool)
+        self.real_edge_mask = ~virt
+        self.n_virtual = int(virt.sum())
         self.scratch = FbcScratch.allocate(self.n_nodes, self.n_edges)
 
     def compute_cut_edges(self, assignment: np.ndarray) -> np.ndarray:
         """Vectorised cut-edge detection. Returns indices into edge_u/edge_v
-        of edges whose endpoints lie in different districts."""
+        of edges whose endpoints lie in different districts.
+
+        Includes virtual edges: move proposals select from this pool so an
+        island can be merged and reassigned. The cut-edge *score* masks them
+        out separately (see real_edge_mask / score_plan)."""
+        if _NUMBA_OK:
+            out = np.empty(self.n_edges, dtype=np.int32)
+            cnt = _nb_cut_edges(self.edge_u, self.edge_v, assignment, out)
+            return out[:cnt]
         return np.where(
             assignment[self.edge_u] != assignment[self.edge_v]
         )[0].astype(np.int32)
@@ -288,82 +307,3 @@ def recom_step_ig_n3(
     new_cut_edge_indices = ctx.compute_cut_edges(new_assignment)
 
     return new_assignment, True, new_cut_edge_indices
-
-
-# ── Legacy NetworkX implementation (kept for reference / compatibility) ───────
-
-import networkx as nx
-from mosaic.recom.tree import find_balanced_cut
-from mosaic.recom.partition import get_district_nodes
-
-
-def get_cut_edges(graph: nx.Graph, assignment: np.ndarray) -> list:
-    """Find all edges crossing district boundaries."""
-    cut_edges = []
-    for u, v in graph.edges():
-        if assignment[u] != assignment[v]:
-            cut_edges.append((u, v))
-    return cut_edges
-
-
-def check_contiguity(graph: nx.Graph, assignment: np.ndarray, district: int) -> bool:
-    """Check if a district is contiguous."""
-    nodes = get_district_nodes(assignment, district)
-    if len(nodes) == 0:
-        return False
-    subgraph = graph.subgraph(nodes)
-    return nx.is_connected(subgraph)
-
-
-def recom_step(
-    graph: nx.Graph,
-    assignment: np.ndarray,
-    populations: np.ndarray,
-    ideal_pop: float,
-    tolerance: float,
-) -> Tuple[np.ndarray, bool]:
-    """NetworkX version — slower, kept for compatibility."""
-    cut_edges = get_cut_edges(graph, assignment)
-    if not cut_edges:
-        return assignment, False
-
-    u, v = cut_edges[np.random.randint(len(cut_edges))]
-
-    district_a = assignment[u]
-    district_b = assignment[v]
-
-    nodes_a = np.flatnonzero(assignment == district_a)
-    nodes_b = np.flatnonzero(assignment == district_b)
-    merged_nodes = np.concatenate([nodes_a, nodes_b])
-
-    subgraph = graph.subgraph(merged_nodes)
-
-    if not nx.is_connected(subgraph):
-        return assignment, False
-
-    subset = find_balanced_cut(
-        subgraph,
-        populations,
-        ideal_pop,
-        tolerance,
-        max_attempts=100,
-    )
-
-    if subset is None:
-        return assignment, False
-
-    new_assignment = assignment.copy()
-    subset_set = set(subset)
-
-    for node in merged_nodes:
-        if node in subset_set:
-            new_assignment[node] = district_a
-        else:
-            new_assignment[node] = district_b
-
-    if not check_contiguity(graph, new_assignment, district_a):
-        return assignment, False
-    if not check_contiguity(graph, new_assignment, district_b):
-        return assignment, False
-
-    return new_assignment, True

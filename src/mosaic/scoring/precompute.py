@@ -52,6 +52,27 @@ class CountyData:
     n_counties: int
 
 
+def build_county_district_matrix(
+    assignment: np.ndarray,
+    county_ids: np.ndarray,
+    n_districts: int,
+    county_data: "CountyData",
+) -> np.ndarray:
+    """CxD population matrix: out[c, d] = total pop of (county c ∩ district d).
+
+    Both county_splits and holistic_splitting need this exact matrix every
+    iteration; building it once in score_plan and sharing it avoids a second
+    full-precinct bincount per step. Summation order matches each scorer's own
+    inline build (same flat_idx, same bincount), so results are bit-identical.
+    """
+    pops_f = county_data.pops_f
+    n_counties = county_data.n_counties
+    flat_idx = (county_ids * n_districts + assignment).astype(np.int64)
+    co_di_flat = np.bincount(flat_idx, weights=pops_f,
+                             minlength=n_counties * n_districts)
+    return co_di_flat.reshape(n_counties, n_districts)
+
+
 def find_county_array(gdf: gpd.GeoDataFrame) -> Optional[np.ndarray]:
     """
     Scan common column names for a county identifier.

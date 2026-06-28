@@ -31,14 +31,56 @@ from mosaic.recom.annealing import (
     init_annealing, accept_proposal, cool_temperature, relaunch_temperature,
 )
 from mosaic.scoring import score_plan
-from mosaic.scoring.precompute import PPData, precompute_pp_data
+from mosaic.scoring.precompute import (
+    PPData, precompute_pp_data, precompute_county_data,
+)
 from mosaic.scoring.reock import ReockData, precompute_reock_data
+from mosaic.scoring.alignment import AlignmentData
 from mosaic.scoring.cache import (
     get_pp_cache_path, load_cached_pp_data, save_cached_pp_data,
 )
 
 # Rolling window size for acceptance rate chart
 _ACCEPTANCE_WINDOW = 200
+
+# Tolerance Ratchet: over [_RATCHET_RAMP_START, 1.0] of the run the active
+# population tolerance drifts linearly from the user's map-wide tolerance down
+# to _RATCHET_FLOOR. The floor is clamped to the start so a freakishly low
+# preset never gets loosened (effective_floor = min(floor, start)).
+_RATCHET_FLOOR = 0.0025        # 0.25%
+_RATCHET_RAMP_START = 0.33     # ramp begins at the 33% mark
+
+
+def ratchet_ceiling(progress: float, start_tol: float, floor: float) -> float:
+    """Scheduled population-tolerance ceiling at a given run progress [0, 1].
+
+    Flat at start_tol until _RATCHET_RAMP_START, then linear down to floor at
+    progress 1.0. Callers clamp floor to start_tol (min) so the schedule is
+    monotonically non-increasing and never loosens a tight preset.
+    """
+    if progress <= _RATCHET_RAMP_START:
+        return start_tol
+    frac = (progress - _RATCHET_RAMP_START) / (1.0 - _RATCHET_RAMP_START)
+    return start_tol + (floor - start_tol) * min(frac, 1.0)
+
+
+def ratchet_step(
+    active_tol: float,
+    progress: float,
+    start_tol: float,
+    floor: float,
+    map_max_dev: float,
+) -> float:
+    """Next hard tolerance for one eligible ratchet point (all fractions).
+
+    Drops active_tol down to hug the map's achieved deviation, floored by the
+    scheduled soft ceiling: target = max(soft_ceiling, map_max_dev). Bounded by
+    min(active_tol, target) so it only ever tightens. Because the soft ceiling
+    floors the result, the hard value can sit above it (e.g. soft 1.4%, map
+    1.7% -> 1.7%) instead of snapping to the schedule and stranding the map.
+    """
+    soft = ratchet_ceiling(progress, start_tol, floor)
+    return min(active_tol, max(soft, map_max_dev))
 
 
 def _build_score_breakdown(ps, cfg) -> dict:
@@ -54,10 +96,11 @@ def _build_score_breakdown(ps, cfg) -> dict:
     _add("Excess Splits",    cfg.weight_county_excess  * ps.county_excess_score)
     _add("Single-County Districts", cfg.weight_county_unified * ps.county_unified_score)
     _add("Holistic Splitting", cfg.weight_holistic_splitting * ps.holistic_splitting)
-    _add("Compactness", cfg.weight_polsby_popper * ps.polsby_popper)
+    _add("Polsby-Popper", cfg.weight_polsby_popper * ps.polsby_popper)
     _add("Reock", cfg.weight_reock * ps.reock)
-    _add("Holistic Compactness", cfg.weight_holistic_compactness * ps.holistic_compactness)
+    _add("Compactness", cfg.weight_holistic_compactness * ps.holistic_compactness)
     _add("Population Deviation", cfg.weight_pop_deviation * ps.pop_deviation)
+    _add("Alignment", cfg.weight_alignment * ps.alignment)
     # MM / EG breakdown re-uses score_plan's exact math by recomputing the
     # per-mode penalty from the stored raw values.
     def _mm_eg_pen(raw: float, mode: str, bound: float) -> float:
@@ -76,10 +119,9 @@ def _build_score_breakdown(ps, cfg) -> dict:
              _mm_eg_pen(ps.efficiency_gap, cfg.eg_mode, cfg.eg_bound))
     if cfg.weight_dem_seats:
         _add("Dem Seats", cfg.weight_dem_seats * ps.dem_seats_penalty)
-    _add("Holistic Proportionality",
+    _add("Proportionality",
          cfg.weight_holistic_proportionality * ps.holistic_proportionality)
-    _add("Competitiveness", cfg.weight_competitiveness * ps.competitiveness * 100)
-    _add("Holistic Competitiveness",
+    _add("Competitiveness",
          cfg.weight_holistic_competitiveness * ps.holistic_competitiveness)
     if cfg.weight_majority_chance_dem:
         _add("D Majority", cfg.weight_majority_chance_dem *
@@ -106,6 +148,7 @@ class AlgorithmRunner:
         self.county_pops: Optional[np.ndarray] = None
         self.pp_data: Optional[PPData] = None
         self.reock_data: Optional[ReockData] = None
+        self.alignment_data: Optional[AlignmentData] = None
         self.election_arrays: list[tuple[np.ndarray, np.ndarray]] = []
         self.id_col_name: str = "precinct_id"
 
@@ -342,12 +385,14 @@ class AlgorithmRunner:
          county_bias_enabled, county_bias,
          n3_probability, n3_max_attempts_per_stage,
          flip_enabled, flip_midpoint,
+         tolerance_ratchet_mode,
          hot_start_assignment) = self.state.get(
             "num_districts", "pop_tolerance", "max_iterations", "seed",
             "score_config", "annealing_config",
             "county_bias_enabled", "county_bias",
             "n3_probability", "n3_max_attempts_per_stage",
             "flip_enabled", "flip_midpoint",
+            "tolerance_ratchet_mode",
             "hot_start_assignment",
         )
 
@@ -382,17 +427,75 @@ class AlgorithmRunner:
                 f"(5%->50% at p={flip_midpoint:.2f}->85%, steepness={_FLIP_STEEPNESS})"
             )
 
+        # Precompute county constants once per run (county_pops / allowances /
+        # max_clean / pops_f). The per-iteration county scorers reuse these
+        # instead of rebuilding them every step. Scoring always uses the fixed
+        # map-wide tolerance (not the ratchet's active_tolerance), so this stays
+        # valid for the whole run.
+        county_data = (
+            precompute_county_data(
+                self.county_array, self.populations, ideal_pop, tolerance,
+            )
+            if self.county_array is not None
+            else None
+        )
+
         _skw = dict(
             county_ids=self.county_array,
+            county_data=county_data,
             populations=self.populations,
             ideal_pop=ideal_pop,
             tolerance=tolerance,
             pp_data=self.pp_data,
             reock_data=self.reock_data,
+            alignment_data=self.alignment_data,
             n_districts=num_districts,
             dem_votes=self.election_arrays[0][0] if self.election_arrays else None,
             gop_votes=self.election_arrays[0][1] if self.election_arrays else None,
+            real_edge_mask=ctx.real_edge_mask,
         )
+
+        # ── Tolerance Ratchet setup ──────────────────────────────────────────
+        # active_tolerance starts at the user's map-wide tolerance and only ever
+        # tightens. effective_floor is clamped to the start so a preset already
+        # at/below the floor stays flat (the ratchet becomes a no-op, never
+        # loosens). When on, force pop-deviation components so pop_dev_max is
+        # available regardless of the deviation score's weight.
+        ratchet_mode = tolerance_ratchet_mode or "off"
+        ratchet_on = ratchet_mode in ("standard", "strict")
+        ratchet_strict = ratchet_mode == "strict"
+        active_tolerance = tolerance
+        ratchet_floor = min(_RATCHET_FLOOR, tolerance)
+        if ratchet_on:
+            _skw["force_pop_components"] = True
+            log.info(
+                f"Tolerance Ratchet ({ratchet_mode}): {tolerance*100:.2f}% -> "
+                f"{ratchet_floor*100:.2f}% over run progress "
+                f"[{_RATCHET_RAMP_START:.0%}, 100%]"
+            )
+        self.state.update(active_pop_tolerance=active_tolerance)
+
+        def _apply_ratchet() -> None:
+            """Ratchet the hard tolerance down to hug the current map's max
+            deviation, with the scheduled soft ceiling as the floor it can reach.
+
+            target = max(soft_ceiling, map_max_dev): never below what the map
+            achieves (no stranding) and never below the schedule (no
+            over-tightening ahead of plan). Only ever decreases active_tolerance.
+            """
+            nonlocal active_tolerance
+            # current_ps.pop_dev_max is a percentage; convert to a fraction.
+            target = ratchet_step(
+                active_tolerance, iteration / max_iterations,
+                tolerance, ratchet_floor, current_ps.pop_dev_max / 100.0,
+            )
+            if target < active_tolerance:
+                active_tolerance = target
+                self.state.update(active_pop_tolerance=active_tolerance)
+                log.info(
+                    f"Tolerance Ratchet: tightened to {target*100:.3f}% at iter "
+                    f"{iteration} (max dev {current_ps.pop_dev_max:.3f}%)"
+                )
 
         worse_window: deque[int] = deque(maxlen=_ACCEPTANCE_WINDOW)
 
@@ -448,7 +551,6 @@ class AlgorithmRunner:
                 self.state.mm_history.append(current_ps.mean_median)
                 self.state.eg_history.append(current_ps.efficiency_gap)
                 self.state.dem_seats_history.append(current_ps.dem_seats)
-                self.state.competitive_count_history.append(0)
                 self.state.pp_history.append(1.0 - current_ps.polsby_popper / 100.0)
                 self.state.reock_history.append(1.0 - current_ps.reock / 100.0)
                 self.state.holistic_compactness_history.append(current_ps.holistic_compactness)
@@ -458,6 +560,8 @@ class AlgorithmRunner:
                 self.state.pop_deviation_history.append(current_ps.pop_deviation)
                 self.state.pop_dev_max_history.append(current_ps.pop_dev_max)
                 self.state.pop_dev_mean_history.append(current_ps.pop_dev_mean)
+                self.state.alignment_mean_ret_history.append(current_ps.alignment_mean_ret)
+                self.state.alignment_min_ret_history.append(current_ps.alignment_min_ret)
                 self.state.cut_edges_history.append(current_ps.cut_edges)
                 self.state.majority_dem_history.append(current_ps.majority_chance_dem)
                 self.state.majority_rep_history.append(current_ps.majority_chance_rep)
@@ -502,17 +606,6 @@ class AlgorithmRunner:
             (map_render_interval,) = self.state.get("map_render_interval")
             _last_map_time = 0.0
             _launch_watch_fired = False
-
-            # Competitive district count carries across iterations; refreshed
-            # only on accepted proposals (assignment is unchanged on reject).
-            comp_count = 0
-            if self.election_arrays:
-                _dem, _gop = self.election_arrays[0]
-                _dem_d = np.bincount(assignment, weights=_dem.astype(np.float64), minlength=num_districts)
-                _gop_d = np.bincount(assignment, weights=_gop.astype(np.float64), minlength=num_districts)
-                _tot_d = _dem_d + _gop_d
-                _shares = np.where(_tot_d > 0, _dem_d / _tot_d, 0.5)
-                comp_count = int((np.abs(_shares - 0.5) < 0.05).sum())
 
             for iteration in range(1, max_iterations + 1):
                 # Launch Watch: re-anchor temperature after the first N iters
@@ -580,27 +673,28 @@ class AlgorithmRunner:
                     _flip_p = 0.0
                 if flip_enabled and np.random.random() < _flip_p:
                     new_assignment, valid, new_cut_indices = flip_step_ig(
-                        ctx, assignment, self.populations, ideal_pop, tolerance,
+                        ctx, assignment, self.populations, ideal_pop, active_tolerance,
                         cut_edge_indices,
                         county_array=self.county_array,
                         county_bias=effective_bias,
                     )
                 elif n3_enabled and np.random.random() < n3_probability:
                     new_assignment, valid, new_cut_indices = recom_step_ig_n3(
-                        ctx, assignment, self.populations, ideal_pop, tolerance,
+                        ctx, assignment, self.populations, ideal_pop, active_tolerance,
                         cut_edge_indices,
                         county_array=self.county_array, county_bias=effective_bias,
                         max_attempts_per_stage=n3_max_attempts_per_stage,
                     )
                 else:
                     new_assignment, valid, new_cut_indices = recom_step_ig(
-                        ctx, assignment, self.populations, ideal_pop, tolerance,
+                        ctx, assignment, self.populations, ideal_pop, active_tolerance,
                         cut_edge_indices,
                         county_array=self.county_array, county_bias=effective_bias,
                     )
 
                 if not valid:
-                    self.state.update(current_iteration=iteration)
+                    self.state.update(current_iteration=iteration,
+                                      current_flip_rate=_flip_p)
                     if ann is not None:
                         cool_temperature(ann)
                     continue
@@ -626,21 +720,16 @@ class AlgorithmRunner:
                     current_ps = proposed_ps
                     self.state.update(
                         current_iteration=iteration,
+                        current_flip_rate=_flip_p,
                         current_assignment=assignment.copy(),
                         current_score=current_ps.total,
                         current_cut_edges=current_ps.cut_edges,
                         successful_steps=self.state.successful_steps + 1,
                         score_breakdown=_build_score_breakdown(current_ps, score_config),
                     )
-                    if self.election_arrays:
-                        _dem, _gop = self.election_arrays[0]
-                        _dem_d = np.bincount(assignment, weights=_dem.astype(np.float64), minlength=num_districts)
-                        _gop_d = np.bincount(assignment, weights=_gop.astype(np.float64), minlength=num_districts)
-                        _tot_d = _dem_d + _gop_d
-                        _shares = np.where(_tot_d > 0, _dem_d / _tot_d, 0.5)
-                        comp_count = int((np.abs(_shares - 0.5) < 0.05).sum())
                 else:
-                    self.state.update(current_iteration=iteration)
+                    self.state.update(current_iteration=iteration,
+                                      current_flip_rate=_flip_p)
 
                 n_score = n_temp = n_acc = 0
                 with self.state._lock:
@@ -652,7 +741,6 @@ class AlgorithmRunner:
                     self.state.mm_history.append(current_ps.mean_median)
                     self.state.eg_history.append(current_ps.efficiency_gap)
                     self.state.dem_seats_history.append(current_ps.dem_seats)
-                    self.state.competitive_count_history.append(comp_count)
                     self.state.pp_history.append(1.0 - current_ps.polsby_popper / 100.0)
                     self.state.reock_history.append(1.0 - current_ps.reock / 100.0)
                     self.state.holistic_compactness_history.append(current_ps.holistic_compactness)
@@ -662,6 +750,8 @@ class AlgorithmRunner:
                     self.state.pop_deviation_history.append(current_ps.pop_deviation)
                     self.state.pop_dev_max_history.append(current_ps.pop_dev_max)
                     self.state.pop_dev_mean_history.append(current_ps.pop_dev_mean)
+                    self.state.alignment_mean_ret_history.append(current_ps.alignment_mean_ret)
+                    self.state.alignment_min_ret_history.append(current_ps.alignment_min_ret)
                     self.state.cut_edges_history.append(current_ps.cut_edges)
                     self.state.majority_dem_history.append(current_ps.majority_chance_dem)
                     self.state.majority_rep_history.append(current_ps.majority_chance_rep)
@@ -692,6 +782,13 @@ class AlgorithmRunner:
                         best_temp_history_len=n_temp,
                         best_acc_history_len=n_acc,
                     )
+                    # Standard ratchet: only new-best plans are eligible.
+                    if ratchet_on and not ratchet_strict:
+                        _apply_ratchet()
+
+                # Strict ratchet: every iteration is eligible.
+                if ratchet_strict:
+                    _apply_ratchet()
 
                 _now = time.time()
                 if _now - _last_map_time >= map_render_interval:

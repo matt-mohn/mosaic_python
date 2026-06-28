@@ -130,10 +130,12 @@ def check_columns(
 def check_connectivity(graph: nx.Graph) -> list[str]:
     """Block if the adjacency graph is disconnected.
 
-    ReCom requires a connected graph. Islands / exclaves / data-error
-    components are real and common (HI, AK, barrier islands, etc.) but the
-    user has to remove them in their GIS tool before Mosaic can run — that's
-    a deliberate later fix per the beta scope.
+    ReCom requires a connected graph. Islands / exclaves (HI, AK, barrier
+    islands, etc.) are normally reconnected automatically by
+    bridge_components, which adds virtual edges during graph construction, so
+    a well-formed shapefile reaches here already connected. This check is the
+    safety net: it still fires if bridging could not find a valid link (e.g.
+    degenerate geometry), pointing the user at the offending rows.
     """
     components = list(nx.connected_components(graph))
     if len(components) <= 1:

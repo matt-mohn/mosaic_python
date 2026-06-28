@@ -22,10 +22,14 @@ def count_cut_edges(graph: nx.Graph, assignment: np.ndarray) -> int:
         assignment: District assignment array
 
     Returns:
-        Number of cut edges
+        Number of cut edges. Virtual bridge edges (attribute ``virtual``) are
+        excluded so island bridges stay invisible to scoring, matching the
+        hot-loop count in score_plan.
     """
     count = 0
-    for u, v in graph.edges():
+    for u, v, data in graph.edges(data=True):
+        if data.get("virtual"):
+            continue
         if assignment[u] != assignment[v]:
             count += 1
     return count

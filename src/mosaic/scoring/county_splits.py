@@ -34,6 +34,7 @@ def score_county_splits(
     tolerance: float,
     n_districts: int,
     county_data=None,
+    co_di_pop=None,
 ) -> tuple[float, float, int, int]:
     """
     Args:
@@ -69,10 +70,13 @@ def score_county_splits(
         min_dp      = max(ideal_pop * (1.0 - tolerance), 1.0)
         max_unified = int(np.floor(county_pops / min_dp).sum())
 
-    flat_idx   = (county_ids * n_districts + assignment).astype(np.int64)
-    co_di_flat = np.bincount(flat_idx, weights=pops_f,
-                             minlength=n_counties * n_districts)
-    co_di_pop  = co_di_flat.reshape(n_counties, n_districts)
+    # co_di_pop may be supplied by score_plan (shared with holistic_splitting)
+    # to avoid rebuilding the identical CxD matrix twice per iteration.
+    if co_di_pop is None:
+        flat_idx   = (county_ids * n_districts + assignment).astype(np.int64)
+        co_di_flat = np.bincount(flat_idx, weights=pops_f,
+                                 minlength=n_counties * n_districts)
+        co_di_pop  = co_di_flat.reshape(n_counties, n_districts)
 
     splits = (co_di_pop > 0).sum(axis=1)
     excess = np.maximum(0, splits - allowances)

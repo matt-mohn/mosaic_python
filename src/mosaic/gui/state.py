@@ -42,6 +42,12 @@ class SharedState:
     # Run parameters (set by GUI before run)
     num_districts: int = 0
     pop_tolerance: float = 0.025
+    # Tolerance Ratchet: "off" | "standard" | "strict". Drifts the active
+    # population tolerance down toward a floor over the back of the run; only
+    # tightens when the map already satisfies the lower bound (see runner).
+    tolerance_ratchet_mode: str = "off"
+    # Live tolerance after ratchet tightening (== pop_tolerance when off).
+    active_pop_tolerance: float = 0.025
     max_iterations: int = 1000
     seed: Optional[int] = None
 
@@ -54,6 +60,7 @@ class SharedState:
     # Run progress
     current_iteration: int = 0
     successful_steps: int = 0
+    current_flip_rate: float = 0.0   # live flip probability from the ramp curve
     start_time: float = 0.0
     end_time: float = 0.0
 
@@ -90,7 +97,6 @@ class SharedState:
     mm_history: list = field(default_factory=list)
     eg_history: list = field(default_factory=list)
     dem_seats_history: list = field(default_factory=list)
-    competitive_count_history: list = field(default_factory=list)
     pp_history: list = field(default_factory=list)
     reock_history: list = field(default_factory=list)
     holistic_compactness_history: list = field(default_factory=list)
@@ -100,6 +106,8 @@ class SharedState:
     pop_deviation_history: list = field(default_factory=list)
     pop_dev_max_history: list = field(default_factory=list)
     pop_dev_mean_history: list = field(default_factory=list)
+    alignment_mean_ret_history: list = field(default_factory=list)
+    alignment_min_ret_history: list = field(default_factory=list)
     cut_edges_history: list = field(default_factory=list)
     majority_dem_history: list = field(default_factory=list)
     majority_rep_history: list = field(default_factory=list)
@@ -114,6 +122,10 @@ class SharedState:
     initial_assignment: Optional[np.ndarray] = None  # frozen after first partition
     map_needs_update: bool = False          # pulsed True by runner on interval
     map_render_interval: float = 0.75       # seconds between map renders
+    # Geographic renumbering: (k,) 1-indexed label per stable color index, or
+    # None for the default stable_index+1 numbering. Label-only -- colors are
+    # unaffected. Set by Debug > Renumber; cleared on each new run.
+    district_label_map: Optional[np.ndarray] = None
 
     # County-edge bias (set by GUI before run)
     county_bias_enabled: bool = False
@@ -171,6 +183,7 @@ class SharedState:
                 "max_iterations": self.max_iterations,
                 "current_iteration": self.current_iteration,
                 "successful_steps": self.successful_steps,
+                "current_flip_rate": self.current_flip_rate,
                 "current_score": self.current_score,
                 "current_cut_edges": self.current_cut_edges,
                 "best_score": self.best_score,
@@ -186,6 +199,7 @@ class SharedState:
         with self._lock:
             self.current_iteration = 0
             self.successful_steps = 0
+            self.current_flip_rate = 0.0
             self.current_score = float("inf")
             self.current_cut_edges = 0
             self.best_score = float("inf")
@@ -209,7 +223,6 @@ class SharedState:
             self.mm_history = []
             self.eg_history = []
             self.dem_seats_history = []
-            self.competitive_count_history = []
             self.pp_history = []
             self.reock_history = []
             self.holistic_compactness_history = []
@@ -219,12 +232,15 @@ class SharedState:
             self.pop_deviation_history = []
             self.pop_dev_max_history = []
             self.pop_dev_mean_history = []
+            self.alignment_mean_ret_history = []
+            self.alignment_min_ret_history = []
             self.cut_edges_history = []
             self.majority_dem_history = []
             self.majority_rep_history = []
             self.hinge_history = []
             self.score_breakdown = {}
             self.initial_assignment = None
+            self.district_label_map = None
             # Note: hot_start_assignment is intentionally NOT cleared here -- it
             # persists across run resets so the user can re-run from the same
             # uploaded plan. The GUI clears it on shapefile change.

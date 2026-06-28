@@ -36,9 +36,16 @@ def save_cached_graph(
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     payload = {
+        "cache_version": 2,
         "fingerprint": shapefile_fingerprint(shapefile_path),
         "nodes": list(graph.nodes()),
         "edges": list(graph.edges()),
+        # Virtual bridge edges (added by bridge_components) carry an attribute
+        # that list(graph.edges()) drops, so persist them separately and re-tag
+        # on load. Version 2 caches without this key are rebuilt.
+        "virtual_edges": [
+            (u, v) for u, v, d in graph.edges(data=True) if d.get("virtual")
+        ],
         "populations": {n: graph.nodes[n].get("population", 0) for n in graph.nodes()},
     }
 
@@ -67,6 +74,15 @@ def load_cached_graph(
         log.warning(f"Graph cache unreadable at {cache_path}: {exc}. Rebuilding.")
         return None
 
+    # Pre-bridging caches (no version key) lack virtual edges and would load a
+    # disconnected graph; force a rebuild so islands get bridged.
+    if payload.get("cache_version") != 2:
+        log.info(
+            f"Graph cache for {Path(shapefile_path).name} predates virtual-edge "
+            f"bridging. Rebuilding."
+        )
+        return None
+
     live_fp = shapefile_fingerprint(shapefile_path)
     if not live_fp or payload.get("fingerprint") != live_fp:
         log.info(
@@ -82,4 +98,7 @@ def load_cached_graph(
             attrs["geometry"] = gdf.iloc[node].geometry
         G.add_node(node, **attrs)
     G.add_edges_from(payload["edges"])
+    for u, v in payload.get("virtual_edges", []):
+        if G.has_edge(u, v):
+            G[u][v]["virtual"] = True
     return G

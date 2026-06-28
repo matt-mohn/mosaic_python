@@ -6,8 +6,17 @@ Uses recombination (ReCom) to generate and optimize district maps.
 """
 
 import sys
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
-__version__ = "0.2.0"
+try:
+    # Single source of truth for the version: the installed distribution's
+    # metadata, which is populated from pyproject.toml [project] version. Bump
+    # the version in ONE place -- pyproject.toml -- on each release.
+    __version__ = _pkg_version("mosaic")
+except PackageNotFoundError:
+    # Running straight from source with no install (no package metadata). The
+    # app still runs; the update-check just has no real local version to compare.
+    __version__ = "0.0.0+source"
 
 
 def _die_friendly(msg: str) -> None:
