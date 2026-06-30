@@ -129,32 +129,3 @@ def calculate_population_score(
 
     deviations = np.abs(district_pops - ideal_pop) / ideal_pop
     return deviations.max()
-
-
-def get_population_stats(populations, assignment, num_districts):
-    """Backwards-compatible function."""
-    from dataclasses import dataclass as dc
-
-    @dc
-    class PopulationStats:
-        district_populations: np.ndarray
-        ideal_population: float
-        deviations: np.ndarray
-        max_deviation: float
-        mean_deviation: float
-
-    total_pop = populations.sum()
-    ideal_pop = total_pop / num_districts
-    district_pops = np.array([
-        populations[assignment == d].sum()
-        for d in range(num_districts)
-    ])
-    deviations = (district_pops - ideal_pop) / ideal_pop
-
-    return PopulationStats(
-        district_populations=district_pops,
-        ideal_population=ideal_pop,
-        deviations=deviations,
-        max_deviation=np.abs(deviations).max(),
-        mean_deviation=np.abs(deviations).mean(),
-    )

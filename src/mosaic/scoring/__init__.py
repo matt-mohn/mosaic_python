@@ -4,7 +4,6 @@ from mosaic.scoring.population import (
     count_cut_edges,
     get_plan_stats,
     calculate_population_score,
-    get_population_stats,
     PlanStats,
 )
 from mosaic.scoring.score import ScoreConfig, PlanScore, score_plan
@@ -39,7 +38,6 @@ __all__ = [
     "count_cut_edges",
     "get_plan_stats",
     "calculate_population_score",
-    "get_population_stats",
     "PlanStats",
     "ScoreConfig",
     "PlanScore",

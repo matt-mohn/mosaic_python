@@ -182,10 +182,6 @@ class MapView:
         # Cache of precise label positions: (assignment_copy, [(d, cx, cy), ...]).
         # Lets a renumber (text-only change) skip the distance transform.
         self._label_centers_cache = None
-        self._proj_scale: float = 1.0
-        self._proj_offset: tuple[float, float] = (0.0, 0.0)
-        self._proj_bounds: tuple[float, float] = (0.0, 0.0)  # (b0, b1)
-        self._proj_h: float = 0.0
         # Overlay mode flags (set by GUI callbacks)
         self.county_overlay: bool = False
         self.partisan_overlay: bool = False          # colour each precinct by its own partisan lean

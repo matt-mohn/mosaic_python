@@ -162,8 +162,3 @@ def _try_partition(
         on_progress(num_districts, num_districts)
 
     return assignment
-
-
-def get_district_nodes(assignment: np.ndarray, district: int) -> np.ndarray:
-    """Get array of node IDs assigned to a district."""
-    return np.where(assignment == district)[0]
