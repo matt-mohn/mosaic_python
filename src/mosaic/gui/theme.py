@@ -507,7 +507,6 @@ class ThemeManager:
         self._antinudge_themes: dict[str, int] = {}
         # palette name -> body font tag (0 = DPG default)
         self._body_fonts: dict[str, int] = {}
-        self._font_registry: Optional[int | str] = None
         # (item_tag, token_name) for every tracked text widget
         self._tracked: list[tuple[int | str, str]] = []
 
@@ -515,7 +514,7 @@ class ThemeManager:
 
     def build(self) -> None:
         # Shared font registry — created once, even if no palette uses fonts
-        self._font_registry = dpg.add_font_registry()
+        dpg.add_font_registry()
         for name, p in PALETTES.items():
             self._global_themes[name] = _build_global_theme(p)
             self._nudge_themes[name] = _build_nudge_theme(p, nudge=True)

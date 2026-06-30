@@ -332,7 +332,6 @@ class MosaicApp:
 
         # Track what data the current shapefile has
         self._has_elections: bool = False
-        self._has_county: bool = False
 
         # Tracks whether the last frame was in a "running" state, so we can
         # trigger a one-shot precise-label re-render on transitions out of
@@ -717,7 +716,7 @@ class MosaicApp:
                         callback=self._on_check_updates,
                     )
 
-                with dpg.menu(label="Advanced", tag="menu_debug") as self._debug_menu:
+                with dpg.menu(label="Advanced", tag="menu_debug"):
                     self._hot_start_load_item = dpg.add_menu_item(
                         label="Load Hot Start...",
                         callback=self._on_load_hot_start,
@@ -3440,7 +3439,6 @@ class MosaicApp:
 
         # Enable/disable county-dependent controls based on what was loaded
         has_county = cfg.county_col is not None
-        self._has_county = has_county
         self.theme.retoken(self._cs_lbl,
                            "secondary" if has_county else "disabled_deep")
         dpg.configure_item(self._cs_enabled, enabled=has_county)
@@ -4447,7 +4445,6 @@ class MosaicApp:
         self.runner = AlgorithmRunner(self.state)
         self._loaded_config = None
         self._has_elections = False
-        self._has_county    = False
         # Hot start was tied to the previous shapefile's precinct IDs.
         self.state.update(
             current_assignment=None,

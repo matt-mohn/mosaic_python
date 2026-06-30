@@ -149,7 +149,7 @@ def score_plan(
     cs_excess = cs_unified = 0
     mm_raw = eg_raw = seats_raw = 0.0
     seats_penalty = 0.0
-    hprop_raw = hprop_pen = hcmp_raw = hcmp_pen = 0.0
+    hprop_pen = hcmp_pen = 0.0
     maj_d_raw = maj_r_raw = hinge_raw = 0.0
 
     # The county-side scorers (excess/unified) and holistic_splitting all need
@@ -316,13 +316,13 @@ def score_plan(
 
         # Holistic scores piggyback on the shared partisan calibration so they
         # rank plans consistently with the rest of the partisan stack.
-        hprop_raw, hprop_pen = holistic_proportionality_from_shares(
+        _, hprop_pen = holistic_proportionality_from_shares(
             _shares, _total_d, _sigma_comb,
         )
         if config.weight_holistic_proportionality:
             total += config.weight_holistic_proportionality * hprop_pen
 
-        hcmp_raw, hcmp_pen = holistic_competitiveness_from_shares(
+        _, hcmp_pen = holistic_competitiveness_from_shares(
             _shares, _sigma_comb,
         )
         if config.weight_holistic_competitiveness:
