@@ -181,134 +181,45 @@ try:
         return cnt
 
     @_njit(cache=True)
-    def _nb_build_adj_csr(eu, ev, n_nodes, m,
-                          adj_ptr, adj_idx, adj_eid, adj_deg, adj_cur):
-        """Undirected adjacency CSR: edge i contributes one entry to eu[i] AND
-        one to ev[i], so the filled arrays have 2*m entries. adj_idx[k] is the
-        neighbor vertex; adj_eid[k] is the edge index back into (eu, ev, w).
-
-        Caller is responsible for sizing adj_idx and adj_eid to at least 2*m.
-        adj_deg / adj_cur are scratch (size n_nodes).
-        """
+    def _nb_collect_candidates(degree, n_nodes, out):
+        """Internal (degree > 1) MST nodes in ascending order — the per-attempt
+        root pool. Replaces np.flatnonzero(degree > 1): one branchy pass, no
+        boolean temporary and no flatnonzero allocation. Returns the count;
+        out[:count] holds the node ids. Ascending scan order matches
+        np.flatnonzero exactly, so the subsequent randint pick is identical."""
+        cnt = np.int32(0)
         for i in range(n_nodes):
-            adj_deg[i] = 0
-        for i in range(m):
-            adj_deg[eu[i]] += 1
-            adj_deg[ev[i]] += 1
-        adj_ptr[0] = 0
-        for i in range(n_nodes):
-            adj_ptr[i + 1] = adj_ptr[i] + adj_deg[i]
-            adj_cur[i] = adj_ptr[i]
-        for i in range(m):
-            u = eu[i]
-            v = ev[i]
-            adj_idx[adj_cur[u]] = v
-            adj_eid[adj_cur[u]] = i
-            adj_cur[u] += 1
-            adj_idx[adj_cur[v]] = u
-            adj_eid[adj_cur[v]] = i
-            adj_cur[v] += 1
+            if degree[i] > 1:
+                out[cnt] = i
+                cnt += 1
+        return cnt
 
     @_njit(cache=True)
-    def _nb_prim_mst(adj_ptr, adj_idx, adj_eid, eu, ev, weights, n_nodes,
-                     in_tree, heap_w, heap_e, heap_v,
-                     mst_eu, mst_ev):
-        """Prim's MST via binary min-heap with lazy deletion.
+    def _nb_first_valid_cut(stpops, total_pop, min_pop, max_pop,
+                            one_sided, root, n_nodes):
+        """Lowest node index i (i != root) whose cut edge yields a balanced
+        bipartition, or -1 if none exists.
 
-        Heap entries are (weight, edge_idx, far_vertex). When we pop a stale
-        entry (far_vertex already in tree), we drop it and continue — avoids
-        the cost of decrease-key. Each undirected edge gets pushed at most
-        twice (once from each endpoint becoming the tree-side), so heap arrays
-        must be sized to at least 2*m. Caller initializes in_tree to False;
-        we do not reset it here (cheap responsibility shift).
-
-        Returns the MST edge count. Equals n_nodes-1 iff the input graph is
-        connected. On a disconnected input the caller's BFS will fail the
-        validity check and the attempt is silently dropped, mirroring Kruskal.
-        """
-        # Seed from vertex 0
-        in_tree[0] = True
-        heap_size = np.int32(0)
-        p_lo = adj_ptr[0]
-        p_hi = adj_ptr[1]
-        for p in range(p_lo, p_hi):
-            far = adj_idx[p]
-            e = adj_eid[p]
-            heap_w[heap_size] = weights[e]
-            heap_e[heap_size] = e
-            heap_v[heap_size] = far
-            heap_size += 1
-            # sift-up
-            i = heap_size - 1
-            while i > 0:
-                par = (i - 1) >> 1
-                if heap_w[par] > heap_w[i]:
-                    tw = heap_w[par]; heap_w[par] = heap_w[i]; heap_w[i] = tw
-                    te = heap_e[par]; heap_e[par] = heap_e[i]; heap_e[i] = te
-                    tv = heap_v[par]; heap_v[par] = heap_v[i]; heap_v[i] = tv
-                    i = par
-                else:
-                    break
-
-        cnt = np.int32(0)
-        target = n_nodes - 1
-        while heap_size > 0 and cnt < target:
-            # pop min
-            min_e = heap_e[0]
-            min_v = heap_v[0]
-            heap_size -= 1
-            if heap_size > 0:
-                heap_w[0] = heap_w[heap_size]
-                heap_e[0] = heap_e[heap_size]
-                heap_v[0] = heap_v[heap_size]
-                # sift-down
-                i = np.int32(0)
-                while True:
-                    l = 2 * i + 1
-                    r = 2 * i + 2
-                    sm = i
-                    if l < heap_size and heap_w[l] < heap_w[sm]:
-                        sm = l
-                    if r < heap_size and heap_w[r] < heap_w[sm]:
-                        sm = r
-                    if sm == i:
-                        break
-                    tw = heap_w[sm]; heap_w[sm] = heap_w[i]; heap_w[i] = tw
-                    te = heap_e[sm]; heap_e[sm] = heap_e[i]; heap_e[i] = te
-                    tv = heap_v[sm]; heap_v[sm] = heap_v[i]; heap_v[i] = tv
-                    i = sm
-
-            if in_tree[min_v]:
-                continue  # stale entry — far vertex already absorbed
-
-            in_tree[min_v] = True
-            mst_eu[cnt] = eu[min_e]
-            mst_ev[cnt] = ev[min_e]
-            cnt += 1
-
-            # push edges leaving the newly-added vertex into non-tree vertices
-            p_lo = adj_ptr[min_v]
-            p_hi = adj_ptr[min_v + 1]
-            for p in range(p_lo, p_hi):
-                far = adj_idx[p]
-                if in_tree[far]:
-                    continue
-                e = adj_eid[p]
-                heap_w[heap_size] = weights[e]
-                heap_e[heap_size] = e
-                heap_v[heap_size] = far
-                heap_size += 1
-                i = heap_size - 1
-                while i > 0:
-                    par = (i - 1) >> 1
-                    if heap_w[par] > heap_w[i]:
-                        tw = heap_w[par]; heap_w[par] = heap_w[i]; heap_w[i] = tw
-                        te = heap_e[par]; heap_e[par] = heap_e[i]; heap_e[i] = te
-                        tv = heap_v[par]; heap_v[par] = heap_v[i]; heap_v[i] = tv
-                        i = par
-                    else:
-                        break
-        return cnt
+        Bit-identical to the numpy block it replaces:
+            other = total_pop - stpops
+            valid = (stp in [min,max]) {& or |} (other in [min,max])
+            valid[root] = False
+            return flatnonzero(valid)[0]   # lowest index
+        The scalar subtraction/compares are the same IEEE ops as the numpy
+        vectorised form, and the ascending scan returns the same lowest index,
+        so this changes nothing observable — it only removes ~4 per-attempt
+        numpy calls (subtract, two masks, flatnonzero) plus their temporaries."""
+        for i in range(n_nodes):
+            if i == root:
+                continue
+            s = stpops[i]
+            o = total_pop - s
+            s_ok = (s >= min_pop) and (s <= max_pop)
+            o_ok = (o >= min_pop) and (o <= max_pop)
+            ok = (s_ok or o_ok) if one_sided else (s_ok and o_ok)
+            if ok:
+                return i
+        return -1
 
     _NUMBA_OK = True
 
@@ -637,6 +548,7 @@ def find_balanced_cut_fast(
         _nb_stp   = np.zeros(n,                dtype=np.float64)
         _nb_insub = np.zeros(n,                dtype=np.bool_)
         _nb_res   = np.zeros(n,                dtype=np.int32)
+        _nb_cand  = np.empty(n,                dtype=np.int32)
         _uf_par   = np.empty(n,                dtype=np.int32)
         _uf_rank  = np.empty(n,                dtype=np.int32)
         _mst_eu   = np.empty(max(n - 1, 1),    dtype=np.int32)
@@ -672,27 +584,24 @@ def find_balanced_cut_fast(
             _nb_build_csr(_mst_eu[:k], _mst_ev[:k], n,
                           _nb_ptr, _nb_idx, _nb_deg, _nb_cur)
 
-            candidates = np.flatnonzero(_nb_deg > 1)
-            if len(candidates) == 0:
+            n_cand = int(_nb_collect_candidates(_nb_deg, n, _nb_cand))
+            if n_cand == 0:
                 continue
-            root = int(candidates[np.random.randint(len(candidates))])
+            root = int(_nb_cand[np.random.randint(n_cand)])
 
             tail = _nb_bfs_subtree(_nb_ptr, _nb_idx, n, sub_pops,
                                    np.int32(root), _nb_par, _nb_bfsq,
                                    _nb_stp, _nb_vis)
 
-            other_pops = total_pop - _nb_stp
-            if one_sided:
-                valid = (((_nb_stp >= min_pop) & (_nb_stp <= max_pop)) |
-                         ((other_pops >= min_pop) & (other_pops <= max_pop)))
-            else:
-                valid = ((_nb_stp >= min_pop) & (_nb_stp <= max_pop) &
-                         (other_pops >= min_pop) & (other_pops <= max_pop))
-            valid[root] = False
-            valid_indices = np.flatnonzero(valid)
+            # Lowest valid cut node, scanned in Numba (replaces the per-attempt
+            # other_pops / valid-mask / flatnonzero numpy block). Bit-identical
+            # selection; just fewer numpy dispatches in the inner loop.
+            v = int(_nb_first_valid_cut(
+                _nb_stp, total_pop, min_pop, max_pop, one_sided,
+                np.int32(root), n,
+            ))
 
-            if len(valid_indices) > 0:
-                v = int(valid_indices[0])
+            if v >= 0:
                 cnt = _nb_collect_subtree(np.int32(v), _nb_bfsq, tail,
                                           _nb_par, _nb_insub, _nb_res)
                 subtree_nodes = _nb_res[:cnt]

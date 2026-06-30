@@ -45,13 +45,17 @@ def _score_pp_numba(assignment, areas, ext_perim, eu, ev, elen,
         d = assignment[i]
         area[d] += areas[i]
         p_base[d] += ext_perim[i]
-    # Pass 2: shared boundary of cut edges, eu-side then ev-side, in edge order.
+    # Pass 2: shared boundary of cut edges. p_eu and p_ev are independent
+    # accumulators, so summing both in a single edge-order pass leaves each
+    # one's summation order (and therefore its exact bit pattern) identical to
+    # the old two-pass form — it just evaluates the cut test once per edge and
+    # halves the edge scans.
     for i in range(m):
-        if assignment[eu[i]] != assignment[ev[i]]:
-            p_eu[assignment[eu[i]]] += elen[i]
-    for i in range(m):
-        if assignment[eu[i]] != assignment[ev[i]]:
-            p_ev[assignment[ev[i]]] += elen[i]
+        du = assignment[eu[i]]
+        dv = assignment[ev[i]]
+        if du != dv:
+            p_eu[du] += elen[i]
+            p_ev[dv] += elen[i]
     # Pass 3: per-district PP, summed in district order.
     total = 0.0
     for d in range(n_districts):
