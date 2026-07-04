@@ -642,21 +642,25 @@
 
         for (const section of sections) {
           let sectionVisible = false;
-          const dl = section.querySelector('dl');
+          const dls = section.querySelectorAll('dl');
 
-          if (dl) {
-            // Filter glossary entries individually; section is visible if
-            // any entry matches (or if no query).
-            const dts = dl.querySelectorAll(':scope > dt');
-            for (const dt of dts) {
-              const dd = dt.nextElementSibling;
-              const text = (
-                dt.textContent + ' ' + (dd && dd.tagName === 'DD' ? dd.textContent : '')
-              ).toLowerCase();
-              const match = !q || text.includes(q);
-              dt.style.display = match ? '' : 'none';
-              if (dd && dd.tagName === 'DD') dd.style.display = match ? '' : 'none';
-              if (match) sectionVisible = true;
+          if (dls.length) {
+            // Filter glossary entries individually across every dl in the
+            // section -- sections like Run Config carry one dl per subsection
+            // (ReCom, Population, Annealing, Seed...), so we must scan them all,
+            // not just the first. Section is visible if any entry matches.
+            for (const dl of dls) {
+              const dts = dl.querySelectorAll(':scope > dt');
+              for (const dt of dts) {
+                const dd = dt.nextElementSibling;
+                const text = (
+                  dt.textContent + ' ' + (dd && dd.tagName === 'DD' ? dd.textContent : '')
+                ).toLowerCase();
+                const match = !q || text.includes(q);
+                dt.style.display = match ? '' : 'none';
+                if (dd && dd.tagName === 'DD') dd.style.display = match ? '' : 'none';
+                if (match) sectionVisible = true;
+              }
             }
             // Section also visible if non-glossary text matches (intro paragraphs).
             if (!sectionVisible && q) {
