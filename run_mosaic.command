@@ -48,10 +48,12 @@ if ! command -v uv &>/dev/null; then
 fi
 
 echo "Starting Mosaic..."
-echo "(First launch installs dependencies — 2-3 minutes. Subsequent launches are instant.)"
+if [ ! -d ".venv" ]; then
+    echo "First launch: installing dependencies (2-3 minutes). Subsequent launches are instant."
+fi
 echo ""
 
-uv run python -m mosaic.gui.app
+uv run python -m mosaic
 ec=$?
 
 if [ $ec -ne 0 ]; then

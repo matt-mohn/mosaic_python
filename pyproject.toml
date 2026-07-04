@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mosaic"
-version = "0.3.0"  # SINGLE SOURCE OF TRUTH -- bump on every public release (drives __version__ + the in-app update check)
+version = "0.3.1"  # SINGLE SOURCE OF TRUTH -- bump on every public release (drives __version__ + the in-app update check)
 description = "Redistricting toolkit using recombination (ReCom) algorithms"
 readme = "README.md"
 requires-python = ">=3.10"
