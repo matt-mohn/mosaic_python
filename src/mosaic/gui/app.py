@@ -5,6 +5,7 @@ import threading
 import time
 import warnings
 import webbrowser
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -15,6 +16,7 @@ _UPDATE_CHECK_URL = (
     "https://raw.githubusercontent.com/matt-mohn/mosaic_python/main/pyproject.toml"
 )
 _DOCS_SHAPEFILE_URL = "https://matt-mohn.github.io/mosaic_python/shapefiles.html"
+_DOWNLOAD_URL = "https://matt-mohn.github.io/mosaic_python/install.html"
 
 _ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 _APP_ICON = _ASSETS_DIR / "mosaic_logo.ico"
@@ -186,6 +188,15 @@ _SCORE_H      = 250    # pinned bottom score panel height
 _SCORE_COL_W  = (_VP_W - 40) // 3   # ~433px per score column
 _MAP_H        = 390    # map panel height (child_window)
 _MAP_DW       = _VP_W - _LEFT_W - 32   # texture pixel width  (~868)
+
+# ── Dialog design language ────────────────────────────────────────────────────
+# Shared chrome/spacing for every little pop-out window (see _dialog / _dialog_
+# footer). Keeps the secondary windows in one visual language instead of each
+# reinventing size, centring, and button styling.
+_DIALOG_PAD   = 10     # window_padding.x — matches theme _Style.window_padding
+_DIALOG_GAP   = 8      # item_spacing.x between footer buttons
+_DIALOG_BTN_W = 90     # standard footer button width
+_DIALOG_RM    = 6      # right margin inside the content region for the footer
 _MAP_DH       = _MAP_H - 22            # texture pixel height (~368)
 _PLOT_H       = 155    # single-plot height (score row)
 _HALF_PLOT_H  = 150    # height of the two side-by-side plots
@@ -332,6 +343,12 @@ class MosaicApp:
 
         # Track what data the current shapefile has
         self._has_elections: bool = False
+
+        # Relight: a "continue-refining" mode that reseeds each run from the
+        # current on-screen map (mutually exclusive with Hot Start). _saved holds
+        # the annealing-control values captured when armed, restored on clear.
+        self._relight_active: bool = False
+        self._relight_saved: Optional[dict] = None
 
         # Tracks whether the last frame was in a "running" state, so we can
         # trigger a one-shot precise-label re-render on transitions out of
@@ -740,6 +757,31 @@ class MosaicApp:
                     )
 
                     dpg.add_separator()
+                    self._relight_item = dpg.add_menu_item(
+                        label="Relight",
+                        check=True, default_value=False, enabled=False,
+                        callback=self._on_relight_toggle,
+                    )
+                    self._tooltip(
+                        self._relight_item,
+                        "Continue refining from the current map: each Start "
+                        "reseeds from what's on screen (so runs chain), and a "
+                        "polish preset is applied (low initial heat, long guide, "
+                        "heavy n=3 mix, late flips; Launch Watch off). Needs a "
+                        "paused or finished run, and no Hot Start loaded.",
+                    )
+                    self._relight_clear_item = dpg.add_menu_item(
+                        label="Clear Relight",
+                        enabled=False,
+                        callback=lambda: self._clear_relight(),
+                    )
+                    self._tooltip(
+                        self._relight_clear_item,
+                        "Turn Relight off and restore the annealing settings to "
+                        "what they were before Relight was armed.",
+                    )
+
+                    dpg.add_separator()
                     self._renumber_after_run = dpg.add_menu_item(
                         label="Renumber districts after run",
                         check=True, default_value=True,
@@ -758,7 +800,7 @@ class MosaicApp:
                     self._tooltip(
                         self._renumber_options_item,
                         "Pick how districts are renumbered: None (off), "
-                        "NW to SE, or North to South.",
+                        "Northwest to Southeast, or North to South.",
                     )
 
             with dpg.child_window(height=_TOP_H, border=False,
@@ -767,10 +809,6 @@ class MosaicApp:
 
                     # ── Left column ───────────────────────────────────────────
                     with dpg.child_window(width=_LEFT_W, border=False):
-
-                        self.theme.text("Mosaic", "title")
-                        dpg.add_separator()
-                        dpg.add_spacer(height=6)
 
                         self.theme.text("Load Shapefile", "heading")
                         dpg.add_separator()
@@ -786,6 +824,10 @@ class MosaicApp:
                             "", "warning",
                         )
                         dpg.configure_item(self._hot_start_info, show=False)
+                        self._relight_info = self.theme.text(
+                            "", "warning",
+                        )
+                        dpg.configure_item(self._relight_info, show=False)
 
                         dpg.add_spacer(height=6)
                         self.theme.text("Run Parameters", "heading")
@@ -1065,7 +1107,7 @@ class MosaicApp:
             # ── Score panel (bottom) ──────────────────────────────────────────
             with dpg.child_window(height=-1, border=True):
                 with dpg.group(horizontal=True):
-                    self.theme.text("For full scores, see toolbar", "muted")
+                    self.theme.text("Full list of scores available in toolbar", "muted")
                     dpg.add_spacer(width=12)
                     dpg.add_button(
                         label="Score Contributors >>",
@@ -1114,12 +1156,12 @@ class MosaicApp:
                                 self._w_county_excess = dpg.add_slider_int(
                                     label="Excess weight",
                                     default_value=1, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=_SCORE_COL_W - 175,
                                 )
                                 self._w_county_unified = dpg.add_slider_int(
                                     label="Single-county weight",
                                     default_value=1, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    width=_SCORE_COL_W - 175,
                                 )
                                 dpg.add_spacer(height=3)
                                 self._county_bias_enabled = dpg.add_checkbox(
@@ -1480,13 +1522,107 @@ class MosaicApp:
 
     # ── Popup builders ────────────────────────────────────────────────────────
 
+    # ── Shared dialog scaffolding ─────────────────────────────────────────────
+    def _dialog_pos(self, w: int, h: int) -> list:
+        """Centre a w x h window on the live viewport (falls back to the design
+        viewport size if it can't be queried yet)."""
+        try:
+            vp_w = dpg.get_viewport_client_width()
+            vp_h = dpg.get_viewport_client_height()
+        except Exception:
+            vp_w, vp_h = _VP_W, _VP_H
+        return [max(20, (vp_w - w) // 2), max(20, (vp_h - h) // 2)]
+
+    @contextmanager
+    def _dialog(self, title: str, tag: str, size, *,
+                primary=None, secondary=None, buttons=None, show: bool = True,
+                autosize: bool = True, modal: bool = True):
+        """Standard modal dialog: locked chrome, **auto-fit height**, fixed width,
+        centred, with a right-aligned themed footer built after the body.
+
+        ``size`` is ``(width, height_hint)``. Width is enforced (``min_size`` +
+        ``autosize``) so wrap widths and footer alignment stay predictable; height
+        auto-fits the content, so a dialog can never show a scrollbar or clip its
+        text -- size it once and it always fits. ``height_hint`` is used only to
+        centre the window vertically. Wrap long/dynamic text at ``width - 2 *
+        _DIALOG_PAD`` so it never forces the window wider.
+
+        Footer buttons come from either ``primary``/``secondary`` ``(label,
+        callback)`` tuples (primary blue, secondary grey) or a general ``buttons``
+        list for 3+ buttons -- each item ``(label, callback)`` (grey) or
+        ``(label, callback, "primary")`` (blue). Body widgets go in the ``with``
+        block. Callers own the lifecycle via the callbacks they pass (hide with
+        ``configure_item(tag, show=False)`` for build-once dialogs, or
+        ``delete_item(tag)`` for transient ones)."""
+        w, h = size
+        if dpg.does_item_exist(tag):
+            dpg.delete_item(tag)
+        win_kwargs = dict(label=title, tag=tag, modal=modal, no_close=True,
+                          no_collapse=True, no_resize=True, no_scrollbar=True,
+                          show=show, pos=self._dialog_pos(w, h))
+        if autosize:
+            # Auto-fit height, and pin the width to exactly w (min == max on the
+            # x axis). The window can never scroll, clip vertically, or -- the
+            # part that bites -- balloon sideways when a body item is wider than
+            # expected, which would leave the right-aligned footer floating away
+            # from the edge. Wrap long body text at w - 2 * _DIALOG_PAD so it
+            # doesn't clip against the pinned width.
+            win_kwargs.update(autosize=True, min_size=[w, 1],
+                              max_size=[w, 100_000])
+        else:
+            # Fixed size (readers that scroll their own inner child_window).
+            win_kwargs.update(width=w, height=h)
+        with dpg.window(**win_kwargs):
+            yield
+            self._dialog_footer(w, primary=primary, secondary=secondary,
+                                buttons=buttons)
+
+    @staticmethod
+    def _dialog_btn_w(label: str) -> int:
+        """Fit a footer button to its label while holding short labels to a
+        uniform minimum. Estimated (not measured), so it works even for dialogs
+        built before the first frame is rendered."""
+        return max(_DIALOG_BTN_W, 8 * len(label) + 26)
+
+    def _dialog_footer(self, w: int, *, primary=None, secondary=None,
+                       buttons=None) -> None:
+        """Right-aligned footer row: separator, then the buttons in order, the
+        primary blue (nudge) and the rest grey (anti-nudge)."""
+        rows = []
+        if buttons is not None:
+            for b in buttons:
+                rows.append((b[0], b[1], len(b) > 2 and b[2] == "primary"))
+        else:
+            if primary:
+                rows.append((primary[0], primary[1], True))
+            if secondary:
+                rows.append((secondary[0], secondary[1], False))
+        if not rows:
+            return
+        dpg.add_spacer(height=8)
+        dpg.add_separator()
+        dpg.add_spacer(height=6)
+        widths = [self._dialog_btn_w(r[0]) for r in rows]
+        block = sum(widths) + (len(rows) - 1) * _DIALOG_GAP
+        content_w = w - 2 * _DIALOG_PAD
+        lead = max(0, content_w - _DIALOG_RM - block)
+        with dpg.group(horizontal=True):
+            if lead:
+                dpg.add_spacer(width=lead)
+            for (label, callback, is_primary), bw in zip(rows, widths):
+                btag = dpg.add_button(label=label, width=bw, callback=callback)
+                dpg.bind_item_theme(
+                    btag,
+                    self.theme.nudge_theme if is_primary
+                    else self.theme.antinudge_theme,
+                )
+
     def _build_population_popup(self):
-        with dpg.window(
-            label="Run Config -- Population",
-            tag="popup_population", show=False,
-            modal=True, no_close=True,
-            width=420, height=340,
-            pos=[(_VP_W - 420) // 2, (_VP_H - 340) // 2],
+        with self._dialog(
+            "Population", "popup_population", (420, 340),
+            show=False,
+            secondary=("Close",
+                       lambda: dpg.configure_item("popup_population", show=False)),
         ):
             self._tolerance = dpg.add_slider_float(
                 label="Population Tolerance",
@@ -1530,21 +1666,12 @@ class MosaicApp:
                 "population deviation score. Cannot exceed Population Tolerance "
                 "(clamped on run).",
             )
-            dpg.add_spacer(height=8)
-            dpg.add_button(
-                label="Close",
-                callback=lambda: dpg.configure_item("popup_population",
-                                                    show=False),
-                width=80,
-            )
 
     def _build_seed_popup(self):
-        with dpg.window(
-            label="Run Config -- Seed",
-            tag="popup_seed", show=False,
-            modal=True, no_close=True,
-            width=340, height=160,
-            pos=[(_VP_W - 340) // 2, (_VP_H - 160) // 2],
+        with self._dialog(
+            "Seed", "popup_seed", (340, 160), show=False,
+            secondary=("Close",
+                       lambda: dpg.configure_item("popup_seed", show=False)),
         ):
             self._seed = dpg.add_input_int(
                 label="Random Seed  (0 = random)",
@@ -1557,20 +1684,13 @@ class MosaicApp:
                 "machine, Mosaic version, and shapefile - float ordering in "
                 "numpy/igraph can differ across environments.",
             )
-            dpg.add_spacer(height=8)
-            dpg.add_button(
-                label="Close",
-                callback=lambda: dpg.configure_item("popup_seed", show=False),
-                width=80,
-            )
 
     def _build_advanced_save_popup(self):
-        with dpg.window(
-            label="Export District Map as PNG",
-            tag="popup_adv_save", show=False,
-            modal=True, no_close=True,
-            width=420, height=210,
-            pos=[(_VP_W - 420) // 2, (_VP_H - 210) // 2],
+        # Fixed size (not autosize): the inline spinner/status toggle on save and
+        # we don't want the window resizing mid-export.
+        with self._dialog(
+            "Export District Map as PNG", "popup_adv_save", (420, 210),
+            show=False, autosize=False,
         ):
             self._adv_save_title = dpg.add_input_text(
                 label="Title (optional)", default_value="", width=260,
@@ -1591,11 +1711,14 @@ class MosaicApp:
                     label="Save",   width=90,
                     callback=self._on_advanced_save_confirm,
                 )
+                dpg.bind_item_theme(self._adv_save_btn, self.theme.nudge_theme)
                 self._adv_cancel_btn = dpg.add_button(
                     label="Cancel", width=90,
                     callback=lambda: dpg.configure_item(
                         "popup_adv_save", show=False),
                 )
+                dpg.bind_item_theme(self._adv_cancel_btn,
+                                    self.theme.antinudge_theme)
                 dpg.add_spacer(width=4)
                 self._adv_save_spinner = dpg.add_loading_indicator(
                     style=0, radius=2.0, show=False,
@@ -1605,12 +1728,11 @@ class MosaicApp:
                 self._adv_save_status = dpg.add_text("", show=False)
 
     def _build_opt_popup(self):
-        with dpg.window(
-            label="Optimization -- Annealing Settings",
-            tag="popup_opt", show=False,
-            modal=True, no_close=True,
-            width=460, height=460,
-            pos=[(_VP_W - 460) // 2, (_VP_H - 460) // 2],
+        with self._dialog(
+            "Annealing Settings", "popup_opt", (460, 460),
+            show=False,
+            secondary=("Close",
+                       lambda: dpg.configure_item("popup_opt", show=False)),
         ):
             self._ann_enabled = dpg.add_checkbox(
                 label="Enable simulated annealing", default_value=True,
@@ -1731,23 +1853,18 @@ class MosaicApp:
                 "Higher = flips stay rare until later.",
             )
 
-            dpg.add_spacer(height=8)
-            dpg.add_button(
-                label="Close",
-                callback=lambda: dpg.configure_item("popup_opt", show=False),
-                width=80,
-            )
-
     def _build_alignment_settings_popup(self):
-        with dpg.window(
-            label="Alignment Settings",
-            tag="popup_alignment_settings", show=False,
-            modal=False, width=400, height=340,
-            pos=[(_VP_W - 400) // 2, (_VP_H - 340) // 2],
+        # Non-modal exception: this window spawns a file dialog ("Load reference
+        # plan..."), and a modal-over-modal stack misbehaves in DPG.
+        with self._dialog(
+            "Alignment Settings", "popup_alignment_settings", (400, 340),
+            show=False, modal=False,
+            secondary=("Close", lambda: dpg.configure_item(
+                "popup_alignment_settings", show=False)),
         ):
             self.theme.text(
                 "Load a reference plan, then choose whose voters to align "
-                "and which districts to score.", "muted",
+                "and which districts to score.", "muted", wrap=380,
             )
             dpg.add_separator()
             dpg.add_spacer(height=6)
@@ -1783,9 +1900,9 @@ class MosaicApp:
             dpg.add_spacer(height=6)
 
             self._alignment_win_threshold = dpg.add_slider_float(
-                label="District win threshold (two-party share)",
+                label="District win threshold",
                 default_value=0.535, min_value=0.50, max_value=0.70,
-                format="%.3f", width=220,
+                format="%.3f", width=200,
             )
             self._tooltip(
                 self._alignment_win_threshold,
@@ -1793,21 +1910,13 @@ class MosaicApp:
                 "focus party's two-party share exceeds this. 0.535 ~ win by 7pts; "
                 "raise it to ignore near-coin-flip seats.",
             )
-            dpg.add_spacer(height=10)
-            dpg.add_button(
-                label="Close",
-                callback=lambda: dpg.configure_item(
-                    "popup_alignment_settings", show=False),
-                width=80,
-            )
 
     def _build_partisan_popup(self):
-        with dpg.window(
-            label="Optimization -- Partisanship Settings",
-            tag="popup_partisan", show=False,
-            modal=True, no_close=True,
-            width=460, height=320,
-            pos=[(_VP_W - 460) // 2, (_VP_H - 320) // 2],
+        with self._dialog(
+            "Partisanship Settings", "popup_partisan", (460, 320),
+            show=False,
+            secondary=("Close",
+                       lambda: dpg.configure_item("popup_partisan", show=False)),
         ):
             self.theme.text(
                 "Applied when partisan metrics are enabled.",
@@ -1883,13 +1992,6 @@ class MosaicApp:
                 self._eg_bound,
                 "EG penalty reaches 100 at this |raw| value, then saturates.",
             )
-            dpg.add_spacer(height=8)
-
-            dpg.add_button(
-                label="Close",
-                callback=lambda: dpg.configure_item("popup_partisan", show=False),
-                width=80,
-            )
 
     def _build_temperature_panel(self):
         with dpg.window(
@@ -1914,37 +2016,30 @@ class MosaicApp:
     def _build_county_splits_panel(self):
         with dpg.window(
             label="County Splits", tag="panel_county_splits",
-            show=False, width=540, height=420,
+            show=False, width=540, height=460,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_cs_item, False),
         ):
             with dpg.group(tag="cs_charts_grp"):
-                self.theme.text("County Splits Score", "heading")
-                with dpg.plot(height=140, width=-1):
+                # Two panels, one per real county score -- there is no single
+                # combined "county splits score", so it isn't charted.
+                self.theme.text("Excess Splits", "heading")
+                with dpg.plot(height=165, width=-1):
                     dpg.add_plot_legend()
-                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="cs_score_x")
-                    with dpg.plot_axis(dpg.mvYAxis, label="Score", tag="cs_score_y"):
-                        dpg.add_line_series([], [], label="CS Score", tag="cs_score_series")
-                dpg.add_spacer(height=4)
-                with dpg.group(horizontal=True):
-                    with dpg.group():
-                        self.theme.text("Excess Splits", "heading")
-                        with dpg.plot(height=150, width=248):
-                            dpg.add_plot_legend()
-                            dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="cs_excess_x")
-                            with dpg.plot_axis(dpg.mvYAxis, label="Count", tag="cs_excess_y"):
-                                dpg.add_line_series([], [], label="Excess", tag="cs_excess_series")
-                    with dpg.group():
-                        self.theme.text("Single-County Districts", "heading")
-                        with dpg.plot(height=150, width=-1):
-                            dpg.add_plot_legend()
-                            dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="cs_clean_x")
-                            with dpg.plot_axis(dpg.mvYAxis, label="Count", tag="cs_clean_y"):
-                                dpg.add_line_series([], [], label="Single-County", tag="cs_clean_series")
-                                _cs_max = dpg.add_line_series(
-                                    [], [], label="##cs_max", tag="cs_clean_max",
-                                )
-                                dpg.bind_item_theme(_cs_max, self._partisan_ref_theme)
+                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="cs_excess_x")
+                    with dpg.plot_axis(dpg.mvYAxis, label="Count", tag="cs_excess_y"):
+                        dpg.add_line_series([], [], label="Excess", tag="cs_excess_series")
+                dpg.add_spacer(height=6)
+                self.theme.text("Single-County Districts", "heading")
+                with dpg.plot(height=165, width=-1):
+                    dpg.add_plot_legend()
+                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="cs_clean_x")
+                    with dpg.plot_axis(dpg.mvYAxis, label="Count", tag="cs_clean_y"):
+                        dpg.add_line_series([], [], label="Single-County", tag="cs_clean_series")
+                        _cs_max = dpg.add_line_series(
+                            [], [], label="##cs_max", tag="cs_clean_max",
+                        )
+                        dpg.bind_item_theme(_cs_max, self._partisan_ref_theme)
                 self.theme.track(
                     dpg.add_text("", tag="cs_max_clean_note"),
                     "success_soft",
@@ -2671,42 +2766,37 @@ class MosaicApp:
 
     def _show_update_result(self, latest) -> None:
         cur = __version__
+        update_available = False
         if latest is None:
             msg = ("Couldn't reach GitHub to check for updates. "
                    "Check your connection and try again.")
         elif self._version_tuple(latest) > self._version_tuple(cur):
+            update_available = True
             msg = (f"A newer version is available: v{latest} (you have v{cur}).\n\n"
-                   "Update with:\n"
-                   "  pip install -U git+https://github.com/matt-mohn/mosaic_python")
+                   "Click Download to open the install page, then follow the "
+                   "download-and-run steps for your computer.")
         else:
             msg = f"You're up to date (v{cur})."
-        if dpg.does_item_exist("popup_update"):
-            dpg.delete_item("popup_update")
-        w, h = 520, 220
-        try:
-            vp_w = dpg.get_viewport_client_width()
-            vp_h = dpg.get_viewport_client_height()
-            pos = [max(20, (vp_w - w) // 2), max(20, (vp_h - h) // 2)]
-        except Exception:
-            pos = [200, 150]
-        with dpg.window(label="Check for updates", tag="popup_update",
-                        modal=False, show=True, width=w, height=h, pos=pos,
-                        no_collapse=True):
-            self.theme.text("Mosaic updates", "heading")
-            dpg.add_text(msg, wrap=480)
-            dpg.add_separator()
-            dpg.add_button(
-                label="OK",
-                callback=lambda: dpg.delete_item("popup_update"),
-            )
+        if update_available:
+            buttons = [
+                ("Download", lambda: webbrowser.open(_DOWNLOAD_URL), "primary"),
+                ("Close", lambda: dpg.delete_item("popup_update")),
+            ]
+        else:
+            buttons = [("Close", lambda: dpg.delete_item("popup_update"))]
+        with self._dialog("Check for updates", "popup_update", (520, 220),
+                          buttons=buttons):
+            dpg.add_text(msg, wrap=500)
 
     def _build_help_popup(self):
-        with dpg.window(
-            label="Help", tag="popup_help",
-            show=False, width=460, height=400,
-            pos=[(_VP_W - 460) // 2, (_VP_H - 400) // 2],
+        # Fixed-size reader: the doc text scrolls inside its own child_window,
+        # so this one keeps a fixed height instead of auto-fitting.
+        with self._dialog(
+            "Help", "popup_help", (460, 400), show=False, autosize=False,
+            secondary=("Close",
+                       lambda: dpg.configure_item("popup_help", show=False)),
         ):
-            with dpg.child_window(height=-40, border=False):
+            with dpg.child_window(height=-48, border=False):
                 self.theme.text(
                     "Mosaic from Matt Mohn (@mattmxhn)",
                     "title",
@@ -2760,11 +2850,6 @@ class MosaicApp:
                         callback=lambda: webbrowser.open(_DOCS_SHAPEFILE_URL),
                         width=140,
                     )
-            dpg.add_button(
-                label="Close",
-                callback=lambda: dpg.configure_item("popup_help", show=False),
-                width=80,
-            )
 
     # ── Main loop ─────────────────────────────────────────────────────────────
 
@@ -2998,7 +3083,11 @@ class MosaicApp:
         dpg.configure_item(self._hinge_threshold,  max_value=n_dist_val)
 
         # ── Button states ─────────────────────────────────────────────────────
-        dpg.configure_item("menu_scores",    enabled=not is_busy)
+        # Scores menu stays usable during a run (changes apply to the next run;
+        # the running config is frozen at start). Hiding a score via that menu
+        # force-disables it (see _set_score_row_vis), so a hidden score can never
+        # keep silently affecting annealing.
+        self._sync_seed_controls()
         dpg.configure_item(self._run_btn,    enabled=not is_busy)
         dpg.configure_item(self._pause_btn,  enabled=is_running or is_paused or is_partitioning)
         dpg.configure_item(self._pause_btn,
@@ -3013,13 +3102,22 @@ class MosaicApp:
             AlgorithmStatus.IDLE, AlgorithmStatus.PAUSED,
             AlgorithmStatus.COMPLETED, AlgorithmStatus.ERROR,
         )
+        if can_revert:
+            # Nothing to revert to when the plan on the map already IS the best
+            # one -- e.g. just after Revert to Best, or the final iteration was
+            # itself the best. Grey the button out in that case.
+            with self.state._lock:
+                cur  = self.state.current_assignment
+                best = self.state.best_assignment
+            if cur is not None and best is not None and np.array_equal(cur, best):
+                can_revert = False
         dpg.configure_item(self._revert_btn, enabled=can_revert)
 
         # ── Button nudge / anti-nudge themes ─────────────────────────────────
         graph_ready = self.runner is not None and self.runner.graph is not None
         dpg.bind_item_theme(
             self._run_btn,
-            self.theme.nudge_theme if (not is_busy and graph_ready)
+            self.theme.nudge_theme if (not is_busy and graph_ready and not has_result)
             else self.theme.antinudge_theme,
         )
         dpg.bind_item_theme(
@@ -3027,7 +3125,14 @@ class MosaicApp:
             self.theme.nudge_theme if (is_running or is_paused)
             else self.theme.antinudge_theme,
         )
-        dpg.bind_item_theme(self._reset_btn, self.theme.antinudge_theme)
+        # Once a map exists, Reset is a live "start over" action -- give it the
+        # neutral light-grey look (theme 0 = the app's default button style, with
+        # bright body text) so it reads as available, apart from the dark
+        # inactive buttons. Before any result there's nothing to reset: dark grey.
+        dpg.bind_item_theme(
+            self._reset_btn,
+            0 if has_result else self.theme.antinudge_theme,
+        )
         dpg.bind_item_theme(
             self._export_btn,
             self.theme.nudge_theme if (has_result and not is_busy)
@@ -3038,6 +3143,8 @@ class MosaicApp:
             self.theme.nudge_theme if (has_result and not is_busy)
             else self.theme.antinudge_theme,
         )
+        # Blue while it would do something; otherwise anti-nudge, which now
+        # renders as the dark disabled grey in its disabled state.
         dpg.bind_item_theme(
             self._revert_btn,
             self.theme.nudge_theme if can_revert else self.theme.antinudge_theme,
@@ -3153,12 +3260,8 @@ class MosaicApp:
             dpg.configure_item("cs_charts_grp",   show=cs_on)
             dpg.configure_item("cs_inactive_lbl", show=not cs_on)
             if cs_on:
-                _render(self._buf_cs_score,  "cs_score_series",  "cs_score_x",  "cs_score_y")
                 _render(self._buf_cs_excess, "cs_excess_series", "cs_excess_x", "cs_excess_y")
                 _render(self._buf_cs_clean,  "cs_clean_series",  "cs_clean_x",  "cs_clean_y")
-                if self._buf_cs_score.ys:
-                    _, w = self._buf_cs_score.plot_data(limit)
-                    dpg.set_axis_limits("cs_score_y", 0, max(w) * 1.05)
                 if self._buf_cs_excess.ys:
                     _, w = self._buf_cs_excess.plot_data(limit)
                     hi = max(1, int(max(w)))
@@ -3386,7 +3489,7 @@ class MosaicApp:
         empty = [[], []]
         for tag in (
             "score_series", "acc_series", "panel_temp_series",
-            "cs_score_series", "cs_excess_series", "cs_clean_series",
+            "cs_excess_series", "cs_clean_series",
             "mm_series", "eg_series", "seats_series",
             "pp_series", "reock_series",
             "popdev_max_series", "popdev_mean_series", "cuts_series",
@@ -3397,7 +3500,6 @@ class MosaicApp:
         for ax in (
             "score_x", "score_y", "acc_x", "acc_y",
             "panel_temp_x", "panel_temp_y",
-            "cs_score_x", "cs_score_y",
             "cs_excess_x", "cs_excess_y",
             "cs_clean_x", "cs_clean_y",
             "mm_x", "mm_y", "eg_x", "eg_y",
@@ -4086,30 +4188,19 @@ class MosaicApp:
             columns[-1] if len(columns) > 1 else columns[0],
         )
 
-        if dpg.does_item_exist("popup_hot_start_picker"):
-            dpg.delete_item("popup_hot_start_picker")
-
-        # Center against the viewport so the picker can't land off-screen.
-        try:
-            vp_w = dpg.get_viewport_client_width()
-            vp_h = dpg.get_viewport_client_height()
-            popup_pos = [max(20, (vp_w - 520) // 2), max(20, (vp_h - 240) // 2)]
-        except Exception:
-            popup_pos = [200, 150]
-
-        with dpg.window(
-            label="Hot Start: Map CSV columns",
-            tag="popup_hot_start_picker",
-            modal=True, show=True,
-            width=520, height=240,
-            pos=popup_pos,
+        id_combo = district_combo = None
+        with self._dialog(
+            "Hot Start", "popup_hot_start_picker", (520, 240),
+            primary=("Load", lambda: self._apply_hot_start(
+                path, dpg.get_value(id_combo), dpg.get_value(district_combo))),
+            secondary=("Cancel",
+                       lambda: dpg.delete_item("popup_hot_start_picker")),
         ):
-            self.theme.text("CSV column mapping", "heading")
-            dpg.add_text(f"File: {Path(path).name}")
+            dpg.add_text(f"File: {Path(path).name}", wrap=500)
             dpg.add_text(
                 f"Shapefile ID column: {gdf_id_col} "
                 f"(CSV values will be matched against these)",
-                wrap=480,
+                wrap=500,
             )
             dpg.add_separator()
             id_combo = dpg.add_combo(
@@ -4120,22 +4211,6 @@ class MosaicApp:
                 items=columns, default_value=default_district,
                 label="District column (in CSV)", width=240,
             )
-            dpg.add_spacer(height=8)
-            with dpg.group(horizontal=True):
-                dpg.add_button(
-                    label="Load",
-                    width=100,
-                    callback=lambda: self._apply_hot_start(
-                        path,
-                        dpg.get_value(id_combo),
-                        dpg.get_value(district_combo),
-                    ),
-                )
-                dpg.add_button(
-                    label="Cancel",
-                    width=100,
-                    callback=lambda: dpg.delete_item("popup_hot_start_picker"),
-                )
 
     def _apply_hot_start(
         self, path: str, csv_id_col: str, csv_district_col: str,
@@ -4193,6 +4268,107 @@ class MosaicApp:
             hot_start_filename="",
         )
         self._update_hot_start_display(None)
+
+    # ── Relight ──────────────────────────────────────────────────────────────
+    # Relight is a "continue refining" mode: each Start reseeds from the current
+    # on-screen map (so runs chain, unlike Hot Start which pins a CSV) and a
+    # polish preset is applied to the annealing controls. The pre-arm control
+    # values are snapshotted so Clear restores them. Mutually exclusive with Hot
+    # Start; cleared (with restore) when the shapefile changes.
+    _RELIGHT_PRESET = {
+        "ann": True, "cool": "Guided (recommended)", "temp": 0.01,
+        "guide": 0.80, "watch": False, "n3": 50, "flip_en": True, "flip_mid": 75,
+    }
+
+    def _on_relight_toggle(self) -> None:
+        if dpg.get_value(self._relight_item):
+            self._arm_relight()
+        else:
+            self._clear_relight()
+
+    def _relight_snapshot(self) -> dict:
+        return {
+            "ann":      dpg.get_value(self._ann_enabled),
+            "cool":     dpg.get_value(self._cool_mode),
+            "temp":     dpg.get_value(self._temp_factor),
+            "guide":    dpg.get_value(self._guide_frac),
+            "watch":    dpg.get_value(self._launch_watch_enabled),
+            "n3":       dpg.get_value(self._n3_pct),
+            "flip_en":  dpg.get_value(self._flip_enabled),
+            "flip_mid": dpg.get_value(self._flip_midpoint),
+        }
+
+    def _relight_write(self, s: dict) -> None:
+        """Push a snapshot dict into the annealing controls, then re-run the
+        toggle callbacks so the sub-control groups show/hide correctly."""
+        dpg.set_value(self._ann_enabled, s["ann"])
+        dpg.set_value(self._cool_mode, s["cool"])
+        dpg.set_value(self._temp_factor, s["temp"])
+        dpg.set_value(self._guide_frac, s["guide"])
+        dpg.set_value(self._launch_watch_enabled, s["watch"])
+        dpg.set_value(self._n3_pct, s["n3"])
+        dpg.set_value(self._flip_enabled, s["flip_en"])
+        dpg.set_value(self._flip_midpoint, s["flip_mid"])
+        self._on_ann_toggle()
+        self._on_cool_mode()
+        self._on_launch_watch_toggle()
+
+    def _arm_relight(self) -> None:
+        # The menu item is gated, but double-check: needs a map on screen and no
+        # Hot Start loaded.
+        with self.state._lock:
+            has_map = self.state.current_assignment is not None
+        real_hot = self.state.get("hot_start_filename")[0] != ""
+        if not has_map or real_hot:
+            dpg.set_value(self._relight_item, False)   # refuse; snap back
+            return
+        self._relight_saved = self._relight_snapshot()
+        self._relight_write(self._RELIGHT_PRESET)
+        self._relight_active = True
+        dpg.set_value(self._relight_item, True)
+        self._update_relight_display()
+
+    def _clear_relight(self) -> None:
+        if not self._relight_active and self._relight_saved is None:
+            return
+        if self._relight_saved is not None:
+            self._relight_write(self._relight_saved)
+            self._relight_saved = None
+        self._relight_active = False
+        # Drop the reseed the run path injected, so a later non-Relight run
+        # doesn't inherit a stale seed. Only touch the slot when no real Hot Start
+        # owns it (the two are mutually exclusive, but guard anyway).
+        if self.state.get("hot_start_filename")[0] == "":
+            self.state.update(hot_start_assignment=None)
+        dpg.set_value(self._relight_item, False)
+        self._update_relight_display()
+
+    def _update_relight_display(self) -> None:
+        if self._relight_active:
+            dpg.set_value(self._relight_info,
+                          "RELIGHT: reseeding from the current map each run "
+                          "with ultra-low temperature")
+            dpg.configure_item(self._relight_info, show=True)
+        else:
+            dpg.configure_item(self._relight_info, show=False)
+            dpg.set_value(self._relight_info, "")
+
+    def _sync_seed_controls(self) -> None:
+        """Enable-state for the Relight / Hot Start menu items: mutually
+        exclusive, and Relight needs a map with a paused/ended run. Runs every
+        frame, so it avoids taking the state lock (a None-check and an enum read)."""
+        has_map = self.state.current_assignment is not None
+        status = self.state.status
+        real_hot = self.state.get("hot_start_filename")[0] != ""
+        idle = status in (AlgorithmStatus.IDLE, AlgorithmStatus.PAUSED,
+                          AlgorithmStatus.COMPLETED, AlgorithmStatus.ERROR)
+        can_arm = has_map and idle and not real_hot
+        dpg.configure_item(self._relight_item,
+                           enabled=self._relight_active or can_arm)
+        dpg.configure_item(self._relight_clear_item, enabled=self._relight_active)
+        # Hot Start is locked out while Relight is armed.
+        dpg.configure_item(self._hot_start_load_item,
+                           enabled=not self._relight_active)
 
     # ── Alignment reference plan ─────────────────────────────────────────
     # Mirrors the hot-start CSV flow, but loads a *reference* plan for the
@@ -4267,25 +4443,18 @@ class MosaicApp:
             (c for c in columns if c.lower() == "district"),
             columns[-1] if len(columns) > 1 else columns[0],
         )
-        if dpg.does_item_exist("popup_alignment_picker"):
-            dpg.delete_item("popup_alignment_picker")
-        try:
-            vp_w = dpg.get_viewport_client_width()
-            vp_h = dpg.get_viewport_client_height()
-            popup_pos = [max(20, (vp_w - 520) // 2), max(20, (vp_h - 240) // 2)]
-        except Exception:
-            popup_pos = [200, 150]
-
-        with dpg.window(
-            label="Reference Plan: Map CSV columns",
-            tag="popup_alignment_picker", modal=True, show=True,
-            width=520, height=240, pos=popup_pos,
+        id_combo = district_combo = None
+        with self._dialog(
+            "Reference Plan", "popup_alignment_picker", (520, 240),
+            primary=("Load", lambda: self._apply_alignment(
+                path, dpg.get_value(id_combo), dpg.get_value(district_combo))),
+            secondary=("Cancel",
+                       lambda: dpg.delete_item("popup_alignment_picker")),
         ):
-            self.theme.text("CSV column mapping", "heading")
-            dpg.add_text(f"File: {Path(path).name}")
+            dpg.add_text(f"File: {Path(path).name}", wrap=500)
             dpg.add_text(
                 f"Shapefile ID column: {gdf_id_col} "
-                f"(CSV values will be matched against these)", wrap=480,
+                f"(CSV values will be matched against these)", wrap=500,
             )
             dpg.add_separator()
             id_combo = dpg.add_combo(
@@ -4296,18 +4465,6 @@ class MosaicApp:
                 items=columns, default_value=default_district,
                 label="District column (in CSV)", width=240,
             )
-            dpg.add_spacer(height=8)
-            with dpg.group(horizontal=True):
-                dpg.add_button(
-                    label="Load", width=100,
-                    callback=lambda: self._apply_alignment(
-                        path, dpg.get_value(id_combo),
-                        dpg.get_value(district_combo)),
-                )
-                dpg.add_button(
-                    label="Cancel", width=100,
-                    callback=lambda: dpg.delete_item("popup_alignment_picker"),
-                )
 
     def _apply_alignment(self, path, csv_id_col, csv_district_col) -> None:
         if not path:
@@ -4361,27 +4518,16 @@ class MosaicApp:
         self.theme.retoken(self._alignment_info, "error")
 
     def _show_alignment_error(self, message: str) -> None:
-        if dpg.does_item_exist("popup_alignment_error"):
-            dpg.delete_item("popup_alignment_error")
-        w, h = 620, 320
-        try:
-            vp_w = dpg.get_viewport_client_width()
-            vp_h = dpg.get_viewport_client_height()
-            popup_pos = [max(20, (vp_w - w) // 2), max(20, (vp_h - h) // 2)]
-        except Exception:
-            popup_pos = [200, 150]
-        with dpg.window(
-            label="Alignment Error", tag="popup_alignment_error",
-            modal=False, show=True, width=w, height=h, pos=popup_pos,
-            no_collapse=True,
+        # Non-modal (like the hot-start error): it can be raised in the same frame
+        # a modal picker was deleted, and a new modal would hide behind DPG's
+        # defunct overlay.
+        with self._dialog(
+            "Alignment Error", "popup_alignment_error", (620, 320),
+            modal=False,
+            secondary=("Close",
+                       lambda: dpg.delete_item("popup_alignment_error")),
         ):
-            self.theme.text("Reference plan could not be loaded:", "heading")
-            dpg.add_text(message, wrap=580)
-            dpg.add_separator()
-            dpg.add_button(
-                label="OK",
-                callback=lambda: dpg.delete_item("popup_alignment_error"),
-            )
+            dpg.add_text(message, wrap=600)
 
     def _update_hot_start_display(self, info) -> None:
         if info is None:
@@ -4399,40 +4545,17 @@ class MosaicApp:
             dpg.configure_item(self._hot_start_clear_item, enabled=True)
 
     def _show_hot_start_error(self, message: str) -> None:
-        if dpg.does_item_exist("popup_hot_start_error"):
-            dpg.delete_item("popup_hot_start_error")
-
-        # Wider/taller so diagnostic messages don't overflow, centered on the
-        # viewport so it can't land off-screen (a previous hardcoded position
-        # hid the popup entirely on common window layouts).
-        w, h = 620, 320
-        try:
-            vp_w = dpg.get_viewport_client_width()
-            vp_h = dpg.get_viewport_client_height()
-            popup_pos = [max(20, (vp_w - w) // 2), max(20, (vp_h - h) // 2)]
-        except Exception:
-            popup_pos = [200, 150]
-
         log.info(f"Hot start error popup: {message[:200]}")
-        # Non-modal on purpose: when this popup is created in the same callback
-        # frame that just deleted the modal column-picker popup, DPG's modal
-        # stack leaves a new modal=True window hidden behind a defunct overlay.
-        # A non-modal window sidesteps that entirely.
-        with dpg.window(
-            label="Hot Start Error",
-            tag="popup_hot_start_error",
-            modal=False, show=True,
-            width=w, height=h,
-            pos=popup_pos,
-            no_collapse=True,
+        # Non-modal on purpose: created in the same frame that just deleted the
+        # modal column-picker popup, and a new modal window would hide behind
+        # DPG's defunct modal overlay. Non-modal sidesteps that.
+        with self._dialog(
+            "Hot Start Error", "popup_hot_start_error", (620, 320),
+            modal=False,
+            secondary=("Close",
+                       lambda: dpg.delete_item("popup_hot_start_error")),
         ):
-            self.theme.text("Hot start could not be loaded:", "heading")
-            dpg.add_text(message, wrap=580)
-            dpg.add_separator()
-            dpg.add_button(
-                label="OK",
-                callback=lambda: dpg.delete_item("popup_hot_start_error"),
-            )
+            dpg.add_text(message, wrap=600)
         try:
             dpg.focus_item("popup_hot_start_error")
         except Exception:
@@ -4445,7 +4568,7 @@ class MosaicApp:
         self.runner = AlgorithmRunner(self.state)
         self._loaded_config = None
         self._has_elections = False
-        # Hot start was tied to the previous shapefile's precinct IDs.
+        # Hot start (and Relight) were tied to the previous shapefile's map.
         self.state.update(
             current_assignment=None,
             best_assignment=None,
@@ -4455,6 +4578,7 @@ class MosaicApp:
             hot_start_filename="",
         )
         self._update_hot_start_display(None)
+        self._clear_relight()   # turn off + restore the pre-Relight settings
         dpg.set_value(self._shp_info, "Reading shapefile...")
         self.theme.retoken(self._shp_info, "muted")
         threading.Thread(
@@ -4590,19 +4714,51 @@ class MosaicApp:
                               error_message="Please load a shapefile first")
             return
 
-        # Hot start sanity: was validated at load time, but the Districts
-        # slider could have moved since. Refuse to run if it no longer matches.
+        # Relight reseeds each run from the live map, via the same seed slot the
+        # runner already reads for Hot Start (the two are mutually exclusive). No
+        # map yet (e.g. right after Reset) -> clear the slot -> random seed.
+        if self._relight_active:
+            with self.state._lock:
+                cur = (self.state.current_assignment.copy()
+                       if self.state.current_assignment is not None else None)
+            self.state.update(hot_start_assignment=cur)
+
+        # Seed sanity: validated when the seed was made, but the Districts
+        # slider or the Population Tolerance could have moved since (Relight
+        # especially reseeds from a map built under the old settings). Re-check
+        # both against the current values.
         (hot_start,) = self.state.get("hot_start_assignment")
         if hot_start is not None:
-            n_dist_csv = int(hot_start.max()) + 1
+            what = "Relight map" if self._relight_active else "Hot start"
+            fix  = ("Clear Relight" if self._relight_active
+                    else "Clear the hot start")
             n_dist_slider = dpg.get_value(self._num_districts)
-            if n_dist_csv != n_dist_slider:
+            n_dist_seed = int(hot_start.max()) + 1
+            if n_dist_seed != n_dist_slider:
                 self._show_hot_start_error(
-                    f"Hot start has {n_dist_csv} districts but the Districts "
-                    f"slider is set to {n_dist_slider}. Clear the hot start "
-                    f"or adjust the slider."
+                    f"{what} has {n_dist_seed} districts but the Districts "
+                    f"slider is set to {n_dist_slider}. {fix} or adjust "
+                    f"the slider."
                 )
                 return
+            pops = self.runner.populations
+            if pops is not None and n_dist_slider > 0:
+                pop_f = pops.astype(np.float64)
+                ideal = pop_f.sum() / n_dist_slider
+                if ideal > 0:
+                    dist_pop = np.bincount(
+                        hot_start.astype(np.int64), weights=pop_f,
+                        minlength=n_dist_slider)
+                    max_dev = float(np.abs((dist_pop - ideal) / ideal).max())
+                    tol = dpg.get_value(self._tolerance) / 100.0
+                    if max_dev > tol:
+                        self._show_hot_start_error(
+                            f"{what} has a district at {max_dev * 100:.2f}% "
+                            f"population deviation, over the {tol * 100:.2f}% "
+                            f"Population Tolerance. Loosen the tolerance "
+                            f"or {fix}."
+                        )
+                        return
 
         cs_on      = dpg.get_value(self._cs_enabled)
         mm_on      = dpg.get_value(self._mm_enabled)
@@ -4789,8 +4945,8 @@ class MosaicApp:
         if self.map_view is not None and self.map_view._loaded:
             self.map_view.draw_blank()
 
-    def _stable_labeled_best_assignment(self) -> "np.ndarray | None":
-        """Best assignment relabeled to match the live map / District Info labels.
+    def _stable_labeled_assignment(self, assignment) -> "np.ndarray | None":
+        """`assignment` relabeled to match the live map / District Info labels.
 
         ReCom internally renumbers districts over the course of a run; the GUI
         uses ``stable_color_mapping`` against the initial partition to keep the
@@ -4798,24 +4954,23 @@ class MosaicApp:
         exports must apply the same permutation, otherwise users see one label
         in Mosaic and a different one in their spreadsheet.
         """
-        best = self.state.best_assignment
-        if best is None:
+        if assignment is None:
             return None
         initial = self.state.initial_assignment
-        n_dist = self.state.num_districts or int(best.max()) + 1
-        if initial is not None and len(initial) == len(best):
+        n_dist = self.state.num_districts or int(assignment.max()) + 1
+        if initial is not None and len(initial) == len(assignment):
             from mosaic.gui.map_view import stable_color_mapping
-            return stable_color_mapping(best, initial, n_dist)
-        return best
+            return stable_color_mapping(assignment, initial, n_dist)
+        return assignment
 
-    def _export_labeled_best_assignment(self) -> "np.ndarray | None":
-        """Best assignment with any geographic renumber applied, 0-indexed.
+    def _export_labeled_assignment(self, assignment) -> "np.ndarray | None":
+        """`assignment` with any geographic renumber applied, 0-indexed.
 
         Exports add 1 to produce the district column, so we return the
         geographic number minus 1. With no renumber active this is just the
         stable-labeled assignment.
         """
-        stable = self._stable_labeled_best_assignment()
+        stable = self._stable_labeled_assignment(assignment)
         if stable is None:
             return None
         lm = self.state.district_label_map
@@ -4931,7 +5086,7 @@ class MosaicApp:
     # ── Renumber control sync (Advanced menu check + options radio) ──────────────
 
     _RENUMBER_RULE_TO_LABEL = {
-        "nw_se": "NW to SE",
+        "nw_se": "Northwest to Southeast",
         "n_s": "North to South",
         "infer": "Infer from alignment",
     }
@@ -4942,7 +5097,7 @@ class MosaicApp:
                 and getattr(self.runner, "alignment_data", None) is not None)
 
     def _renumber_radio_items(self) -> list:
-        items = ["None", "NW to SE", "North to South"]
+        items = ["None", "Northwest to Southeast", "North to South"]
         if self._alignment_loaded():
             items.append("Infer from alignment")
         return items
@@ -4951,7 +5106,7 @@ class MosaicApp:
         """Radio label reflecting current renumber state."""
         if not self._renumber_enabled:
             return "None"
-        return self._RENUMBER_RULE_TO_LABEL.get(self._renumber_rule, "NW to SE")
+        return self._RENUMBER_RULE_TO_LABEL.get(self._renumber_rule, "Northwest to Southeast")
 
     def _sync_renumber_widgets(self) -> None:
         dpg.set_value(self._renumber_after_run, self._renumber_enabled)
@@ -4983,26 +5138,32 @@ class MosaicApp:
         # if it was selected and the plan is gone, fall back to the diagonal.
         if self._renumber_rule == "infer" and not self._alignment_loaded():
             self._renumber_rule = "nw_se"
-        if not dpg.does_item_exist("renumber_options_window"):
-            with dpg.window(label="Renumber Options",
-                            tag="renumber_options_window", show=False,
-                            no_collapse=True, width=240, height=170,
-                            pos=(140, 140)):
-                dpg.add_text("Renumber districts:")
-                dpg.add_separator()
-                dpg.add_radio_button(
-                    items=self._renumber_radio_items(),
-                    tag="renumber_rule_radio",
-                    default_value=self._renumber_rule_label(),
-                    callback=self._on_renumber_rule_change,
-                )
-        dpg.configure_item("renumber_rule_radio", items=self._renumber_radio_items())
-        dpg.set_value("renumber_rule_radio", self._renumber_rule_label())
-        dpg.configure_item("renumber_options_window", show=True)
+        # Rebuilt each open (radio items depend on current state); the helper
+        # deletes any prior instance. _sync_renumber_widgets() guards on the tag
+        # existing, so deleting it on close is safe.
+        with self._dialog(
+            "Renumber Options", "renumber_options_window", (240, 170),
+            secondary=("Close",
+                       lambda: dpg.delete_item("renumber_options_window")),
+        ):
+            dpg.add_text("Renumber districts:")
+            dpg.add_separator()
+            dpg.add_radio_button(
+                items=self._renumber_radio_items(),
+                tag="renumber_rule_radio",
+                default_value=self._renumber_rule_label(),
+                callback=self._on_renumber_rule_change,
+            )
         dpg.focus_item("renumber_options_window")
 
     def _on_export(self):
-        if self.runner is None or self.state.best_assignment is None:
+        # Save what's on the map -- the current (final) plan of the run, which is
+        # also what "Revert to best" leaves behind once clicked. Snapshot under
+        # the lock so a still-running worker can't swap it mid-export.
+        with self.state._lock:
+            current = (self.state.current_assignment.copy()
+                       if self.state.current_assignment is not None else None)
+        if self.runner is None or current is None:
             return
         from datetime import datetime
         from mosaic.io import save_assignments
@@ -5019,7 +5180,7 @@ class MosaicApp:
                 id_col_name = col
 
         save_assignments(
-            self._export_labeled_best_assignment(),
+            self._export_labeled_assignment(current),
             output_path,
             precinct_ids=precinct_ids,
             id_col_name=id_col_name,
@@ -5027,7 +5188,12 @@ class MosaicApp:
         self.state.update(status_message=f"Assignments saved to {output_path}")
 
     def _on_export_metrics(self):
-        if self.runner is None or self.state.best_assignment is None:
+        # Metrics describe the same plan the assignments export writes -- the
+        # current (displayed) plan, not the best-scoring one.
+        with self.state._lock:
+            current = (self.state.current_assignment.copy()
+                       if self.state.current_assignment is not None else None)
+        if self.runner is None or current is None:
             return
         from datetime import datetime
         from mosaic.io import save_metrics
@@ -5042,7 +5208,7 @@ class MosaicApp:
         gop = self.runner.election_arrays[0][1] if self.runner.election_arrays else None
 
         save_metrics(
-            self._export_labeled_best_assignment(),
+            self._export_labeled_assignment(current),
             output_path,
             populations=self.runner.populations,
             ideal_pop=ideal_pop,

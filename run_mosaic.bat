@@ -60,11 +60,13 @@ if %errorlevel% neq 0 (
 
 :launch
 echo Starting Mosaic...
-echo (First launch downloads and installs dependencies -- this takes 2-3 minutes.)
-echo Subsequent launches are instant.
+if not exist ".venv" (
+    echo First launch: downloading and installing dependencies. This takes
+    echo 2-3 minutes. Subsequent launches are instant.
+)
 echo.
 
-uv run python -m mosaic.gui.app
+uv run python -m mosaic
 
 if %errorlevel% neq 0 (
     echo.

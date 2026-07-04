@@ -475,19 +475,30 @@ def _build_global_theme(p: Palette) -> int:
 
 
 def _build_nudge_theme(p: Palette, nudge: bool) -> int:
-    """Build a button theme tag for nudge / anti-nudge buttons."""
+    """Build a button theme tag for nudge / anti-nudge buttons.
+
+    Colours are defined for both the enabled and the disabled state. Without an
+    explicit disabled-state component, a disabled button falls back to the
+    global button colour (a lighter grey); pinning the disabled colours keeps a
+    greyed-out button the same dark anti-nudge grey as its enabled siblings.
+    """
+    if nudge:
+        btn, hov, act, txt = (p.nudge_button, p.nudge_hovered,
+                              p.nudge_active, p.nudge_text)
+    else:
+        btn, hov, act, txt = (p.antinudge_button, p.antinudge_hovered,
+                              p.antinudge_active, p.antinudge_text)
     with dpg.theme() as theme_tag:
         with dpg.theme_component(dpg.mvButton):
-            if nudge:
-                dpg.add_theme_color(dpg.mvThemeCol_Button, p.nudge_button)
-                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, p.nudge_hovered)
-                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, p.nudge_active)
-                dpg.add_theme_color(dpg.mvThemeCol_Text, p.nudge_text)
-            else:
-                dpg.add_theme_color(dpg.mvThemeCol_Button, p.antinudge_button)
-                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, p.antinudge_hovered)
-                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, p.antinudge_active)
-                dpg.add_theme_color(dpg.mvThemeCol_Text, p.antinudge_text)
+            dpg.add_theme_color(dpg.mvThemeCol_Button, btn)
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, hov)
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, act)
+            dpg.add_theme_color(dpg.mvThemeCol_Text, txt)
+        with dpg.theme_component(dpg.mvButton, enabled_state=False):
+            dpg.add_theme_color(dpg.mvThemeCol_Button, btn)
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, btn)
+            dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, btn)
+            dpg.add_theme_color(dpg.mvThemeCol_Text, p.disabled)
     return theme_tag
 
 

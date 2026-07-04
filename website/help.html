@@ -218,6 +218,8 @@
           <dt><strong>Hot start</strong> (Advanced menu)</dt>
 
           <dd>Instead of beginning from a random seed plan, load an existing precinct-to-district assignment as the starting point. Pick a CSV with an id column and a district column (1-indexed; the format matches Mosaic's own assignment export), then map the id column to your shapefile. Mosaic validates that every precinct is assigned, the district count matches Number of Districts, and each district is contiguous before the run will use it. Useful for polishing a published map or resuming from a prior result. Clear it from the same menu to return to random seeding.</dd>
+          <dt><strong>Relight</strong> (Advanced menu)</dt>
+          <dd>A "keep refining" mode. With a paused or finished run on screen, arming Relight makes each subsequent <span class="gui">Start</span> reseed from the <em>current map</em> instead of a random plan &mdash; so runs chain, the result of one becoming the seed of the next (unlike Hot start, which pins a fixed CSV). It also applies a gentle polish preset to the Annealing settings &mdash; a very low initial temperature, a long guided-cooling window, a heavy n=3 ReCom mix, late-onset flips, and Launch Watch off &mdash; so a run settles the existing map rather than tearing it up. It leaves your weights, Population Tolerance, and everything else alone. Mutually exclusive with Hot start (each greys the other out). <strong>Clear Relight</strong> turns it off and restores the annealing settings to exactly what they were when you armed it; loading a new shapefile clears it automatically. A run is refused if the current map no longer matches the Districts count or the Population Tolerance.</dd>
         </dl>
 
         <h3>County-Edge Bias</h3>
@@ -251,7 +253,7 @@
           <dt><strong>Pause</strong></dt>
           <dd>Stops the algorithm thread at the next clean iteration boundary. Charts and the map stay where they were. Click Start again to resume from the same iteration.</dd>
           <dt><strong>Revert to Best</strong></dt>
-          <dd>Restores the current assignment to the best-scoring plan seen so far in this run, without resetting the iteration counter or temperature. Useful when the algorithm has wandered into a worse region and you want to continue annealing from a known-good point. The score history charts keep their full trace.</dd>
+          <dd>Restores the current assignment to the best-scoring plan seen so far in this run, without resetting the iteration counter or temperature. Useful when the algorithm has wandered into a worse region and you want to continue annealing from a known-good point. The score history charts keep their full trace. The button greys out when the map already <em>is</em> the best plan, since there is nothing to revert to.</dd>
           <dt><strong>Reset</strong></dt>
           <dd>Discards the current run entirely. Clears the map, the iteration counter, the score history, and the annealing state. The loaded shapefile and column choices are kept. Use this when you want to try a fresh run with new weights or a new seed.</dd>
         </dl>
@@ -533,7 +535,7 @@
       <!-- Export ──────────────────────────────────────────────────────────── -->
       <section id="export" class="prose-block mt-16">
         <h2 class="text-2xl font-bold tracking-tight">Exporting results</h2>
-        <p>Mosaic writes two CSVs from the toolbar buttons in the main panel. Both reflect the <em>best</em> plan seen during the run (lowest <code>PlanScore.total</code>), not the most recent one.</p>
+        <p>Mosaic writes two CSVs from the toolbar buttons in the main panel. Both save the plan currently on the map &mdash; exactly what you see on screen. Controls like <span class="gui">Revert to best</span> change what's on the map; the export just follows.</p>
         <dl>
           <dt><strong>Save Assignments &rarr; <code>output/assignments_YYYYMMDD_HHMMSS.csv</code></strong></dt>
           <dd>One row per precinct: the precinct's ID (from whichever column you picked at load) and the district number. District numbers match the labels shown on the live map — same colours, same labels, no surprises.</dd>
