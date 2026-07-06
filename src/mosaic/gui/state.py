@@ -48,7 +48,7 @@ class SharedState:
     tolerance_ratchet_mode: str = "off"
     # Live tolerance after ratchet tightening (== pop_tolerance when off).
     active_pop_tolerance: float = 0.025
-    max_iterations: int = 1000
+    max_iterations: int = 5000
     seed: Optional[int] = None
 
     # Score config (set by GUI before run)

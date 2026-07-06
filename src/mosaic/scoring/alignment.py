@@ -29,8 +29,7 @@ cohesion is 1.0 when the district survived whole and falls as its residents are
 split across more proposed districts. Because it uses the FULL distribution (not
 just the biggest surviving chunk), it correctly distinguishes a clean split from
 a shatter — a district halved cleanly scores better than one whose second half is
-pulverized. No label matching is needed (it's relabel-invariant by construction),
-so there are no Hungarian-matching discontinuities.
+pulverized. No label matching is needed (it's relabel-invariant by construction).
 
 w_a is the reference district's mass in the chosen weight (population for plain
 alignment; a party's votes for partisan alignment). District NUMBERING and the
@@ -43,13 +42,7 @@ Baked x100 puts it in the same band as Polsby-Popper / Reock, so weight_alignmen
 is directly comparable to those (default 25).
 
 Per-iteration cost: one numba pass builds the (n_alt x n_prop) overlap matrix +
-a length-k reduction. Same cost class as Reock; cheaper than before (no Hungarian).
-
-History: earlier versions used a "biggest surviving chunk" retention with an
-optimal (Hungarian) label match and a convex exponent to encode a spread-the-
-change preference. That was dropped — it was blind to displaced-voter cohesion
-(clean split == shatter), had a near-flat gradient near alignment, and an NC/GA
-bake-off showed Herfindahl reaches materially tighter alignment at equal effort.
+a length-k reduction. Same cost class as Reock.
 """
 
 from __future__ import annotations

@@ -18,10 +18,8 @@ import numpy as np
 from mosaic.scoring.precompute import PPData
 from mosaic.scoring.reock import ReockData
 
-# Scorer imports hoisted to module level. These were previously imported inside
-# score_plan() to dodge circular imports, but no scorer module imports score.py
-# (verified), so the lazy imports were pure per-call overhead in the hot loop
-# (~25 sys.modules lookups every iteration). None at module scope is safe.
+# Module-scope scorer imports: nothing imports score.py back, so lazy
+# per-call imports would just be hot-loop overhead.
 from mosaic.scoring.county_splits import score_county_splits
 from mosaic.scoring.holistic_compactness import holistic_compactness_from_scores
 from mosaic.scoring.holistic_proportionality import holistic_proportionality_from_shares
@@ -152,9 +150,8 @@ def score_plan(
     hprop_pen = hcmp_pen = 0.0
     maj_d_raw = maj_r_raw = hinge_raw = 0.0
 
-    # The county-side scorers (excess/unified) and holistic_splitting all need
-    # the identical CxD population matrix. Build it once here and share it so
-    # the per-iteration cost is paid a single time when more than one is active.
+    # excess/unified county scorers and holistic_splitting all need the same
+    # CxD population matrix; build it once and share it.
     _co_di_pop = None
     _need_cxd = bool(config.weight_county_excess or config.weight_county_unified
                      or config.weight_holistic_splitting)
@@ -208,9 +205,8 @@ def score_plan(
         total += config.weight_holistic_compactness * hc_raw
 
     pd_max = pd_mean = 0.0
-    # force_pop_components makes pd_max available to the Tolerance Ratchet even
-    # when the deviation score is unweighted; the penalty (weighted by 0) is
-    # then a no-op, so only the cheap bincount is paid.
+    # force_pop_components exposes pd_max to the Tolerance Ratchet when the
+    # deviation score is unweighted (the weight-0 penalty is then a no-op).
     if (config.weight_pop_deviation or force_pop_components) \
             and assignment is not None \
             and populations is not None and ideal_pop is not None \
@@ -238,8 +234,8 @@ def score_plan(
 
         # Ask 2 — which districts: restrict to reference districts the focus
         # party "wins" (two-party share > threshold). Uses the reference's own
-        # per-district vote totals cached at load, so the set is frozen to the
-        # reference plan, not recomputed as the proposed map evolves.
+        # per-district totals cached at load, so the set stays frozen to the
+        # reference plan as the proposed map evolves.
         align_mask = None
         if config.alignment_restrict_to_party and focus in ("rep", "dem") \
                 and alignment_data.alt_dem_by_district is not None \

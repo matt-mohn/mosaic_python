@@ -42,7 +42,7 @@ def save_cached_graph(
         "edges": list(graph.edges()),
         # Virtual bridge edges (added by bridge_components) carry an attribute
         # that list(graph.edges()) drops, so persist them separately and re-tag
-        # on load. Version 2 caches without this key are rebuilt.
+        # on load.
         "virtual_edges": [
             (u, v) for u, v, d in graph.edges(data=True) if d.get("virtual")
         ],

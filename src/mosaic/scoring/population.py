@@ -53,16 +53,13 @@ def get_plan_stats(
     Returns:
         PlanStats with cut edges and population info
     """
-    # Count cut edges
     num_cut_edges = count_cut_edges(graph, assignment)
 
-    # Calculate district populations
     district_pops = np.array([
         populations[assignment == d].sum()
         for d in range(num_districts)
     ])
 
-    # Calculate max deviation
     ideal_pop = populations.sum() / num_districts
     deviations = np.abs(district_pops - ideal_pop) / ideal_pop
     max_deviation = deviations.max()
@@ -100,9 +97,9 @@ def score_pop_deviation(
     abs_dev = np.abs(pop_d - ideal) / ideal
     excess = np.maximum(0.0, abs_dev - safe_harbor)
     excess_sq = excess ** 2
-    # Sum-of-squares provides smoother optimization landscape than mean+max.
-    # Scale factor chosen to roughly match previous (mean+max)×50k at typical
-    # uniform deviations, so existing weight tuning remains valid.
+    # Sum-of-squares gives a smoother optimization landscape than mean+max; the
+    # 100k scale matches the earlier (mean+max) magnitude so existing weight
+    # tuning stays valid.
     combined = float(np.sum(excess_sq) * 100_000 / n_districts)
 
     if return_components:

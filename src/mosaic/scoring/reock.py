@@ -180,10 +180,8 @@ def score_reock(
         float in [0, 100] — (1 - mean_Reock) * 100, where 0 = all
         districts perfectly compact under the K=16 approximation.
     """
-    # assignment is int32 in the hot loop; pass it straight through. Numba
-    # compiles an int32 specialization and uses the values only as array
-    # indices + loop bounds, so results are identical to the int64 cast this
-    # used to do — minus a full-precinct array copy every iteration.
+    # Pass int32 assignment straight to Numba (used only as indices/bounds),
+    # avoiding a per-iteration full-precinct int64 copy.
     return float(_score_reock_numba(
         data.dir_ext_pts,
         data.dir_ext_proj,

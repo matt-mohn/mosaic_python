@@ -91,12 +91,11 @@ def _restore_zero_padded_ids(gdf: gpd.GeoDataFrame, path: str) -> None:
     census GEOID pattern, using a standard-length heuristic. Arbitrary
     column names are left untouched — we cannot safely infer their width.
 
-    The standard-width guard prevents over-padding: Iowa VTD GEOIDs are
-    correctly stored as 11-digit integers (FIPS 19 → no leading zero), but
-    some shapefiles define the field as width 12.  Without the guard, those
-    11-digit values would be padded to 12 and gain a spurious leading zero.
-    States whose FIPS starts with 0 (01-09) genuinely need padding because
-    their integers are one digit shorter than the true GEOID width.
+    The standard-width guard prevents over-padding: a value whose digit count
+    is already a standard GEOID width is treated as correct, not as having lost
+    leading zeros (see the inline note for the Iowa VTD case). Only FIPS 01-09
+    states, whose integers are one digit short of the true GEOID width,
+    genuinely need padding.
     """
     int64_cols = [
         c for c in gdf.columns

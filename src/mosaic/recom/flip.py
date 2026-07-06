@@ -20,6 +20,9 @@ import math
 import numpy as np
 
 from mosaic.recom.recombination import GraphContext
+from mosaic.recom.tree import _NUMBA_OK
+if _NUMBA_OK:
+    from mosaic.recom.tree import _nb_district_connected_without
 
 
 # Anchor points for the flip-rate ramp. The curve is pinned to these three
@@ -198,14 +201,17 @@ def flip_step_ig(
         if not (lo <= pop_src_new <= hi and lo <= pop_dst_new <= hi):
             continue
 
-        # Contiguity: source district must remain connected after src is
-        # removed. Destination district stays connected because src attaches
-        # to a node already in it (that's what the cut edge being a cut edge
-        # means).
-        src_nodes = np.flatnonzero(src_mask).astype(np.int32)
-        remaining = src_nodes[src_nodes != src]
-        sub = ctx.graph.subgraph(remaining.tolist())
-        if not sub.is_connected():
+        # Contiguity: source district must stay connected after src is removed.
+        # Destination stays connected because src attaches to a node already in
+        # it (that's what makes the picked edge a cut edge).
+        if _NUMBA_OK:
+            connected = _nb_district_connected_without(
+                ctx.edge_u, ctx.edge_v, assignment, src_district, src)
+        else:
+            remaining = np.flatnonzero(src_mask).astype(np.int32)
+            remaining = remaining[remaining != src]
+            connected = ctx.graph.subgraph(remaining.tolist()).is_connected()
+        if not connected:
             continue
 
         # All checks passed — apply.
