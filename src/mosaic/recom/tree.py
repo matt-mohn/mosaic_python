@@ -32,8 +32,8 @@ class FbcScratch:
         )
 
 # ── Optional Numba JIT acceleration ──────────────────────────────────────────
-# Speeds up the inner BFS + subtree-population loop by ~1.7-2x on the full
-# find_balanced_cut_ig call. Falls back to pure Python if Numba is unavailable.
+# Powers the hot-path kernels (cut edges, MST, BFS, contiguity). Falls back to
+# pure Python / igraph when Numba is unavailable.
 
 try:
     from numba import njit as _njit
@@ -136,14 +136,11 @@ try:
                         uf_parent, uf_rank, mst_eu, mst_ev):
         """Kruskal MST with union-by-rank + path compression.
 
-        sorted_idx is a permutation of edge indices in ascending weight order
-        (computed once outside via np.argsort — numpy's C sort is faster than
-        anything we'd write in Numba for typical merged-region edge counts).
-        Returns the MST edge count, which equals n_nodes-1 iff the input is
-        connected. On a disconnected input (should not happen here — merged
-        regions are connected by construction) we return early with a partial
-        forest; the caller's BFS will then fail the validity check and the
-        attempt is silently dropped.
+        sorted_idx is a permutation of edge indices -- ascending-weight (county
+        bias) or uniform-random (no bias) -- yielding a random spanning tree.
+        Returns the MST edge count (== n_nodes-1 iff connected; merged regions
+        are connected by construction). A disconnected input returns a partial
+        forest and the caller's BFS drops the attempt.
         """
         for i in range(n_nodes):
             uf_parent[i] = i
@@ -182,11 +179,9 @@ try:
 
     @_njit(cache=True)
     def _nb_collect_candidates(degree, n_nodes, out):
-        """Internal (degree > 1) MST nodes in ascending order — the per-attempt
-        root pool. Replaces np.flatnonzero(degree > 1): one branchy pass, no
-        boolean temporary and no flatnonzero allocation. Returns the count;
-        out[:count] holds the node ids. Ascending scan order matches
-        np.flatnonzero exactly, so the subsequent randint pick is identical."""
+        """Internal (degree > 1) MST nodes in ascending order -- the per-attempt
+        root pool. out[:count] holds the ids; ascending order keeps the
+        subsequent randint pick deterministic."""
         cnt = np.int32(0)
         for i in range(n_nodes):
             if degree[i] > 1:
@@ -198,17 +193,8 @@ try:
     def _nb_first_valid_cut(stpops, total_pop, min_pop, max_pop,
                             one_sided, root, n_nodes):
         """Lowest node index i (i != root) whose cut edge yields a balanced
-        bipartition, or -1 if none exists.
-
-        Bit-identical to the numpy block it replaces:
-            other = total_pop - stpops
-            valid = (stp in [min,max]) {& or |} (other in [min,max])
-            valid[root] = False
-            return flatnonzero(valid)[0]   # lowest index
-        The scalar subtraction/compares are the same IEEE ops as the numpy
-        vectorised form, and the ascending scan returns the same lowest index,
-        so this changes nothing observable — it only removes ~4 per-attempt
-        numpy calls (subtract, two masks, flatnonzero) plus their temporaries."""
+        bipartition, or -1 if none. Ascending scan returns the lowest index, so
+        the pick is deterministic."""
         for i in range(n_nodes):
             if i == root:
                 continue
@@ -220,6 +206,51 @@ try:
             if ok:
                 return i
         return -1
+
+    @_njit(cache=True)
+    def _nb_district_connected_without(edge_u, edge_v, assignment, district, exclude):
+        """True if precincts assigned to `district`, minus `exclude`, form one
+        connected component under the edges internal to that set.
+
+        Replaces igraph subgraph().is_connected() in the flip contiguity check:
+        a union-find over a single edge scan, no graph object or list build.
+        Scans all edges (incl. virtual bridges), matching the igraph path which
+        ran on the full graph.
+        """
+        n = assignment.shape[0]
+        parent = np.empty(n, dtype=np.int32)
+        for i in range(n):
+            parent[i] = i
+
+        for e in range(edge_u.shape[0]):
+            u = edge_u[e]
+            v = edge_v[e]
+            if u == exclude or v == exclude:
+                continue
+            if assignment[u] != district or assignment[v] != district:
+                continue
+            while parent[u] != u:
+                parent[u] = parent[parent[u]]
+                u = parent[u]
+            while parent[v] != v:
+                parent[v] = parent[parent[v]]
+                v = parent[v]
+            if u != v:
+                parent[u] = v
+
+        root = -1
+        for i in range(n):
+            if i == exclude or assignment[i] != district:
+                continue
+            r = i
+            while parent[r] != r:
+                parent[r] = parent[parent[r]]
+                r = parent[r]
+            if root == -1:
+                root = r
+            elif r != root:
+                return False
+        return True
 
     _NUMBA_OK = True
 
@@ -495,19 +526,14 @@ def find_balanced_cut_fast(
 
     start_time = time.perf_counter() if timeout else None
 
-    # Sort merged_nodes ascending. ig.Graph.subgraph() reorders its input to
-    # ascending vertex-id order, so find_balanced_cut_ig's local indexing is
-    # always globally-sorted. We must match that here: without sorting, the
-    # local-index space differs between paths, weights[i] hits different
-    # edges, MSTs diverge, and valid_indices[0]'s deterministic first-pick
-    # acquires an A-side bias (since concat([nodes_a, nodes_b]) puts A nodes
-    # in the lower half of the index range) that drives stuck districts.
+    # Sort ascending to match ig.Graph.subgraph()'s vertex reordering, so this
+    # path and find_balanced_cut_ig share one local-index space. Without it the
+    # deterministic first-pick acquires an A-side bias (concat puts A nodes in
+    # the low index range) that strands districts.
     merged_nodes = np.sort(merged_nodes).astype(np.int32, copy=False)
 
-    # Mark merged region + build global->local map. O(n_merged) touches; the
-    # other (n_total - n_merged) entries of in_merged stay False from the last
-    # finally-reset, so the extract kernel's `in_merged[u] & in_merged[v]` test
-    # correctly excludes everything outside this region.
+    # Mark region + build global->local map. Only n_merged entries touched; the
+    # rest stay False from the finally-reset, so extract excludes outside nodes.
     in_merged[merged_nodes] = True
     local_idx[merged_nodes] = np.arange(n, dtype=np.int32)
 
@@ -534,10 +560,9 @@ def find_balanced_cut_fast(
             cty_local = county_array[merged_nodes]
             cross_county_mask = (cty_local[local_eu] != cty_local[local_ev])
 
-        # Per-call BFS / CSR / collect buffers. Kept stack-local because
-        # out_state captures references to _nb_par / _nb_bfsq / _nb_stp on
-        # success — pooling these requires coordinating with the n=3 residual
-        # path, deferred.
+        # Per-call BFS/CSR/collect buffers. Stack-local, not pooled: out_state
+        # captures _nb_par/_nb_bfsq/_nb_stp on success, so pooling would collide
+        # with the n=3 residual path.
         _nb_ptr   = np.zeros(n + 1,            dtype=np.int32)
         _nb_idx   = np.zeros(max(2 * (n - 1), 1), dtype=np.int32)
         _nb_deg   = np.zeros(n,                dtype=np.int32)
@@ -558,29 +583,28 @@ def find_balanced_cut_fast(
             if start_time and (time.perf_counter() - start_time) > timeout:
                 return None
 
-            weights = np.random.random(m)
-            if cross_county_mask is not None:
+            if cross_county_mask is None:
+                # No county bias: ascending-weight Kruskal over i.i.d. uniform
+                # weights is Kruskal over a uniform random edge permutation.
+                # permutation(m) gives that same distribution without the float
+                # draw + O(m log m) argsort.
+                sorted_idx = np.random.permutation(m).astype(np.int32)
+            else:
+                # County bias tilts edge order toward within-county cuts, so we
+                # need real weights to scale before sorting.
+                weights = np.random.random(m)
                 weights[cross_county_mask] *= county_bias
-            # Unstable (introsort) is faster on random float64 input.
-            # Safe because ties are ~1e-8 likely over m≈700 i.i.d. uniforms;
-            # revisit if weight generation ever changes to ints or a
-            # discrete distribution.
-            sorted_idx = np.argsort(weights).astype(np.int32)
+                sorted_idx = np.argsort(weights).astype(np.int32)
 
             k = int(_nb_kruskal_mst(
                 local_eu, local_ev, sorted_idx, n,
                 _uf_par, _uf_rank, _mst_eu, _mst_ev,
             ))
 
-            # The "merged regions are connected" invariant fails when the
-            # parent adjacency graph has isolated vertices (e.g. island
-            # precincts with no neighbors). In that case Kruskal returns a
-            # partial spanning forest. find_balanced_cut_ig silently accepts
-            # this case (igraph.spanning_tree just spans the reachable
-            # component, the isolated vertex falls through to "the other
-            # side" via the total_pop - stp arithmetic), so we mirror that:
-            # build CSR on whatever edges Kruskal returned and let the BFS
-            # cover the connected component containing `root`.
+            # Isolated vertices (e.g. island precincts) break the connected-
+            # region invariant, so Kruskal returns a partial forest. Mirror
+            # find_balanced_cut_ig: build CSR on whatever edges it returned and
+            # let the BFS cover the component containing `root`.
             _nb_build_csr(_mst_eu[:k], _mst_ev[:k], n,
                           _nb_ptr, _nb_idx, _nb_deg, _nb_cur)
 
@@ -593,9 +617,7 @@ def find_balanced_cut_fast(
                                    np.int32(root), _nb_par, _nb_bfsq,
                                    _nb_stp, _nb_vis)
 
-            # Lowest valid cut node, scanned in Numba (replaces the per-attempt
-            # other_pops / valid-mask / flatnonzero numpy block). Bit-identical
-            # selection; just fewer numpy dispatches in the inner loop.
+            # Lowest valid cut node (see _nb_first_valid_cut).
             v = int(_nb_first_valid_cut(
                 _nb_stp, total_pop, min_pop, max_pop, one_sided,
                 np.int32(root), n,
@@ -635,9 +657,8 @@ def find_balanced_cut_fast(
         return None
 
     finally:
-        # Reset in-place at the n_merged positions we touched. Touching only
-        # n_merged (not n_total) keeps this O(district pair size) — critical
-        # so the reset cost doesn't grow with the parent graph.
+        # Reset only the n_merged positions we touched (not n_total), so reset
+        # cost stays O(region size) and doesn't grow with the parent graph.
         in_merged[merged_nodes] = False
 
 

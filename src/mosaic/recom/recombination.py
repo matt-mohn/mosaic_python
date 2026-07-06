@@ -126,8 +126,7 @@ def recom_step_ig(
     if subset is None:
         return assignment, False, cut_edge_indices
 
-    # Vectorised assignment update: seed all merged nodes to district_b, then
-    # overwrite the subset with district_a.  Two numpy fancy-index ops.
+    # Seed all merged nodes to district_b, then overwrite the subset with district_a.
     new_assignment = assignment.copy()
     new_assignment[merged_nodes] = district_b
     subset_arr = np.array(subset, dtype=np.int32)

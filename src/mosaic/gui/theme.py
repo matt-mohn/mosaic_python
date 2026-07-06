@@ -101,23 +101,23 @@ class Palette:
 
     # ── Text tokens (used by add_text(..., color=...)) ────────────────────────
     body: Color           # default body text
-    title: Color          # app title accent (was 255, 200, 60)
-    heading: Color        # section heading (was 200, 200, 100)
-    subheading: Color     # input labels (was 170, 170, 170)
-    muted: Color          # info text (was 150, 150, 150 / 160, 160, 160)
-    secondary: Color      # semi-active label (was 180, 180, 180)
-    accent_green: Color   # active score row label (was 90, 220, 90)
-    success_soft: Color   # soft green text (was 140, 170, 140)
-    success_pale: Color   # success indicator (was 150, 200, 150)
-    disabled: Color       # inactive score row label (was 110, 110, 110)
-    disabled_deep: Color  # heavily disabled (was 90, 90, 90)
-    disabled_subtle: Color  # special disabled label (was 120, 120, 120)
-    dialog_muted: Color   # dialog hint / path text (was 130, 130, 130)
-    error: Color          # error text (was 220, 80, 80)
-    warning: Color        # warning text (was 220, 160, 60)
-    ok: Color             # success confirmation (was 130, 200, 130)
-    dem: Color            # Dem party color (was 130, 160, 255)
-    gop: Color            # Rep party color (was 255, 130, 130)
+    title: Color          # app title accent
+    heading: Color        # section heading
+    subheading: Color     # input labels
+    muted: Color          # info text
+    secondary: Color      # semi-active label
+    accent_green: Color   # active score row label
+    success_soft: Color   # soft green text
+    success_pale: Color   # success indicator
+    disabled: Color       # inactive score row label
+    disabled_deep: Color  # heavily disabled
+    disabled_subtle: Color  # special disabled label
+    dialog_muted: Color   # dialog hint / path text
+    error: Color          # error text
+    warning: Color        # warning text
+    ok: Color             # success confirmation
+    dem: Color            # Dem party color
+    gop: Color            # Rep party color
 
     # ── Buttons (default DPG state) ──────────────────────────────────────────
     button: Color

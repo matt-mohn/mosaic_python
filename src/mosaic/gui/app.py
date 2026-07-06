@@ -729,6 +729,10 @@ class MosaicApp:
                         callback=lambda: dpg.configure_item("popup_help", show=True),
                     )
                     dpg.add_menu_item(
+                        label="Open output directory...",
+                        callback=self._on_open_output_dir,
+                    )
+                    dpg.add_menu_item(
                         label="Check for updates...",
                         callback=self._on_check_updates,
                     )
@@ -840,6 +844,7 @@ class MosaicApp:
                                     label="##dist",
                                     default_value=5, min_value=2, max_value=500,
                                     width=_inp_w, step=0,
+                                    callback=self._on_num_districts_change,
                                 )
                                 self._tooltip(
                                     self._num_districts,
@@ -852,14 +857,14 @@ class MosaicApp:
                                 self.theme.text("Iterations", "subheading")
                                 self._iterations = dpg.add_input_int(
                                     label="##iter",
-                                    default_value=2500, min_value=1,
+                                    default_value=5000, min_value=1,
                                     max_value=1_000_000,
                                     width=_inp_w, step=0,
                                 )
                                 self._tooltip(
                                     self._iterations,
                                     "How many annealing steps to run (default "
-                                    "2500, max 1,000,000). The cooling "
+                                    "5000, max 1,000,000). The cooling "
                                     "schedule is sized against this number, so "
                                     "more iterations means slower, more "
                                     "thorough cooling.",
@@ -2748,6 +2753,22 @@ class MosaicApp:
         except (ValueError, AttributeError):
             return ()
 
+    def _on_open_output_dir(self):
+        """Open output/ (saved maps + assignment/metric CSVs) in the OS file browser."""
+        import os, sys, subprocess
+        out = Path("output").resolve()
+        out.mkdir(exist_ok=True)  # create on first use so opening never fails
+        try:
+            if sys.platform == "darwin":
+                subprocess.run(["open", str(out)], check=False)
+            elif os.name == "nt":
+                os.startfile(str(out))  # type: ignore[attr-defined]
+            else:
+                subprocess.run(["xdg-open", str(out)], check=False)
+            self.state.update(status_message=f"Opened {out}")
+        except Exception as e:
+            self.state.update(status_message=f"Could not open output folder: {e}")
+
     def _on_check_updates(self):
         """Manual update check (Advanced menu). Compares the local version to the
         public repo's pyproject version. Synchronous — it's user-initiated — with
@@ -4274,7 +4295,8 @@ class MosaicApp:
     # on-screen map (so runs chain, unlike Hot Start which pins a CSV) and a
     # polish preset is applied to the annealing controls. The pre-arm control
     # values are snapshotted so Clear restores them. Mutually exclusive with Hot
-    # Start; cleared (with restore) when the shapefile changes.
+    # Start; cleared (with restore) on Reset or when the shapefile or district
+    # count changes, since each invalidates the on-screen map it reseeds from.
     _RELIGHT_PRESET = {
         "ann": True, "cool": "Guided (recommended)", "temp": 0.01,
         "guide": 0.80, "watch": False, "n3": 50, "flip_en": True, "flip_mid": 75,
@@ -4284,6 +4306,13 @@ class MosaicApp:
         if dpg.get_value(self._relight_item):
             self._arm_relight()
         else:
+            self._clear_relight()
+
+    def _on_num_districts_change(self, *_args) -> None:
+        """Changing the district count invalidates the on-screen map, so a
+        Relight armed against it no longer applies -- turn it off (restoring the
+        pre-Relight annealing settings). No-op when Relight isn't armed."""
+        if self._relight_active:
             self._clear_relight()
 
     def _relight_snapshot(self) -> dict:
@@ -4324,6 +4353,8 @@ class MosaicApp:
             return
         self._relight_saved = self._relight_snapshot()
         self._relight_write(self._RELIGHT_PRESET)
+        # Relight chains short runs; show the full trajectory, not just last 10k.
+        dpg.set_value(self._limit_plots, False)
         self._relight_active = True
         dpg.set_value(self._relight_item, True)
         self._update_relight_display()
@@ -4548,7 +4579,7 @@ class MosaicApp:
         log.info(f"Hot start error popup: {message[:200]}")
         # Non-modal on purpose: created in the same frame that just deleted the
         # modal column-picker popup, and a new modal window would hide behind
-        # DPG's defunct modal overlay. Non-modal sidesteps that.
+        # DPG's defunct modal overlay.
         with self._dialog(
             "Hot Start Error", "popup_hot_start_error", (620, 320),
             modal=False,
@@ -4660,11 +4691,10 @@ class MosaicApp:
             self.state.pop_dev_mean_history  = self.state.pop_dev_mean_history[:n_score]
             self.state.cut_edges_history        = self.state.cut_edges_history[:n_score]
 
-        # Tell the worker to stop, then actually wait for it to exit before
-        # we touch state.  Previously we set should_stop=False in the same
-        # frame as request_stop(); if the worker was sitting in its
-        # pause-wait loop it could observe the cleared flags and fall back
-        # into normal iteration — i.e., "paused then unpaused on revert".
+        # Tell the worker to stop, then wait for it to exit before we touch
+        # state -- a worker parked in its pause-wait loop can otherwise wake
+        # up and resume normal iteration mid-revert ("paused then unpaused
+        # on revert").
         self.state.request_stop()
         if self.algorithm_thread is not None and self.algorithm_thread.is_alive():
             self.algorithm_thread.join(timeout=0.5)
@@ -4928,6 +4958,9 @@ class MosaicApp:
             district_label_map=None,
             score_breakdown={},
         )
+        # Reset wipes the current map, so a Relight armed against it no longer
+        # applies -- turn it off (restoring the pre-Relight annealing settings).
+        self._clear_relight()
         # Reset status bar and score readouts
         dpg.set_value(self._status_txt, "Status: Idle")
         dpg.set_value(self._iter_txt,   "Iteration: 0 / 0")

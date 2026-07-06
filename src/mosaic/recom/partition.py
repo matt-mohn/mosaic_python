@@ -121,7 +121,7 @@ def _try_partition(
     remaining_nodes = set(graph.nodes())
 
     for district in range(num_districts - 1):
-        # The second-to-last cut must constrain both remaining districts.
+        # Final cut is two-sided, so both remaining districts land in tolerance.
         is_last_cut = (district == num_districts - 2)
 
         ig_sub = _nx_subgraph_to_ig(graph, remaining_nodes)

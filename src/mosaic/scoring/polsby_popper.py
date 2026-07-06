@@ -46,10 +46,8 @@ def _score_pp_numba(assignment, areas, ext_perim, eu, ev, elen,
         area[d] += areas[i]
         p_base[d] += ext_perim[i]
     # Pass 2: shared boundary of cut edges. p_eu and p_ev are independent
-    # accumulators, so summing both in a single edge-order pass leaves each
-    # one's summation order (and therefore its exact bit pattern) identical to
-    # the old two-pass form — it just evaluates the cut test once per edge and
-    # halves the edge scans.
+    # accumulators, so summing both in one edge-order pass keeps each one's
+    # summation order (and exact bit pattern) stable while scanning edges once.
     for i in range(m):
         du = assignment[eu[i]]
         dv = assignment[ev[i]]

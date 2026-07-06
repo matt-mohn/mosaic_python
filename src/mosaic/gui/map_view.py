@@ -426,12 +426,10 @@ class MapView:
         if not self._loaded:
             return None
 
-        # Safety: if the assignment array length doesn't match what the
-        # MapView was loaded with, skip this render rather than indexing past
-        # the array. Hit when a re-import of the same shapefile path with
-        # edited content slipped past the reload trigger; the upstream fix
-        # tracks gdf identity, but this guard prevents an IndexError crash
-        # even when state goes out of sync.
+        # Safety: if assignment length != loaded precinct count, skip rather
+        # than index past the array. Guards an IndexError when an edited
+        # re-import of the same path slips past the reload trigger; the real
+        # fix tracks gdf identity, this is the backstop.
         if len(assignment) != self._n_precincts:
             log.warning(
                 f"MapView render skipped: assignment length {len(assignment)} "
