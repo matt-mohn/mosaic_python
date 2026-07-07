@@ -1,5 +1,7 @@
 """
-Holistic Splitting — bidirectional county/district splitting rating.
+County Congruence — bidirectional county/district splitting penalty.
+(Internal id stays `holistic_splitting` throughout; user-facing name is
+"County Congruence".)
 
 Builds the CxD population matrix and computes two complementary scores:
 
@@ -18,16 +20,26 @@ inside-one-district overlaps are folded into a single bucket per outer entity.
 Without this, a district touching many small whole counties would be penalised
 the same as a district that fragments those counties — which isn't what we want.
 
-Rating curve:
-  - Asymmetric `best` target: when n_counties > n_districts (typical state legs),
-    county-direction uses a looser `best_target(n_c, n_d)` and district-direction
-    uses the strict MAX_SPLITTING = 1.20. Swapped when n_districts > n_counties.
-  - Each direction clipped to [best, best * 1.33], linear mapped, inverted → [0, 100].
-  - Combined rating = 0.5 * county_rating + 0.5 * district_rating.
-  - Returned as Mosaic penalty form: `100 - combined_rating` (lower = less split).
+Two penalty forms, both blended 50/50 across the county and district directions
+(0 = perfect):
 
-No "reserve 100" rule (that's a scorecard convention; we want 0 = perfect for
-the optimizer). No rounding (continuous gradient).
+  - `unclipped` (DEFAULT -- the annealing form): a flat slope from the true
+    no-split floor, `pen_dir = _UNCLIPPED_SLOPE * (raw - 1.0)`. raw = 1.0 (a map
+    with no splits) is the only non-arbitrary anchor there is; any split above it
+    registers, the gradient runs to zero splits, and it never caps. No band, no
+    1.33 -- the single knob is the slope, which is pure magnitude (the weight
+    does the rest).
+
+  - clipped (scorecard form): the classic DRA-style band. 0 at a map-derived
+    ideal `ref` (looser `best_target(n_c,n_d)` on the many-into-few direction,
+    strict MAX_SPLITTING = 1.20 on the other), rising to 100 at `worst = ref *
+    1.33` and pinned there. `pen_dir = 100 * clip((raw-ref)/(worst-ref), 0, 1)`,
+    then * _PENALTY_SCALE so its magnitude sits near the unclipped form's (so
+    toggling the mode doesn't reprice the weight).
+
+The `raw_county` / `raw_district` sqrt-entropy scores (min 1.0 = no splits) are
+population- and lopsidedness-weighted, so severity and county size matter -- a
+plain split count is Classic Splitting's job, not this one.
 """
 
 from __future__ import annotations
@@ -35,9 +47,11 @@ from __future__ import annotations
 import numpy as np
 
 
-_MAX_SPLITTING    = 1.20
+_MAX_SPLITTING    = 1.20   # clipped scorecard form only
 _MIN_SPLITTING    = 1.00
-_WORST_MULTIPLIER = 1.33
+_WORST_MULTIPLIER = 1.33   # clipped scorecard form only
+_PENALTY_SCALE    = 0.2    # clipped-form pre-weight scale
+_UNCLIPPED_SLOPE  = 45.0   # unclipped penalty per unit of raw excess over 1.0
 
 
 # ── Numba fused kernel for the raw split scores ───────────────────────────────
@@ -103,13 +117,14 @@ def _best_target(n_counties: int, n_districts: int) -> float:
     return w1 * _MAX_SPLITTING + (1.0 - w1) * _MIN_SPLITTING
 
 
-def _continuous_rating(raw: float, best: float, worst: float) -> float:
-    """Linear clipped rating in [0, 100]. Continuous (no rounding)."""
-    if worst <= best:
-        return 100.0
-    clipped = max(best, min(worst, raw))
-    unitized = (clipped - best) / (worst - best)
-    return (1.0 - unitized) * 100.0
+def _direction_penalty(raw: float, floor: float, worst: float) -> float:
+    """Clipped per-direction split penalty in [0, 100]: 0 at/under `floor`,
+    rising linearly to 100 at `worst`, pinned there beyond. Scorecard form only
+    (the unclipped path uses a plain slope from raw = 1.0, no band)."""
+    if worst <= floor:
+        return 0.0
+    u = max(0.0, min(1.0, (raw - floor) / (worst - floor)))
+    return u * 100.0
 
 
 def score_holistic_splitting(
@@ -119,6 +134,7 @@ def score_holistic_splitting(
     n_districts: int,
     county_data=None,
     co_di_pop=None,
+    unclipped: bool = False,
 ) -> tuple[float, float, float]:
     """
     Args:
@@ -127,11 +143,15 @@ def score_holistic_splitting(
         populations:  (n,) int/float precinct populations
         n_districts:  number of districts k
         county_data:  optional CountyData with cached county_pops + n_counties
+        unclipped:    if True (default in practice), use the flat-slope annealing
+                      form (penalty = slope * (raw - 1.0), no band or cap); if
+                      False, the clipped scorecard band
 
     Returns:
         raw_county   -- county-direction split score (1.0 = no splits in this direction)
         raw_district -- district-direction split score (1.0 = no splits in this direction)
-        penalty      -- combined penalty in [0, 100] (lower = less split)
+        penalty      -- combined penalty (lower = less split); [0, inf) unclipped,
+                        [0, 100 * _PENALTY_SCALE] clipped
     """
     if county_data is not None:
         n_counties  = county_data.n_counties
@@ -165,16 +185,24 @@ def score_holistic_splitting(
     raw_county = float(raw_county)
     raw_district = float(raw_district)
 
-    # ── Rating curves with asymmetric best-target ───────────────────────────
-    if n_counties > n_districts:
-        best_c = _best_target(n_counties, n_districts)
-        best_d = _MAX_SPLITTING
+    if unclipped:
+        # Annealing form (default): penalty rises at a flat slope from the true
+        # no-split floor (raw = 1.0) -- no arbitrary band, no cap. _UNCLIPPED_SLOPE
+        # is the only knob and it is pure magnitude (the weight tunes the rest).
+        pen_c = _UNCLIPPED_SLOPE * max(0.0, raw_county - 1.0)
+        pen_d = _UNCLIPPED_SLOPE * max(0.0, raw_district - 1.0)
+        penalty = 0.5 * pen_c + 0.5 * pen_d
     else:
-        best_c = _MAX_SPLITTING
-        best_d = _best_target(n_counties, n_districts)
-
-    rating_c = _continuous_rating(raw_county,   best_c, best_c * _WORST_MULTIPLIER)
-    rating_d = _continuous_rating(raw_district, best_d, best_d * _WORST_MULTIPLIER)
-    combined = 0.5 * rating_c + 0.5 * rating_d
-    penalty  = 100.0 - combined
+        # Clipped scorecard form: 0 at the map ideal `ref`, capped at 100 at
+        # worst = ref * 1.33. _PENALTY_SCALE keeps its magnitude near the
+        # unclipped form's so toggling the mode doesn't reprice the weight.
+        if n_counties > n_districts:
+            ref_c = _best_target(n_counties, n_districts)
+            ref_d = _MAX_SPLITTING
+        else:
+            ref_c = _MAX_SPLITTING
+            ref_d = _best_target(n_counties, n_districts)
+        pen_c = _direction_penalty(raw_county,   ref_c, ref_c * _WORST_MULTIPLIER)
+        pen_d = _direction_penalty(raw_district, ref_d, ref_d * _WORST_MULTIPLIER)
+        penalty = _PENALTY_SCALE * (0.5 * pen_c + 0.5 * pen_d)
     return raw_county, raw_district, penalty

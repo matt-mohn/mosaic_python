@@ -206,7 +206,7 @@
           <dt><strong>STATIC — Cooling Rate</strong></dt>
           <dd>Per-iteration temperature multiplier (default 0.9995, meaning temp drops 0.05% per step). The total cooling over a run is <code>cooling_rate^max_iterations</code>; e.g. 0.9995 over 10,000 iterations leaves temperature at about 0.7% of initial.</dd>
           <dt><strong>Launch Watch</strong></dt>
-          <dd>When enabled (default on), Mosaic re-anchors the temperature to the current score after a set number of iterations, configurable via the <strong>Re-anchor after iter</strong> input (default 250). Useful when score collapses early (common with County Splits and County-Edge Bias enabled) and the initial-anchored temperature would otherwise become too hot to be useful by the time the score has stabilized.</dd>
+          <dd>When enabled (default on), Mosaic re-anchors the temperature to the current score after a set number of iterations, configurable via the <strong>Re-anchor after iter</strong> input (default 250). Useful when score collapses early (common with County Congruence and County-Edge Bias enabled) and the initial-anchored temperature would otherwise become too hot to be useful by the time the score has stabilized.</dd>
           <dt><strong>n=3 ReCom Mix slider</strong></dt>
           <dd>Frozen at run start (see ReCom). Listed here too because the Annealing popup is where it lives in the GUI.</dd>
         </dl>
@@ -225,7 +225,7 @@
         <h3>County-Edge Bias</h3>
         <dl>
           <dt><strong>County-Edge Bias</strong> (enable + Multiplier slider)</dt>
-          <dd>Makes ReCom less likely to <em>propose</em> cut edges that cross county lines when generating new district boundaries. Higher multiplier = stronger preference for cuts along county borders. Distinct from the <strong>County Splits</strong> score: County Splits penalizes splits in the score function (post hoc), County-Edge Bias steers the proposal distribution (per step). The two work well together — County-Edge Bias keeps splits rare in proposals; County Splits cleans up the ones that do happen.</dd>
+          <dd>Makes ReCom less likely to <em>propose</em> cut edges that cross county lines when generating new district boundaries. Higher multiplier = stronger preference for cuts along county borders. It lives with the <strong>County Congruence</strong> score in the GUI and turns on with it. Distinct from any splitting score: the splitting scores penalize splits in the score function (post hoc), while County-Edge Bias steers the proposal distribution (per step). The two work well together — the bias keeps splits rare in proposals; the splitting score cleans up the ones that do happen.</dd>
         </dl>
 
         <h3>Scoring weights</h3>
@@ -296,9 +296,9 @@
             </table>
           </dd>
 
-          <dt><strong>County Splits</strong></dt>
+          <dt><strong>Classic Splitting</strong></dt>
           <dd>
-            <p>Penalty on splitting counties across districts. Two terms: <em>excess splits</em> beyond the minimum forced by county population, plus the shortfall in <em>single-county districts</em> (districts whose precincts all lie within one county). In the GUI this score shares one row labeled <strong>County Splits and Bias</strong>, which also houses the <a href="#run-config">County-Edge Bias</a> toggle (a proposal-time steer, distinct from this post-hoc penalty).</p>
+            <p>Count-based penalty on splitting counties across districts. Two terms: <em>excess splits</em> beyond the minimum forced by county population, plus the shortfall in <em>single-county districts</em> (districts whose precincts all lie within one county). This is the optional, count-based sibling to <strong>County Congruence</strong> (the default, population- and severity-weighted splitting score); turn it on from the <span class="gui">Scores</span> menu.</p>
             <table class="meta">
               <tr><th>Unit</th><td>weighted score</td></tr>
               <tr><th>Direction</th><td>lower is better</td></tr>
@@ -471,13 +471,12 @@
             </table>
           </dd>
 
-          <dt><strong>Holistic Splitting</strong></dt>
+          <dt><strong>County Congruence</strong></dt>
           <dd>
-            <p>One splitting dial that blends county-direction and district-direction sub-ratings 50/50. Uses a sqrt-of-fractions kernel that rewards lopsided splits over even ones, population-weighted across counties and districts. (Sibling to the structural <strong>County Splits</strong> score &mdash; this is the 0&ndash;100 composite, that is the count-based penalty.)</p>
+            <p>One splitting penalty that blends county-direction and district-direction sub-scores 50/50. Uses a sqrt-of-fractions kernel that rewards lopsided splits over even ones, population-weighted across counties and districts. Unclipped by default (Annealing Settings): the penalty keeps climbing past its cap so the optimizer always has a gradient on heavily-split plans. (Sibling to the count-based <strong>Classic Splitting</strong> score.)</p>
             <table class="meta">
-              <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
-              <tr><th>Direction</th><td>lower contribution is better</td></tr>
-              <tr><th>Contribution</th><td><code>100 − rating</code></td></tr>
+              <tr><th>Unit</th><td>penalty (0 = best; uncapped when unclipped)</td></tr>
+              <tr><th>Direction</th><td>lower is better</td></tr>
             </table>
           </dd>
         </dl>
@@ -491,7 +490,7 @@
           <dt><strong>County</strong></dt>
           <dd>Draws grey lines along county boundaries on top of the current colouring. Useful for eyeballing how often district boundaries follow county lines.</dd>
           <dt><strong>Splits</strong></dt>
-          <dd>Dims counties that lie entirely inside a single district, leaving split counties at full saturation. Quick visual diagnostic for the County Splits score: more colour = more splits.</dd>
+          <dd>Dims counties that lie entirely inside a single district, leaving split counties at full saturation. Quick visual diagnostic for the splitting scores: more colour = more splits.</dd>
           <dt><strong>Pct. Results</strong> (Precinct Results)</dt>
           <dd>Colours each precinct by its Dem vs Rep share (Classic Mosaic red &harr; blue palette). Independent of district boundaries; shows the partisan terrain Mosaic is working over. Requires election columns at load.</dd>
           <dt><strong>Dist. Results</strong> (District Results)</dt>
@@ -520,6 +519,8 @@
           <dd>When the Alignment metric is active, this panel plots <em>cohesion</em> &mdash; the share of each reference district that stays intact &mdash; as a mean across districts and the single worst-hit district. The axis is inverted relative to the score: higher here means closer to the reference, while the score row reports the penalty (lower is better).</dd>
           <dt><strong>Score Contributors</strong></dt>
           <dd>Bar chart showing the share of the total score each enabled metric contributes right now. The quickest way to see which weight is actually driving the optimizer.</dd>
+          <dt><strong>Comet Plot</strong></dt>
+          <dd>Plots any two metrics against each other as a trajectory, showing how the search moves through the trade-off between them &mdash; compactness against efficiency gap, say. The tail cools with age (recent steps run hot, older ones fade toward dark blue) and a bright dot marks the current plan. Choose the axes with the two selectors; <span class="gui">Smooth</span> damps the line, <span class="gui">Fit all</span> keeps the whole trajectory in view while <span class="gui">Follow dot</span> tracks the live head, and <span class="gui">Fade</span> dims older steps. Partisan metrics appear only once election data is loaded.</dd>
           <dt><strong>District Info</strong></dt>
           <dd>Per-district table: population, deviation from ideal, and (when election data is loaded) Dem share. District numbers match the map labels and the exported CSVs. Refreshes on an adjustable interval to stay cheap on long runs.</dd>
           <dt><strong>Win Chance / Partisanship</strong></dt>

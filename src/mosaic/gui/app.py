@@ -39,6 +39,98 @@ _PLOT_LIMIT   = 10_000   # max points rendered when limit-plots is on
 _COMPACT_AT   = 20_000   # compact local buffer when it exceeds this
 _COMPACT_KEEP = 10_000   # keep last N at full resolution after compaction
 _COMPACT_THIN = 50       # keep 1-in-N for old data (~200 pts per 10k iters)
+
+# Phase plot: a metric-vs-metric trajectory whose tail cools with age (hot head
+# -> dark blue). Histories append in lockstep, so any two are index-aligned.
+_PHASE_BANDS  = 24        # recency-ramp line-series (static colours; bin by age)
+_PHASE_HEAD   = 400       # newest points kept full-res (never strided away)
+_PHASE_BUDGET = 1400      # total points plotted per redraw (head + strided tail)
+_PHASE_TAU    = 2000.0    # recency falloff (iters): hot->mid ~1 TAU, cold by ~3
+_PHASE_FOLLOW = 1000      # "Follow dot" fits the last this-many iterations
+_PHASE_SMOOTH_WIN = 7     # moving-average window when Smooth is on
+_PHASE_MIN_SPAN = 0.05    # floor on axis span so tiny-range metrics don't over-zoom
+
+# (label, history attr, display transform). "rating" = 100 - penalty (higher is
+# better), "x100" = 0-1 fraction -> 0-100, "raw" = as stored. Chosen so each
+# label reads in its natural direction.
+_PHASE_METRICS: list[tuple[str, str, str]] = [
+    ("Cut Edges",            "cut_edges_history",                 "raw"),
+    ("Compactness",          "holistic_compactness_history",      "rating"),
+    ("Polsby-Popper",        "pp_history",                        "x100"),
+    ("Reock",                "reock_history",                     "x100"),
+    ("County Congruence",    "holistic_splitting_history",        "raw"),
+    ("County Excess Splits", "county_excess_splits_history",      "raw"),
+    ("Pop Dev max %",        "pop_dev_max_history",               "raw"),
+    ("Pop Dev mean %",       "pop_dev_mean_history",              "raw"),
+    ("Score (total)",        "score_history",                     "raw"),
+    ("Temperature",          "temperature_history",               "raw"),
+    # Partisan — dropped from the pickers when no election data is loaded.
+    ("Efficiency Gap",       "eg_history",                        "raw"),
+    ("Efficiency Gap (abs)", "eg_history",                        "abs"),
+    ("Mean-Median",          "mm_history",                        "raw"),
+    ("Mean-Median (abs)",    "mm_history",                        "abs"),
+    ("Expected Dem Seats",   "dem_seats_history",                 "raw"),
+    ("Proportionality",      "holistic_proportionality_history",  "rating"),
+    ("Competitiveness",      "holistic_competitiveness_history",  "rating"),
+    ("Dem Majority",         "majority_dem_history",              "x100"),
+    ("Rep Majority",         "majority_rep_history",              "x100"),
+    ("Hinge",                "hinge_history",                     "x100"),
+]
+_PHASE_ATTR   = {lbl: attr for lbl, attr, _ in _PHASE_METRICS}
+_PHASE_KIND   = {lbl: kind for lbl, _, kind in _PHASE_METRICS}
+_PHASE_LABELS = [lbl for lbl, _, _ in _PHASE_METRICS]
+
+# Axis-title unit hints so the comet axes read like the per-metric panels
+# (e.g. a probability shows "(%)"). Bare label if a metric isn't listed.
+_PHASE_AXIS_UNIT = {
+    "Compactness":        "(100 = best)",
+    "Polsby-Popper":      "(100 = circle)",
+    "Reock":              "(100 = circle)",
+    "County Congruence": "(penalty, 0 = best)",
+    "Proportionality":    "(100 = best)",
+    "Competitiveness":    "(100 = best)",
+    "Dem Majority":       "(%)",
+    "Rep Majority":       "(%)",
+    "Hinge":              "(%)",
+}
+
+# Recency ramps (old -> hot). Dark = magma (bright-on-black); light = mako
+# reversed (pale mint old -> near-black recent) so recent reads dark on white.
+_PHASE_RAMP = [
+    (0.00, (48, 60, 135)),  (0.22, (90, 68, 165)),  (0.40, (170, 60, 120)),
+    (0.60, (228, 90, 60)),  (0.80, (250, 160, 40)), (1.00, (252, 253, 191)),
+]
+_PHASE_RAMP_LIGHT = [
+    (0.00, (222, 245, 229)),  # oldest: pale mint
+    (0.22, (100, 200, 140)),  # green
+    (0.42, ( 45, 148, 142)),  # teal
+    (0.62, ( 54,  93, 141)),  # blue
+    (0.80, ( 52,  38,  86)),  # indigo
+    (1.00, ( 14,   5,   8)),  # hottest: near-black
+]
+
+
+def _ramp_color(t: float, ramp=_PHASE_RAMP) -> tuple[int, int, int]:
+    """Sample a recency ramp at t in [0, 1] (old -> hot)."""
+    t = 0.0 if t < 0.0 else 1.0 if t > 1.0 else t
+    for i in range(1, len(ramp)):
+        p1, c1 = ramp[i]
+        if t <= p1:
+            p0, c0 = ramp[i - 1]
+            f = (t - p0) / (p1 - p0) if p1 > p0 else 0.0
+            return tuple(int(a + (b - a) * f) for a, b in zip(c0, c1))
+    return ramp[-1][1]
+
+
+def _phase_transform(kind: str, arr):
+    """Map a stored history array to its display units (see _PHASE_METRICS)."""
+    if kind == "rating":
+        return 100.0 - arr
+    if kind == "x100":
+        return arr * 100.0
+    if kind == "abs":
+        return np.abs(arr)
+    return arr
 # DPG's set_value + fit_axis_data iterate the full point list under the GIL
 # on every frame.  At 60 fps that single-thread cost steals time from the
 # algorithm worker.  Cap how many points we *send* to DPG (the buffer keeps
@@ -172,9 +264,9 @@ _CONTRIB_BAR_METRICS = [
     ("D Majority",      "D Maj",  (70,  130, 210, 220)),
     ("R Majority",      "R Maj",  (210, 70,  70,  220)),
     ("Hinge",           "Hinge",  (140, 90,  200, 220)),
-    # Holistic block — single-rating composites
+    # Single-rating composites
     ("Compactness",              "Comp",    (220, 160, 60,  220)),
-    ("Holistic Splitting",       "H-Split", (200, 140, 50,  220)),
+    ("County Congruence",        "Cty Cong", (200, 140, 50, 220)),
     ("Proportionality",          "Prop",    (170, 90,  50,  220)),
     ("Competitiveness",          "Cmptv",   (50,  150, 90,  220)),
 ]
@@ -263,9 +355,10 @@ _HINTS: dict[str, str] = {
         "Higher = more compact. Use it instead of tuning the two separately."
     ),
     "holistic_splitting": (
-        "One 0-100 splitting dial blending county and district splits 50/50. "
-        "Rewards lopsided splits over even ones, weighted by population so "
-        "splitting a big city costs more."
+        "One splitting penalty (0 = best) blending county and district splits "
+        "50/50. Rewards lopsided splits over even ones, weighted by population so "
+        "splitting a big city costs more. 'Unclipped' lets the penalty climb past "
+        "the scorecard cap so the optimizer keeps a gradient on heavily-split plans."
     ),
     "holistic_proportionality": (
         "One 0-100 rating of seat share vs vote share. Pulls toward proportional "
@@ -390,6 +483,16 @@ class MosaicApp:
         self._buf_maj_rep   = _SeriesBuffer()
         self._buf_hinge     = _SeriesBuffer()
 
+        # Phase plot: selected metric labels + view / smoothing prefs.
+        self._phase_x_label = "Compactness"
+        self._phase_y_label = "Efficiency Gap"
+        self._phase_fit_all = True         # Fit all (sticky) vs Follow dot
+        self._phase_smooth = True
+        self._phase_fade = True            # alpha fade with age vs solid trail
+        self._phase_metric_sig = None      # last active-metric set the combos synced to
+        self._phase_lim = None             # sticky (xlo,xhi,ylo,yhi) for "Fit all"
+        self._phase_prev_n = 0             # detect a run reset (history shrank)
+
     # ── Setup ─────────────────────────────────────────────────────────────────
 
     def setup(self):
@@ -484,6 +587,7 @@ class MosaicApp:
         self._build_majority_panel()
         self._build_hinge_panel()
         self._build_district_info_panel()
+        self._build_phase_panel()
 
         # ── Main window ───────────────────────────────────────────────────────
         with dpg.window(tag="main_window", no_scrollbar=True):
@@ -541,11 +645,11 @@ class MosaicApp:
                             "score_row_cuts", dpg.get_value(self._svis_cuts),
                             self._cut_enabled, self._on_cut_toggle),
                     )
-                    self._svis_cs = dpg.add_menu_item(
-                        label="County Splits", check=True, default_value=True,
+                    self._svis_hsplit = dpg.add_menu_item(
+                        label="County Congruence", check=True, default_value=True,
                         callback=lambda: self._set_score_row_vis(
-                            "score_row_cs", dpg.get_value(self._svis_cs),
-                            self._cs_enabled, self._on_cs_toggle),
+                            "score_row_hsplit", dpg.get_value(self._svis_hsplit),
+                            self._hsplit_enabled, self._on_hsplit_toggle),
                     )
                     self._svis_popdev = dpg.add_menu_item(
                         label="Population Deviation", check=True, default_value=True,
@@ -624,12 +728,12 @@ class MosaicApp:
                             self._hinge_enabled, self._on_hinge_toggle),
                     )
                     dpg.add_separator()
-                    # Holistic — single-rating composites
-                    self._svis_hsplit = dpg.add_menu_item(
-                        label="Holistic Splitting", check=True, default_value=False,
+                    # Classic county splits (optional)
+                    self._svis_cs = dpg.add_menu_item(
+                        label="Classic Splitting", check=True, default_value=False,
                         callback=lambda: self._set_score_row_vis(
-                            "score_row_hsplit", dpg.get_value(self._svis_hsplit),
-                            self._hsplit_enabled, self._on_hsplit_toggle),
+                            "score_row_cs", dpg.get_value(self._svis_cs),
+                            self._cs_enabled, self._on_cs_toggle),
                     )
 
                 with dpg.menu(label="Views"):
@@ -638,9 +742,9 @@ class MosaicApp:
                         label="Cut Edges", check=True, default_value=False,
                         callback=self._on_panel_cuts_toggle,
                     )
-                    self._panel_cs_item = dpg.add_menu_item(
-                        label="County Splits", check=True, default_value=False,
-                        callback=self._on_panel_cs_toggle,
+                    self._panel_hsplit_item = dpg.add_menu_item(
+                        label="County Congruence", check=True, default_value=False,
+                        callback=self._on_panel_hsplit_toggle,
                     )
                     self._panel_popdev_item = dpg.add_menu_item(
                         label="Population Deviation", check=True, default_value=False,
@@ -695,10 +799,10 @@ class MosaicApp:
                         callback=self._on_panel_hinge_toggle,
                     )
                     dpg.add_separator()
-                    # Holistic — single-rating composites
-                    self._panel_hsplit_item = dpg.add_menu_item(
-                        label="Holistic Splitting", check=True, default_value=False,
-                        callback=self._on_panel_hsplit_toggle,
+                    # Classic county splits (optional)
+                    self._panel_cs_item = dpg.add_menu_item(
+                        label="Classic Splitting", check=True, default_value=False,
+                        callback=self._on_panel_cs_toggle,
                     )
                     dpg.add_separator()
                     # Views-only (no corresponding score)
@@ -721,6 +825,10 @@ class MosaicApp:
                     self._panel_district_item = dpg.add_menu_item(
                         label="District Info", check=True, default_value=False,
                         callback=self._on_panel_district_toggle,
+                    )
+                    self._panel_phase_item = dpg.add_menu_item(
+                        label="Comet Plot", check=True, default_value=False,
+                        callback=self._on_panel_phase_toggle,
                     )
 
                 with dpg.menu(label="Help"):
@@ -1084,7 +1192,7 @@ class MosaicApp:
                             with dpg.group():
                                 self._hint(self.theme.text("Score", "heading"), "score")
                                 with dpg.plot(height=_HALF_PLOT_H,
-                                              width=_HALF_PLOT_W):
+                                              width=_HALF_PLOT_W, no_menus=True):
                                     dpg.add_plot_legend()
                                     dpg.add_plot_axis(dpg.mvXAxis,
                                                       label="Iteration",
@@ -1097,7 +1205,7 @@ class MosaicApp:
                                             tag="score_series")
                             with dpg.group():
                                 self._hint(self.theme.text("Entropy", "heading"), "entropy")
-                                with dpg.plot(height=_HALF_PLOT_H, width=-1):
+                                with dpg.plot(height=_HALF_PLOT_H, width=-1, no_menus=True):
                                     dpg.add_plot_legend()
                                     dpg.add_plot_axis(dpg.mvXAxis,
                                                       label="Iteration",
@@ -1145,28 +1253,24 @@ class MosaicApp:
                                 )
                             dpg.add_spacer(height=4)
 
-                        with dpg.group(tag="score_row_cs", show=True):
+                        with dpg.group(tag="score_row_hsplit", show=True):
                             with dpg.group(horizontal=True):
-                                self._cs_enabled = dpg.add_checkbox(
+                                self._hsplit_enabled = dpg.add_checkbox(
                                     default_value=False,
-                                    callback=self._on_cs_toggle,
+                                    callback=self._on_hsplit_toggle,
                                 )
-                                self._cs_lbl = self.theme.text(
-                                    "County Splits and Bias", "disabled",
+                                self._hsplit_lbl = self.theme.text(
+                                    "County Congruence", "disabled",
                                 )
-                                self._hint(self._cs_lbl, "county_splits")
+                                self._hint(self._hsplit_lbl, "holistic_splitting")
                                 dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel("panel_county_splits", self._panel_cs_item))
-                            with dpg.group(tag="cs_controls", show=False):
-                                self._w_county_excess = dpg.add_slider_int(
-                                    label="Excess weight",
-                                    default_value=1, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 175,
-                                )
-                                self._w_county_unified = dpg.add_slider_int(
-                                    label="Single-county weight",
-                                    default_value=1, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 175,
+                                    callback=lambda: self._show_panel(
+                                        "panel_hsplit", self._panel_hsplit_item))
+                            with dpg.group(tag="hsplit_controls", show=False):
+                                self._w_holistic_splitting = dpg.add_slider_int(
+                                    label="Weight",
+                                    default_value=25, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 100,
                                 )
                                 dpg.add_spacer(height=3)
                                 self._county_bias_enabled = dpg.add_checkbox(
@@ -1183,24 +1287,28 @@ class MosaicApp:
                                     )
                             dpg.add_spacer(height=4)
 
-                        with dpg.group(tag="score_row_hsplit", show=False):
+                        with dpg.group(tag="score_row_cs", show=False):
                             with dpg.group(horizontal=True):
-                                self._hsplit_enabled = dpg.add_checkbox(
+                                self._cs_enabled = dpg.add_checkbox(
                                     default_value=False,
-                                    callback=self._on_hsplit_toggle,
+                                    callback=self._on_cs_toggle,
                                 )
-                                self._hsplit_lbl = self.theme.text(
-                                    "Holistic Splitting", "secondary",
+                                self._cs_lbl = self.theme.text(
+                                    "Classic Splitting", "disabled",
                                 )
-                                self._hint(self._hsplit_lbl, "holistic_splitting")
+                                self._hint(self._cs_lbl, "county_splits")
                                 dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel(
-                                        "panel_hsplit", self._panel_hsplit_item))
-                            with dpg.group(tag="hsplit_controls", show=False):
-                                self._w_holistic_splitting = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=25, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
+                                    callback=lambda: self._show_panel("panel_county_splits", self._panel_cs_item))
+                            with dpg.group(tag="cs_controls", show=False):
+                                self._w_county_excess = dpg.add_slider_int(
+                                    label="Excess weight",
+                                    default_value=1, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 175,
+                                )
+                                self._w_county_unified = dpg.add_slider_int(
+                                    label="Single-county weight",
+                                    default_value=1, min_value=0, max_value=100,
+                                    width=_SCORE_COL_W - 175,
                                 )
                             dpg.add_spacer(height=4)
 
@@ -1858,6 +1966,20 @@ class MosaicApp:
                 "Higher = flips stay rare until later.",
             )
 
+            dpg.add_spacer(height=10)
+            dpg.add_separator()
+            dpg.add_spacer(height=6)
+            self.theme.text("County Congruence", "heading")
+            self._hsplit_unclipped = dpg.add_checkbox(
+                label="Unclipped County Congruence", default_value=True,
+            )
+            self._tooltip(
+                self._hsplit_unclipped,
+                "Let the County Congruence penalty climb past the scorecard cap so "
+                "the optimizer keeps a gradient on heavily-split plans. Off = clipped "
+                "scorecard form (pins at the cap).",
+            )
+
     def _build_alignment_settings_popup(self):
         # Non-modal exception: this window spawns a file dialog ("Load reference
         # plan..."), and a modal-over-modal stack misbehaves in DPG.
@@ -2007,7 +2129,7 @@ class MosaicApp:
             pos=[_LEFT_W + 60, 80],
             on_close=self._on_temp_panel_close,
         ):
-            with dpg.plot(height=-1, width=-1, tag="panel_temp_plot"):
+            with dpg.plot(height=-1, width=-1, tag="panel_temp_plot", no_menus=True):
                 dpg.add_plot_legend()
                 dpg.add_plot_axis(
                     dpg.mvXAxis, label="Iteration", tag="panel_temp_x",
@@ -2020,7 +2142,7 @@ class MosaicApp:
 
     def _build_county_splits_panel(self):
         with dpg.window(
-            label="County Splits", tag="panel_county_splits",
+            label="Classic Splitting", tag="panel_county_splits",
             show=False, width=540, height=460,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_cs_item, False),
@@ -2029,14 +2151,14 @@ class MosaicApp:
                 # Two panels, one per real county score -- there is no single
                 # combined "county splits score", so it isn't charted.
                 self.theme.text("Excess Splits", "heading")
-                with dpg.plot(height=165, width=-1):
+                with dpg.plot(height=165, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="cs_excess_x")
                     with dpg.plot_axis(dpg.mvYAxis, label="Count", tag="cs_excess_y"):
                         dpg.add_line_series([], [], label="Excess", tag="cs_excess_series")
                 dpg.add_spacer(height=6)
                 self.theme.text("Single-County Districts", "heading")
-                with dpg.plot(height=165, width=-1):
+                with dpg.plot(height=165, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="cs_clean_x")
                     with dpg.plot_axis(dpg.mvYAxis, label="Count", tag="cs_clean_y"):
@@ -2056,6 +2178,290 @@ class MosaicApp:
                 ),
                 "muted",
             )
+
+    def _build_phase_themes(self):
+        """Recency-ramp line themes per palette, in faded and full-alpha variants
+        (the Fade toggle), plus the palette's head-marker theme. Built for both
+        palettes so a light/dark swap only rebinds -- see _phase_apply_fade."""
+        self._phase_band_themes = {}    # palette -> {"fade": [...], "solid": [...]}
+        self._phase_head_themes = {}    # palette -> marker theme
+        for pal, ramp in (("dark", _PHASE_RAMP), ("light", _PHASE_RAMP_LIGHT)):
+            fade_list, solid_list = [], []
+            for k in range(_PHASE_BANDS):
+                t = (k + 0.5) / _PHASE_BANDS
+                rgb = _ramp_color(t, ramp)
+                weight = 1.0 + 2.0 * t
+                for alpha, store in ((int(75 + 180 * t), fade_list),
+                                     (255, solid_list)):
+                    with dpg.theme() as th:
+                        with dpg.theme_component(dpg.mvLineSeries):
+                            dpg.add_theme_color(dpg.mvPlotCol_Line, (*rgb, alpha),
+                                                category=dpg.mvThemeCat_Plots)
+                            dpg.add_theme_style(dpg.mvPlotStyleVar_LineWeight, weight,
+                                                category=dpg.mvThemeCat_Plots)
+                    store.append(th)
+            self._phase_band_themes[pal] = {"fade": fade_list, "solid": solid_list}
+            dot_fill = (0, 0, 0, 255) if pal == "dark" else (255, 255, 255, 255)
+            dot_line = (255, 255, 255, 255) if pal == "dark" else (0, 0, 0, 255)
+            with dpg.theme() as hd:
+                with dpg.theme_component(dpg.mvScatterSeries):
+                    dpg.add_theme_color(dpg.mvPlotCol_MarkerFill, dot_fill,
+                                        category=dpg.mvThemeCat_Plots)
+                    dpg.add_theme_color(dpg.mvPlotCol_MarkerOutline, dot_line,
+                                        category=dpg.mvThemeCat_Plots)
+                    dpg.add_theme_style(dpg.mvPlotStyleVar_Marker, dpg.mvPlotMarker_Circle,
+                                        category=dpg.mvThemeCat_Plots)
+                    dpg.add_theme_style(dpg.mvPlotStyleVar_MarkerSize, 4.0,
+                                        category=dpg.mvThemeCat_Plots)
+                    dpg.add_theme_style(dpg.mvPlotStyleVar_MarkerWeight, 2.0,
+                                        category=dpg.mvThemeCat_Plots)
+            self._phase_head_themes[pal] = hd
+
+    def _build_phase_panel(self):
+        """Comet Plot: a metric-vs-metric trajectory -- two axis pickers, a tail
+        that cools with age, and a bright dot on the live plan."""
+        self._build_phase_themes()
+        with dpg.window(
+            label="Comet Plot", tag="panel_phase", show=False,
+            width=420, height=440, pos=[_LEFT_W + 100, 80],
+            on_close=lambda: dpg.set_value(self._panel_phase_item, False),
+        ):
+            with dpg.group(horizontal=True):
+                dpg.add_text("X")
+                dpg.add_combo(_PHASE_LABELS, default_value="Compactness",
+                              width=200, tag="phase_x_combo",
+                              callback=self._on_phase_x_change)
+            with dpg.group(horizontal=True):
+                dpg.add_text("Y")
+                dpg.add_combo(_PHASE_LABELS, default_value="Efficiency Gap",
+                              width=200, tag="phase_y_combo",
+                              callback=self._on_phase_y_change)
+            with dpg.group(horizontal=True):            # options row (all on by default)
+                dpg.add_checkbox(label="Smooth", default_value=True,
+                                 callback=self._on_phase_smooth_change)
+                dpg.add_checkbox(label="Fit all", default_value=True,
+                                 callback=self._on_phase_fit_change)
+                dpg.add_checkbox(label="Fade", default_value=True,
+                                 callback=self._on_phase_fade_change)
+            dpg.add_spacer(height=4)
+            with dpg.plot(height=-1, width=-1, tag="phase_plot", no_menus=True):
+                dpg.add_plot_axis(dpg.mvXAxis, label="Compactness", tag="phase_x")
+                with dpg.plot_axis(dpg.mvYAxis, label="Efficiency Gap",
+                                   tag="phase_y"):
+                    for k in range(_PHASE_BANDS):
+                        dpg.add_line_series([], [], label=f"##phase_band_{k}",
+                                            tag=f"phase_band_{k}")
+                    dpg.add_scatter_series([], [], label="##phase_head",
+                                           tag="phase_head")
+            # Stamp the default axis titles with their unit hints (later picks
+            # route through _set_phase_axis, which does the same).
+            self._set_phase_axis("x", self._phase_x_label)
+            self._set_phase_axis("y", self._phase_y_label)
+            self._phase_apply_fade()    # bind bands + head to current palette / fade
+
+    def _set_phase_axis(self, which: str, label: str) -> None:
+        """Point an axis at a metric (updates combo, stored label, axis title).
+        The axis title carries a unit hint (e.g. "(%)") while the picker and the
+        stored label stay bare -- see _PHASE_AXIS_UNIT."""
+        self._phase_lim = None      # new metric/scale -> refit bounds
+        unit = _PHASE_AXIS_UNIT.get(label)
+        title = f"{label} {unit}" if unit else label
+        if which == "x":
+            self._phase_x_label = label
+            dpg.set_value("phase_x_combo", label)
+            dpg.configure_item("phase_x", label=title)
+        else:
+            self._phase_y_label = label
+            dpg.set_value("phase_y_combo", label)
+            dpg.configure_item("phase_y", label=title)
+
+    def _on_phase_x_change(self, sender, app_data):
+        self._set_phase_axis("x", app_data)
+
+    def _on_phase_y_change(self, sender, app_data):
+        self._set_phase_axis("y", app_data)
+
+    def _on_phase_fit_change(self, sender, app_data):
+        self._phase_fit_all = bool(app_data)
+        self._phase_lim = None
+
+    def _on_phase_fade_change(self, sender, app_data):
+        self._phase_fade = bool(app_data)
+        self._phase_apply_fade()
+
+    def _phase_apply_fade(self) -> None:
+        """Bind every trail band + head marker to the current palette's faded or
+        full-alpha theme set. Called on Fade toggle and on light/dark swap."""
+        pal = self.theme.palette.name
+        if pal not in self._phase_band_themes:
+            pal = "dark"
+        bands = self._phase_band_themes[pal]["fade" if self._phase_fade else "solid"]
+        for k in range(_PHASE_BANDS):
+            dpg.bind_item_theme(f"phase_band_{k}", bands[k])
+        dpg.bind_item_theme("phase_head", self._phase_head_themes[pal])
+
+    def _on_phase_smooth_change(self, sender, app_data):
+        self._phase_smooth = bool(app_data)
+
+    def _on_panel_phase_toggle(self):
+        dpg.configure_item("panel_phase",
+                           show=dpg.get_value(self._panel_phase_item))
+
+    def _phase_active_labels(self) -> list:
+        """Metrics whose history carries real values right now.
+
+        Non-partisan display metrics are 0.0 unless their weight (or a coupled
+        weight / the pop-dev ratchet) is on, so they gate on the run's config --
+        this keeps the picker from offering a metric that flatlines at 0. The
+        coupling below mirrors scoring/score.py; keep the two in step when scores
+        change. Partisan metrics are always computed once election data is
+        loaded, so they gate on elections alone. Hinge is the exception: its
+        value is P(party wins >= threshold), meaningless until the user
+        establishes a hinge, so it also needs the Hinge score enabled. Cut Edges
+        / Score / Temperature are intrinsic and always offered.
+        """
+        cfg = self.state.score_config
+        has = getattr(self, "_has_elections", False)
+        ratchet = self.state.tolerance_ratchet_mode not in (None, "off", "Off")
+        active = set()
+        if cfg.weight_holistic_compactness:
+            active.add("holistic_compactness_history")
+        if cfg.weight_polsby_popper or cfg.weight_holistic_compactness:
+            active.add("pp_history")
+        if cfg.weight_reock or cfg.weight_holistic_compactness:
+            active.add("reock_history")
+        if cfg.weight_holistic_splitting:
+            active.add("holistic_splitting_history")
+        if cfg.weight_county_excess or cfg.weight_county_unified:
+            active.add("county_excess_splits_history")
+        if cfg.weight_pop_deviation or ratchet:
+            active.update(("pop_dev_max_history", "pop_dev_mean_history"))
+        if has:
+            # Always computed from the election data -> available with elections.
+            active.update((
+                "mm_history", "eg_history", "dem_seats_history",
+                "holistic_proportionality_history",
+                "holistic_competitiveness_history",
+                "majority_dem_history", "majority_rep_history",
+            ))
+            # Hinge needs a user-established threshold (the Hinge score toggle),
+            # not just election data -- else its value is against a stale default.
+            if dpg.get_value(self._hinge_enabled):
+                active.add("hinge_history")
+        always = {"cut_edges_history", "score_history", "temperature_history"}
+        return [l for l in _PHASE_LABELS
+                if _PHASE_ATTR[l] in always or _PHASE_ATTR[l] in active]
+
+    def _phase_sync_available_metrics(self) -> None:
+        """Rebuild the axis pickers to the metrics active for this run's config;
+        bump a now-hidden axis to a safe intrinsic. Re-syncs only on a change
+        (config is set at run start, so the picker tracks the live histories)."""
+        labels = self._phase_active_labels()
+        sig = tuple(labels)
+        if self._phase_metric_sig == sig:
+            return
+        self._phase_metric_sig = sig
+        dpg.configure_item("phase_x_combo", items=labels)
+        dpg.configure_item("phase_y_combo", items=labels)
+        if self._phase_x_label not in labels:
+            self._set_phase_axis("x", "Cut Edges")
+        if self._phase_y_label not in labels:
+            self._set_phase_axis("y", "Score (total)")
+
+    def _update_phase_plot(self) -> None:
+        """Redraw the phase trajectory. Free when hidden; bounded to _PHASE_HEAD
+        full-res recent points plus a strided tail (<= _PHASE_BUDGET)."""
+        if not dpg.is_item_shown("panel_phase"):
+            return
+        self._phase_sync_available_metrics()
+        xa, ya = _PHASE_ATTR[self._phase_x_label], _PHASE_ATTR[self._phase_y_label]
+        with self.state._lock:
+            xh = getattr(self.state, xa)
+            yh = getattr(self.state, ya)
+            n = min(len(xh), len(yh))
+            if n == 0:
+                xs_l = ys_l = []
+                head_len = tail_n = stride = 0
+            else:
+                head_len = min(n, _PHASE_HEAD)
+                tail_n = n - head_len
+                budget_tail = max(1, _PHASE_BUDGET - head_len)
+                # Power-of-two stride: it only ever doubles, so the sampled tail
+                # indices stay nested -- points thin out, never reshuffle (no shimmer).
+                stride = 1
+                while tail_n // stride > budget_tail:
+                    stride *= 2
+                xs_l = (xh[0:tail_n:stride] if tail_n else []) + xh[tail_n:n]
+                ys_l = (yh[0:tail_n:stride] if tail_n else []) + yh[tail_n:n]
+        if n < self._phase_prev_n:          # run reset -> forget sticky bounds
+            self._phase_lim = None
+        self._phase_prev_n = n
+        if not xs_l:
+            for k in range(_PHASE_BANDS):
+                dpg.set_value(f"phase_band_{k}", [[], []])
+            dpg.set_value("phase_head", [[], []])
+            return
+        xs = _phase_transform(_PHASE_KIND[self._phase_x_label],
+                              np.asarray(xs_l, dtype=np.float64))
+        ys = _phase_transform(_PHASE_KIND[self._phase_y_label],
+                              np.asarray(ys_l, dtype=np.float64))
+        hx, hy = float(xs[-1]), float(ys[-1])           # dot = true current plan
+        # Age (iterations back from the head) per plotted point, oldest first, so
+        # recency t = exp(-age/TAU) is ascending -> bands are contiguous by t.
+        tail_ages = ((n - 1) - np.arange(0, tail_n, stride)) if tail_n else np.empty(0)
+        head_ages = np.arange(head_len - 1, -1, -1)
+        ages = np.concatenate([tail_ages, head_ages]).astype(np.float64)
+        t = np.exp(-ages / _PHASE_TAU)
+        if self._phase_smooth and len(xs) >= _PHASE_SMOOTH_WIN:
+            # Edge-aware moving average: normalise by the real (non-padded) window
+            # overlap, else convolve's zero-padding drags both ends to the origin.
+            k = np.ones(_PHASE_SMOOTH_WIN)
+            norm = np.convolve(np.ones(len(xs)), k, mode="same")
+            xs = np.convolve(xs, k, mode="same") / norm
+            ys = np.convolve(ys, k, mode="same") / norm
+        edges = np.searchsorted(t, [k / _PHASE_BANDS for k in range(1, _PHASE_BANDS)])
+        edges = [0, *edges.tolist(), len(t)]
+        for k in range(_PHASE_BANDS):
+            a, b = edges[k], edges[k + 1]
+            if k < _PHASE_BANDS - 1:
+                b = min(b + 1, len(t))          # overlap one point so bands join
+            dpg.set_value(f"phase_band_{k}",
+                          [xs[a:b].tolist(), ys[a:b].tolist()] if b - a >= 1
+                          else [[], []])
+        dpg.set_value("phase_head", [[hx], [hy]])
+        self._phase_fit_axes(xs, ys, ages, hx, hy)
+
+    def _phase_fit_axes(self, xs, ys, ages, hx: float, hy: float) -> None:
+        """Axis limits with margin. 'Fit all' holds sticky total bounds that only
+        ever grow, so the view never jitters or shrinks mid-run; 'Follow dot'
+        fits the last _PHASE_FOLLOW iterations. The live dot always stays inside."""
+        def _pad(lo, hi):
+            lo, hi = min(lo, hi), max(lo, hi)
+            if hi - lo < _PHASE_MIN_SPAN:      # floor tiny ranges (Follow dot zoom)
+                c = 0.5 * (lo + hi)
+                lo, hi = c - _PHASE_MIN_SPAN / 2, c + _PHASE_MIN_SPAN / 2
+            pad = (hi - lo) * 0.08
+            return lo - pad, hi + pad
+
+        if not self._phase_fit_all:
+            m = ages <= _PHASE_FOLLOW
+            xv, yv = xs[m], ys[m]
+            xlo, xhi = _pad(min(float(xv.min()), hx), max(float(xv.max()), hx))
+            ylo, yhi = _pad(min(float(yv.min()), hy), max(float(yv.max()), hy))
+        else:
+            dxlo, dxhi = min(float(xs.min()), hx), max(float(xs.max()), hx)
+            dylo, dyhi = min(float(ys.min()), hy), max(float(ys.max()), hy)
+            if self._phase_lim is None:
+                lim = (dxlo, dxhi, dylo, dyhi)
+            else:
+                pxlo, pxhi, pylo, pyhi = self._phase_lim
+                lim = (min(pxlo, dxlo), max(pxhi, dxhi),      # sticky: grow only,
+                       min(pylo, dylo), max(pyhi, dyhi))      # never shrink
+            self._phase_lim = lim
+            xlo, xhi = _pad(lim[0], lim[1])
+            ylo, yhi = _pad(lim[2], lim[3])
+        dpg.set_axis_limits("phase_x", xlo, xhi)
+        dpg.set_axis_limits("phase_y", ylo, yhi)
 
     def _build_ref_line_themes(self):
         """Build the palette-aware reference-line themes used across panels
@@ -2099,7 +2505,7 @@ class MosaicApp:
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_partisan_item, False),
         ):
-            with dpg.plot(height=-1, width=-1, tag="partisan_plot"):
+            with dpg.plot(height=-1, width=-1, tag="partisan_plot", no_menus=True):
                 dpg.add_plot_axis(
                     dpg.mvXAxis, tag="partisan_x",
                     label="Districts (least to most Democratic)",
@@ -2130,7 +2536,7 @@ class MosaicApp:
             pos=[_LEFT_W + 120, 110],
             on_close=lambda: dpg.set_value(self._panel_win_chance_item, False),
         ):
-            with dpg.plot(height=-1, width=-1, tag="win_chance_plot"):
+            with dpg.plot(height=-1, width=-1, tag="win_chance_plot", no_menus=True):
                 dpg.add_plot_axis(
                     dpg.mvXAxis, tag="win_chance_x",
                     label="Districts (least to most likely D win)",
@@ -2160,7 +2566,7 @@ class MosaicApp:
             on_close=lambda: dpg.set_value(self._panel_mm_item, False),
         ):
             with dpg.group(tag="mm_plot_grp"):
-                with dpg.plot(height=-1, width=-1):
+                with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="mm_x")
                     with dpg.plot_axis(dpg.mvYAxis, label="Mean-Median", tag="mm_y"):
@@ -2181,7 +2587,7 @@ class MosaicApp:
             on_close=lambda: dpg.set_value(self._panel_eg_item, False),
         ):
             with dpg.group(tag="eg_plot_grp"):
-                with dpg.plot(height=-1, width=-1):
+                with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="eg_x")
                     with dpg.plot_axis(dpg.mvYAxis, label="Efficiency Gap", tag="eg_y"):
@@ -2202,7 +2608,7 @@ class MosaicApp:
             on_close=lambda: dpg.set_value(self._panel_seats_item, False),
         ):
             with dpg.group(tag="seats_plot_grp"):
-                with dpg.plot(height=-1, width=-1):
+                with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="seats_x")
                     with dpg.plot_axis(dpg.mvYAxis, label="Expected D Seats", tag="seats_y"):
@@ -2223,7 +2629,7 @@ class MosaicApp:
             on_close=lambda: dpg.set_value(self._panel_pp_item, False),
         ):
             with dpg.group(tag="pp_plot_grp"):
-                with dpg.plot(height=-1, width=-1):
+                with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="pp_x")
                     with dpg.plot_axis(dpg.mvYAxis, label="Polsby-Popper (100 = circle)", tag="pp_y"):
@@ -2249,7 +2655,7 @@ class MosaicApp:
             on_close=lambda: dpg.set_value(self._panel_reock_item, False),
         ):
             with dpg.group(tag="reock_plot_grp"):
-                with dpg.plot(height=-1, width=-1):
+                with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="reock_x")
                     with dpg.plot_axis(dpg.mvYAxis, label="Reock (100 = circle)", tag="reock_y"):
@@ -2275,7 +2681,7 @@ class MosaicApp:
             on_close=lambda: dpg.set_value(self._panel_hc_item, False),
         ):
             with dpg.group(tag="hc_plot_grp"):
-                with dpg.plot(height=-1, width=-1):
+                with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="hc_x")
                     with dpg.plot_axis(dpg.mvYAxis, label="Compactness (100 = best)", tag="hc_y"):
@@ -2295,20 +2701,21 @@ class MosaicApp:
 
     def _build_hsplit_panel(self):
         with dpg.window(
-            label="Holistic Splitting", tag="panel_hsplit",
+            label="County Congruence", tag="panel_hsplit",
             show=False, width=500, height=280,
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_hsplit_item, False),
         ):
             with dpg.group(tag="hsplit_plot_grp"):
-                with dpg.plot(height=-1, width=-1):
+                with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="hsplit_x")
-                    with dpg.plot_axis(dpg.mvYAxis, label="Holistic Splitting (100 = best)", tag="hsplit_y"):
-                        dpg.add_line_series([], [], label="Holistic Split", tag="hsplit_series")
+                    with dpg.plot_axis(dpg.mvYAxis, label="County Congruence (penalty, 0 = best)", tag="hsplit_y"):
+                        dpg.add_line_series([], [], label="Cty Cong", tag="hsplit_series")
             self._tooltip(
                 "hsplit_plot_grp",
-                "Combined county- and district-direction splitting rating; higher = less split.",
+                "Combined county- and district-direction split penalty; lower = less "
+                "split. Unclipped mode keeps climbing past 100 on heavily-split plans.",
             )
             self.theme.track(
                 dpg.add_text(
@@ -2317,6 +2724,8 @@ class MosaicApp:
                 ),
                 "muted",
             )
+        # Penalty is >= 0 and unbounded above: pin the floor at 0, auto-fit the top
+        # each frame in the render block.
         dpg.set_axis_limits("hsplit_y", 0.0, 100.0)
 
     def _build_hprop_panel(self):
@@ -2327,7 +2736,7 @@ class MosaicApp:
             on_close=lambda: dpg.set_value(self._panel_hprop_item, False),
         ):
             with dpg.group(tag="hprop_plot_grp"):
-                with dpg.plot(height=-1, width=-1):
+                with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="hprop_x")
                     with dpg.plot_axis(dpg.mvYAxis, label="Proportionality (100 = best)", tag="hprop_y"):
@@ -2353,7 +2762,7 @@ class MosaicApp:
             on_close=lambda: dpg.set_value(self._panel_hcmp_item, False),
         ):
             with dpg.group(tag="hcmp_plot_grp"):
-                with dpg.plot(height=-1, width=-1):
+                with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="hcmp_x")
                     with dpg.plot_axis(dpg.mvYAxis, label="Competitiveness (100 = best)", tag="hcmp_y"):
@@ -2379,7 +2788,7 @@ class MosaicApp:
             on_close=lambda: dpg.set_value(self._panel_popdev_item, False),
         ):
             with dpg.group(tag="popdev_plot_grp"):
-                with dpg.plot(height=-1, width=-1):
+                with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="popdev_x")
                     with dpg.plot_axis(dpg.mvYAxis, label="% Deviation", tag="popdev_y"):
@@ -2410,7 +2819,7 @@ class MosaicApp:
             on_close=lambda: dpg.set_value(self._panel_alignment_item, False),
         ):
             with dpg.group(tag="alignment_plot_grp"):
-                with dpg.plot(height=-1, width=-1):
+                with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration",
                                       tag="alignment_x")
@@ -2443,7 +2852,7 @@ class MosaicApp:
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_cuts_item, False),
         ):
-            with dpg.plot(height=-1, width=-1):
+            with dpg.plot(height=-1, width=-1, no_menus=True):
                 dpg.add_plot_legend()
                 dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="cuts_x")
                 with dpg.plot_axis(dpg.mvYAxis, label="Cut Edges", tag="cuts_y"):
@@ -2457,7 +2866,7 @@ class MosaicApp:
             on_close=lambda: dpg.set_value(self._panel_majority_item, False),
         ):
             with dpg.group(tag="majority_plot_grp"):
-                with dpg.plot(height=-1, width=-1):
+                with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="maj_x")
                     with dpg.plot_axis(dpg.mvYAxis, label="Chance of Majority (%)", tag="maj_y"):
@@ -2480,11 +2889,11 @@ class MosaicApp:
             on_close=lambda: dpg.set_value(self._panel_hinge_item, False),
         ):
             with dpg.group(tag="hinge_plot_grp"):
-                with dpg.plot(height=-1, width=-1):
+                with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="hinge_x")
-                    with dpg.plot_axis(dpg.mvYAxis, label="P(Hinge)", tag="hinge_y"):
-                        dpg.add_line_series([], [], label="P(hinge)", tag="hinge_series")
+                    with dpg.plot_axis(dpg.mvYAxis, label="Chance of Hinge (%)", tag="hinge_y"):
+                        dpg.add_line_series([], [], label="Hinge", tag="hinge_series")
             self.theme.track(
                 dpg.add_text(
                     "Load election data to use this panel.",
@@ -2492,7 +2901,7 @@ class MosaicApp:
                 ),
                 "muted",
             )
-        dpg.set_axis_limits("hinge_y", 0.0, 1.0)
+        dpg.set_axis_limits("hinge_y", 0.0, 100.0)
 
     # Column spec for the District Info table.  (header, pixel_width, key)
     _DIST_COLS = [
@@ -2723,7 +3132,7 @@ class MosaicApp:
                 wrap=460,
             )
             dpg.add_spacer(height=2)
-            with dpg.plot(height=-1, width=-1, no_mouse_pos=True):
+            with dpg.plot(height=-1, width=-1, no_mouse_pos=True, no_menus=True):
                 dpg.add_plot_axis(
                     dpg.mvXAxis, tag="contrib_x",
                     no_gridlines=True,
@@ -3173,6 +3582,12 @@ class MosaicApp:
 
     def _update_plots_and_panels(self) -> None:
         """Per-frame plot redraws and side panel refreshes."""
+        # A read cursor past the end of a reset history yields an empty delta
+        # forever, freezing the charts; rebuild so they recover on their own.
+        with self.state._lock:
+            _desynced = self._buf_score.read > len(self.state.score_history)
+        if _desynced:
+            self._clear_all_series()
         # ── Plots ─────────────────────────────────────────────────────────────
         # One lock acquisition, copying only the delta since the last call.
         with self.state._lock:
@@ -3213,8 +3628,10 @@ class MosaicApp:
         self._buf_pp.add([v * 100.0 for v in _pd])
         self._buf_reock.add([v * 100.0 for v in _rd])
         # Holistic charts: convert penalty (0=best) to rating (100=best) for display.
+        # Splitting is the exception -- its penalty is uncapped (unclipped mode),
+        # so it is charted as the raw penalty (0 = best) to stay honest above 100.
         self._buf_hc.add([100.0 - v for v in _hcd])
-        self._buf_hsplit.add([100.0 - v for v in _hsd])
+        self._buf_hsplit.add(_hsd)
         self._buf_hprop.add([100.0 - v for v in _hpd])
         self._buf_hcmp.add([100.0 - v for v in _hmd])
         self._buf_popdev.add(_pvd)
@@ -3225,7 +3642,7 @@ class MosaicApp:
         self._buf_cuts.add(_cutd)
         self._buf_maj_dem.add([v * 100.0 for v in _mjd])
         self._buf_maj_rep.add([v * 100.0 for v in _mjr])
-        self._buf_hinge.add(_hgd)
+        self._buf_hinge.add([v * 100.0 for v in _hgd])
 
         limit = dpg.get_value(self._limit_plots) if self._limit_plots else False
 
@@ -3332,9 +3749,18 @@ class MosaicApp:
                 _render(self._buf_maj_dem, "maj_dem_series", "maj_x", "maj_y", fit_y=False)
                 _render(self._buf_maj_rep, "maj_rep_series", "maj_x", "maj_y", fit_y=False)
         if dpg.is_item_shown("panel_hinge"):
-            dpg.configure_item("hinge_plot_grp",     show=self._has_elections)
-            dpg.configure_item("hinge_inactive_lbl", show=not self._has_elections)
-            if self._has_elections:
+            # Hinge needs election data AND an established threshold (the Hinge
+            # score enabled); otherwise it charts against a stale default.
+            hinge_active = self._has_elections and dpg.get_value(self._hinge_enabled)
+            dpg.configure_item("hinge_plot_grp",     show=hinge_active)
+            dpg.configure_item("hinge_inactive_lbl", show=not hinge_active)
+            if not hinge_active:
+                dpg.set_value(
+                    "hinge_inactive_lbl",
+                    "Load election data to use this panel."
+                    if not self._has_elections
+                    else "Enable the Hinge score to set a threshold for this panel.")
+            if hinge_active:
                 _render(self._buf_hinge, "hinge_series", "hinge_x", "hinge_y", fit_y=False)
         if dpg.is_item_shown("panel_pp"):
             dpg.configure_item("pp_plot_grp",     show=pp_on)
@@ -3358,7 +3784,12 @@ class MosaicApp:
             dpg.configure_item("hsplit_plot_grp",     show=hs_on)
             dpg.configure_item("hsplit_inactive_lbl", show=not hs_on)
             if hs_on:
-                _render(self._buf_hsplit, "hsplit_series", "hsplit_x", "hsplit_y")
+                # Floor the y-axis at 0 (penalty >= 0); auto-fit only the top.
+                _render(self._buf_hsplit, "hsplit_series", "hsplit_x", "hsplit_y",
+                        fit_y=False)
+                if self._buf_hsplit.ys:
+                    hi = max(self._buf_hsplit.ys)
+                    dpg.set_axis_limits("hsplit_y", 0.0, hi * 1.05 + 1e-6)
         if dpg.is_item_shown("panel_hprop"):
             dpg.configure_item("hprop_plot_grp",     show=self._has_elections)
             dpg.configure_item("hprop_inactive_lbl", show=not self._has_elections)
@@ -3493,6 +3924,9 @@ class MosaicApp:
         # District Info table — per-district metrics for the current plan
         self._update_district_info_table()
 
+        # Phase plot (metric-vs-metric trajectory); no-op unless its panel is open
+        self._update_phase_plot()
+
     def _clear_all_series(self) -> None:
         """Clear local history buffers and blank all DPG plot series."""
         for buf in (
@@ -3536,7 +3970,7 @@ class MosaicApp:
         # axis to "stick" at a small range like [0, 0.1].
         dpg.set_axis_limits("pp_y",     0.0, 100.0)
         dpg.set_axis_limits("maj_y",    0.0, 100.0)
-        dpg.set_axis_limits("hinge_y",  0.0, 1.0)
+        dpg.set_axis_limits("hinge_y",  0.0, 100.0)
         dpg.set_axis_limits("popdev_y", 0.0, 5.0)
         dpg.set_axis_limits("alignment_y", 0.0, 100.0)
         for s in self._partisan_bar_series:
@@ -3681,11 +4115,6 @@ class MosaicApp:
         self.theme.retoken(self._cs_lbl,
                            "accent_green" if en else "disabled")
         dpg.configure_item("cs_controls", show=en)
-        # Default intent: enabling County Splits also turns on County-Edge Bias.
-        # User can still toggle bias off separately if they want.
-        if en:
-            dpg.set_value(self._county_bias_enabled, True)
-            dpg.configure_item("county_bias_controls", show=True)
 
     def _on_pp_toggle(self):
         en = dpg.get_value(self._pp_enabled)
@@ -3722,8 +4151,13 @@ class MosaicApp:
     def _on_hsplit_toggle(self):
         en = dpg.get_value(self._hsplit_enabled)
         self.theme.retoken(self._hsplit_lbl,
-                           "accent_green" if en else "secondary")
+                           "accent_green" if en else "disabled")
         dpg.configure_item("hsplit_controls", show=en)
+        # County-Edge Bias is paired with County Congruence: enabling the score
+        # turns the bias on too (user can still switch it off separately).
+        if en:
+            dpg.set_value(self._county_bias_enabled, True)
+            dpg.configure_item("county_bias_controls", show=True)
 
     def _on_hprop_toggle(self):
         en = dpg.get_value(self._hprop_enabled)
@@ -3907,6 +4341,7 @@ class MosaicApp:
         self._sync_map_bg_to_theme()
         self._sync_ref_lines_to_theme()
         self._sync_camera_icon_to_theme()
+        self._phase_apply_fade()        # repaint phase trail for the new palette
 
     def _align_photo_icons(self, *_):
         """Resize the overlay-row spacer so the photo icons hug the right edge.
@@ -4690,6 +5125,13 @@ class MosaicApp:
             self.state.pop_dev_max_history   = self.state.pop_dev_max_history[:n_score]
             self.state.pop_dev_mean_history  = self.state.pop_dev_mean_history[:n_score]
             self.state.cut_edges_history        = self.state.cut_edges_history[:n_score]
+            # Lockstep with score_history; trim here too so the buffers below
+            # don't re-grow from the post-best tail on the next frame.
+            self.state.alignment_mean_ret_history = self.state.alignment_mean_ret_history[:n_score]
+            self.state.alignment_min_ret_history  = self.state.alignment_min_ret_history[:n_score]
+            self.state.majority_dem_history     = self.state.majority_dem_history[:n_score]
+            self.state.majority_rep_history     = self.state.majority_rep_history[:n_score]
+            self.state.hinge_history            = self.state.hinge_history[:n_score]
 
         # Tell the worker to stop, then wait for it to exit before we touch
         # state -- a worker parked in its pause-wait loop can otherwise wake
@@ -4720,7 +5162,7 @@ class MosaicApp:
             self._buf_popdev,
             self._buf_popdev_max, self._buf_popdev_mean, self._buf_cuts,
             self._buf_align_mean, self._buf_align_min,
-            self._buf_maj_dem, self._buf_maj_rep,
+            self._buf_maj_dem, self._buf_maj_rep, self._buf_hinge,
         ):
             buf.trim_to(best_iter, n_score)
         self._buf_temp.trim_to(best_iter, n_temp)
@@ -4743,6 +5185,12 @@ class MosaicApp:
             self.state.update(status=AlgorithmStatus.ERROR,
                               error_message="Please load a shapefile first")
             return
+
+        # A prior run's thread (paused runs keep theirs alive, as Relight does)
+        # must be stopped first, or it races the new run over shared state.
+        if self.algorithm_thread is not None and self.algorithm_thread.is_alive():
+            self.state.request_stop()
+            self.algorithm_thread.join(timeout=2.0)
 
         # Relight reseeds each run from the live map, via the same seed slot the
         # runner already reads for Hot Start (the two are mutually exclusive). No
@@ -4834,6 +5282,7 @@ class MosaicApp:
             weight_county_excess=w_cs_excess,
             weight_county_unified=w_cs_unified,
             weight_holistic_splitting=w_hsplit,
+            holistic_splitting_unclipped=dpg.get_value(self._hsplit_unclipped),
             weight_polsby_popper=w_pp,
             weight_reock=w_reock,
             weight_holistic_compactness=w_hc,
@@ -4882,7 +5331,7 @@ class MosaicApp:
         )
         seed = dpg.get_value(self._seed) or None
 
-        cb_en  = cs_on and dpg.get_value(self._county_bias_enabled)
+        cb_en  = dpg.get_value(self._county_bias_enabled)
         cb_val = dpg.get_value(self._county_bias)
 
         self.state.update(
