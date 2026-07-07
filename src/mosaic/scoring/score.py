@@ -45,6 +45,7 @@ class ScoreConfig:
     weight_county_excess: float = 0.0   # over-allowance splits (county-side view)
     weight_county_unified: float = 0.0  # missed single-county districts
     weight_holistic_splitting: float = 0.0
+    holistic_splitting_unclipped: bool = True   # uncapped penalty (annealing gradient)
     weight_polsby_popper: float = 0.0
     weight_reock: float = 0.0
     weight_holistic_compactness: float = 0.0
@@ -83,7 +84,7 @@ class PlanScore:
     cut_edges: int
     county_excess_score: float = 0.0    # SCORE_SCALE * over-allowance splits
     county_unified_score: float = 0.0   # SCORE_SCALE * (max_unified - unified_districts)
-    holistic_splitting: float = 0.0     # stored as 100 - combined rating (penalty form)
+    holistic_splitting: float = 0.0     # combined split penalty (0 = best)
     polsby_popper: float = 0.0          # stored as 1 - mean_PP (penalty form)
     reock: float = 0.0                  # stored as 1 - mean_Reock (penalty form)
     holistic_compactness: float = 0.0   # stored as 100 - rating (penalty form)
@@ -179,6 +180,7 @@ def score_plan(
         _hs_rc, _hs_rd, hsplit_raw = score_holistic_splitting(
             assignment, county_ids, populations, n_districts,
             county_data=county_data, co_di_pop=_co_di_pop,
+            unclipped=config.holistic_splitting_unclipped,
         )
         total += config.weight_holistic_splitting * hsplit_raw
 

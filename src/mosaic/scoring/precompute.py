@@ -89,7 +89,8 @@ def find_county_array(gdf: gpd.GeoDataFrame) -> Optional[np.ndarray]:
     log.warning(
         "No county column found in shapefile "
         f"(tried: {', '.join(_COUNTY_COLS)}). "
-        "County Splits scoring and county-edge bias disabled."
+        "County-based scoring (County Congruence, Classic Splitting) and "
+        "county-edge bias disabled."
     )
     return None
 
