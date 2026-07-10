@@ -86,6 +86,8 @@ _BORDER_RGBA        = np.array([0,   0,   0,   255], dtype=np.uint8)
 _COUNTY_BORDER_RGBA = np.array([180, 180, 180, 255], dtype=np.uint8)
 _SPLITS_DIM_RGBA    = np.array([28,  28,  28,  255], dtype=np.uint8)
 
+PRECINCT_EDGE_ALPHA = 0.30   # white precinct hairlines when the Precincts overlay is on
+
 # Compactness (Polsby-Popper 0→1): red = not compact, green = compact
 _COMPACT_STOPS = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
 _COMPACT_RGB   = np.array([
@@ -520,7 +522,7 @@ class MapView:
             pb_mask[:, :-1] |= pb_v
             pb_mask[:, 1:]  |= pb_v
             if pb_mask.any():
-                alpha = 0.15
+                alpha = PRECINCT_EDGE_ALPHA
                 blended = rgba[pb_mask].astype(np.float32)
                 blended[:, :3] = blended[:, :3] * (1.0 - alpha) + 255.0 * alpha
                 rgba[pb_mask] = blended.astype(np.uint8)

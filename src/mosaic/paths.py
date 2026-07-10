@@ -36,5 +36,15 @@ def cache_dir() -> Path:
     return mosaic_data_dir() / "cache"
 
 
+def output_dir() -> Path:
+    """Where user-facing exports go: maps (PDF/PNG) and assignment/metric CSVs.
+
+    The single source of truth for the output directory. Deliverables only —
+    app state lives in ``.mosaic/``, caches in ``cache/``, crash logs in
+    ``crashes/``.
+    """
+    return mosaic_data_dir() / "output"
+
+
 def shapefiles_dir() -> Path:
     return mosaic_data_dir() / "shapefiles"
