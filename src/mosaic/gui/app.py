@@ -23,13 +23,15 @@ _ASSETS_DIR   = Path(__file__).resolve().parent.parent / "assets"
 _SETTINGS_DIR = Path(__file__).resolve().parent.parent.parent.parent / ".mosaic"
 _RECENT_FILE  = _SETTINGS_DIR / "recent_shapefiles.json"
 _APP_ICON = _ASSETS_DIR / "mosaic_logo.ico"
+_PDF_PRECINCT_OFF_ALPHA = 0.05   # faint precinct hairlines in PDF even when the overlay is off
 
 import dearpygui.dearpygui as dpg
 import numpy as np
 
+from mosaic.paths import output_dir
 from mosaic.gui.state import SharedState, AlgorithmStatus
 from mosaic.gui.runner import AlgorithmRunner
-from mosaic.gui.map_view import MapView
+from mosaic.gui.map_view import MapView, PRECINCT_EDGE_ALPHA
 from mosaic.gui.shp_dialog import ShapefileDialog
 from mosaic.gui.theme import ThemeManager
 from mosaic.io.inspect import ShapefileConfig, ShapefileInspection
@@ -100,16 +102,16 @@ _PHASE_AXIS_UNIT = {
 # Recency ramps (old -> hot). Dark = magma (bright-on-black); light = mako
 # reversed (pale mint old -> near-black recent) so recent reads dark on white.
 _PHASE_RAMP = [
-    (0.00, (48, 60, 135)),  (0.22, (90, 68, 165)),  (0.40, (170, 60, 120)),
-    (0.60, (228, 90, 60)),  (0.80, (250, 160, 40)), (1.00, (252, 253, 191)),
+    (0.000, (82, 66, 159)), (0.049, (90, 68, 165)),  (0.268, (170, 60, 120)),
+    (0.512, (228, 90, 60)), (0.756, (250, 160, 40)), (1.000, (252, 253, 191)),
 ]
 _PHASE_RAMP_LIGHT = [
-    (0.00, (222, 245, 229)),  # oldest: pale mint
-    (0.22, (100, 200, 140)),  # green
-    (0.42, ( 45, 148, 142)),  # teal
-    (0.62, ( 54,  93, 141)),  # blue
-    (0.80, ( 52,  38,  86)),  # indigo
-    (1.00, ( 14,   5,   8)),  # hottest: near-black
+    (0.000, (166, 224, 188)),  # oldest: light mint-green
+    (0.133, (100, 200, 140)),  # green
+    (0.356, ( 45, 148, 142)),  # teal
+    (0.578, ( 54,  93, 141)),  # blue
+    (0.778, ( 52,  38,  86)),  # indigo
+    (1.000, ( 14,   5,   8)),  # hottest: near-black
 ]
 
 
@@ -426,8 +428,7 @@ class MosaicApp:
         self._recent_shapefiles: list = []   # [{"path": str, "config": dict}]
         self._file_save_asgn_item = 0        # File > Save Assignments menu item
         self._file_save_metrics_item = 0     # File > Save District Info menu item
-        self._save_name_type: str = ""       # "assignments" | "metrics"
-        self._save_name_input = 0            # filename text-input in save dialog
+        self._saved_plan = None              # last-saved assignment; drives the unsaved-changes guard
         # When set, the next inspection-complete event skips the column picker
         # and uses this config directly (one-click recent-file open).
         self._pending_recent_config: Optional[ShapefileConfig] = None
@@ -584,7 +585,6 @@ class MosaicApp:
         self._build_seed_popup()
         self._build_new_confirm_popup()
         self._build_close_confirm_popup()
-        self._build_save_name_popup()
         self._build_advanced_save_popup()
         self._build_opt_popup()
         self._build_partisan_popup()
@@ -908,14 +908,6 @@ class MosaicApp:
                     dpg.add_menu_item(
                         label="Open Help...",
                         callback=lambda: dpg.configure_item("popup_help", show=True),
-                    )
-                    dpg.add_menu_item(
-                        label="Open output directory...",
-                        callback=self._on_open_output_dir,
-                    )
-                    dpg.add_menu_item(
-                        label="Check for updates...",
-                        callback=self._on_check_updates,
                     )
 
                 with dpg.menu(label="Advanced", tag="menu_debug"):
@@ -1875,9 +1867,15 @@ class MosaicApp:
         # Fixed size (not autosize): the inline spinner/status toggle on save and
         # we don't want the window resizing mid-export.
         with self._dialog(
-            "Export District Map", "popup_adv_save", (420, 265),
+            "Export District Map", "popup_adv_save", (420, 300),
             show=False, autosize=False,
         ):
+            self.theme.text(
+                "Map exports mirror the settings you currently have in your "
+                "district map view.",
+                "muted", wrap=400,
+            )
+            dpg.add_spacer(height=8)
             self._adv_save_title = dpg.add_input_text(
                 label="Title (optional)", default_value="", width=260,
                 hint="Leave blank for no title",
@@ -3252,8 +3250,8 @@ class MosaicApp:
     def _on_open_output_dir(self):
         """Open output/ (saved maps + assignment/metric CSVs) in the OS file browser."""
         import os, sys, subprocess
-        out = Path("output").resolve()
-        out.mkdir(exist_ok=True)  # create on first use so opening never fails
+        out = output_dir()
+        out.mkdir(parents=True, exist_ok=True)  # create on first use so opening never fails
         try:
             if sys.platform == "darwin":
                 subprocess.run(["open", str(out)], check=False)
@@ -5826,7 +5824,7 @@ class MosaicApp:
     def _on_export(self):
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = Path("output") / f"assignments_{timestamp}.csv"
+        output_path = output_dir() / f"assignments_{timestamp}.csv"
         self._do_export_to_path(output_path)
 
     def _do_export_to_path(self, output_path: Path) -> None:
@@ -5838,7 +5836,7 @@ class MosaicApp:
             return
         from mosaic.io import save_assignments
         output_path = Path(output_path)
-        output_path.parent.mkdir(exist_ok=True)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
         precinct_ids = None
         id_col_name = "precinct_id"
@@ -5855,11 +5853,12 @@ class MosaicApp:
             id_col_name=id_col_name,
         )
         self.state.update(status_message=f"Assignments saved to {output_path}")
+        self._saved_plan = current.copy()   # mark the plan clean for the unsaved-changes guard
 
     def _on_export_metrics(self):
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = Path("output") / f"metrics_{timestamp}.csv"
+        output_path = output_dir() / f"metrics_{timestamp}.csv"
         self._do_export_metrics_to_path(output_path)
 
     def _do_export_metrics_to_path(self, output_path: Path) -> None:
@@ -5871,7 +5870,7 @@ class MosaicApp:
             return
         from mosaic.io import save_metrics
         output_path = Path(output_path)
-        output_path.parent.mkdir(exist_ok=True)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
         n_dist = self.state.num_districts
         ideal_pop = (float(self.runner.populations.sum()) / n_dist
@@ -5984,16 +5983,29 @@ class MosaicApp:
         self._restore_partisan_on_load = bool(elections)
         self._on_shapefile_selected(None, {"file_path_name": path})
 
+    def _plan_unsaved(self) -> bool:
+        """True if a run result exists and differs from the last saved assignment
+        (Save Assignments writes current_assignment, so compare against that)."""
+        with self.state._lock:
+            best = self.state.best_assignment
+            cur = (self.state.current_assignment.copy()
+                   if self.state.current_assignment is not None else None)
+        if best is None:
+            return False
+        if cur is None or self._saved_plan is None:
+            return True
+        return not np.array_equal(cur, self._saved_plan)
+
     def _on_close(self) -> None:
-        """File > Close / Ctrl+W: warn if there are unsaved results."""
-        if self.state.best_assignment is not None:
+        """File > Close / Ctrl+W: warn only if the plan has unsaved changes."""
+        if self._plan_unsaved():
             dpg.configure_item("popup_close_confirm", show=True)
         else:
             dpg.stop_dearpygui()
 
     def _on_new(self) -> None:
-        """File > New: clear the map with an optional unsaved-work warning."""
-        if self.state.best_assignment is not None:
+        """File > New: warn only if the plan has unsaved changes."""
+        if self._plan_unsaved():
             dpg.configure_item("popup_new_confirm", show=True)
         else:
             self._do_new()
@@ -6002,6 +6014,7 @@ class MosaicApp:
         """Discard current results and return to a clean slate."""
         dpg.configure_item("popup_new_confirm", show=False)
         self._on_reset()
+        self._saved_plan = None
         self.runner = AlgorithmRunner(self.state)
         self._loaded_config = None
         self._has_elections = False
@@ -6049,59 +6062,76 @@ class MosaicApp:
                 wrap=380 - 2 * 16,
             )
 
-    def _build_save_name_popup(self) -> None:
-        """Shared filename-input dialog for Save Assignments / Save District Info."""
-        with self._dialog(
-            "Save", "popup_save_name", (400, 150),
-            show=False,
-            buttons=[
-                ("Save", self._do_save_name_confirm, "primary"),
-                ("Cancel",
-                 lambda: dpg.configure_item("popup_save_name", show=False)),
-            ],
-        ):
-            dpg.add_text("Save to: output/")
-            with dpg.group(horizontal=True):
-                self._save_name_input = dpg.add_input_text(
-                    default_value="", width=318, hint="filename",
-                )
-                dpg.add_text(".csv")
-
     def _on_file_save_assignments(self) -> None:
-        """File > Save Assignments: show filename dialog."""
+        """File > Save Assignments: native OS save dialog into output/, with an
+        assignments_<timestamp>.csv default name."""
         if self.state.best_assignment is None:
             return
+        import os
         from datetime import datetime
-        suggested = f"assignments_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        dpg.configure_item("popup_save_name", label="Save Assignments")
-        dpg.set_value(self._save_name_input, suggested)
-        self._save_name_type = "assignments"
-        dpg.configure_item("popup_save_name", show=True)
+        default_name = f"assignments_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        if os.name == "nt":
+            path = self._native_save_csv(default_name)
+            if not path:
+                return
+            out = Path(path)
+            if out.suffix.lower() != ".csv":
+                out = out.with_suffix(".csv")
+            self._do_export_to_path(out)
+        else:
+            # No native save dialog off Windows (tkinter/DPG run-loop conflict);
+            # fall back to an auto-named file in output/.
+            self._do_export_to_path(output_dir() / f"{default_name}.csv")
+
+    def _native_save_csv(self, default_name: str) -> str:
+        """Windows native Save-As for a CSV, opened to output/. Returns the
+        chosen path, or "" on cancel."""
+        import subprocess
+        out_dir = output_dir()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        # TopMost owner so the dialog can't hide behind the app (see Save As).
+        ps = (
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "$owner = New-Object System.Windows.Forms.Form; "
+            "$owner.TopMost = $true; "
+            "$d = New-Object System.Windows.Forms.SaveFileDialog; "
+            "$d.Filter = 'CSV (*.csv)|*.csv'; "
+            "$d.DefaultExt = 'csv'; $d.AddExtension = $true; "
+            f"$d.InitialDirectory = '{out_dir}'; "
+            f"$d.FileName = '{default_name}'; "
+            "$null = $d.ShowDialog($owner); "
+            "$owner.Dispose(); "
+            "Write-Output $d.FileName"
+        )
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                capture_output=True, text=True, timeout=120,
+            )
+            return r.stdout.strip()
+        except Exception:
+            return ""
 
     def _on_file_save_metrics(self) -> None:
-        """File > Save District Info: show filename dialog."""
+        """File > Save District Info: native OS save dialog into output/, with a
+        metrics_<timestamp>.csv default name."""
         if self.state.best_assignment is None:
             return
+        import os
         from datetime import datetime
-        suggested = f"metrics_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        dpg.configure_item("popup_save_name", label="Save District Info")
-        dpg.set_value(self._save_name_input, suggested)
-        self._save_name_type = "metrics"
-        dpg.configure_item("popup_save_name", show=True)
-
-    def _do_save_name_confirm(self) -> None:
-        """Save Assignments / Save District Info: confirm filename and export."""
-        name = dpg.get_value(self._save_name_input).strip()
-        if not name:
-            return
-        if not name.endswith(".csv"):
-            name += ".csv"
-        output_path = Path("output") / name
-        dpg.configure_item("popup_save_name", show=False)
-        if self._save_name_type == "assignments":
-            self._do_export_to_path(output_path)
+        default_name = f"metrics_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        if os.name == "nt":
+            path = self._native_save_csv(default_name)
+            if not path:
+                return
+            out = Path(path)
+            if out.suffix.lower() != ".csv":
+                out = out.with_suffix(".csv")
+            self._do_export_metrics_to_path(out)
         else:
-            self._do_export_metrics_to_path(output_path)
+            # No native save dialog off Windows (tkinter/DPG run-loop conflict);
+            # fall back to an auto-named file in output/.
+            self._do_export_metrics_to_path(output_dir() / f"{default_name}.csv")
 
     def _render_map_at_scale(self, scale: float,
                              state_outline: bool = False) -> Optional[np.ndarray]:
@@ -6193,8 +6223,8 @@ class MosaicApp:
                     )
                     return
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_path = Path("output") / f"map_{timestamp}.png"
-                output_path.parent.mkdir(exist_ok=True)
+                output_path = output_dir() / f"map_{timestamp}.png"
+                output_path.parent.mkdir(parents=True, exist_ok=True)
                 Image.fromarray(rgba, mode="RGBA").save(output_path)
                 self.state.update(status_message=f"Map saved to {output_path}")
             finally:
@@ -6302,17 +6332,23 @@ class MosaicApp:
             filt = ("PDF Document|*.pdf" if is_pdf else "PNG Image|*.png")
             ts = _dt.now().strftime("%Y%m%d_%H%M%S")
             default_name = f"map_{ts}"
-            output_dir = _ASSETS_DIR.parent.parent.parent / "output"
-            output_dir.mkdir(exist_ok=True)
-            init_dir = str(output_dir)
+            out_dir = output_dir()
+            out_dir.mkdir(parents=True, exist_ok=True)
+            init_dir = str(out_dir)
+            # TopMost owner keeps the dialog above the (still-responsive) DPG
+            # window: without it, clicking back on Mosaic buries the ownerless
+            # dialog and the export hangs at "Waiting for save dialog...".
             ps = (
                 "Add-Type -AssemblyName System.Windows.Forms; "
+                "$owner = New-Object System.Windows.Forms.Form; "
+                "$owner.TopMost = $true; "
                 "$d = New-Object System.Windows.Forms.SaveFileDialog; "
                 f"$d.Filter = '{filt}'; "
                 f"$d.DefaultExt = '{ext.lstrip('.')}'; "
                 f"$d.InitialDirectory = '{init_dir}'; "
                 f"$d.FileName = '{default_name}'; "
-                "$null = $d.ShowDialog(); "
+                "$null = $d.ShowDialog($owner); "
+                "$owner.Dispose(); "
                 "Write-Output $d.FileName"
             )
             try:
@@ -6405,58 +6441,53 @@ class MosaicApp:
             br, bg_c, bb, _ = self.theme.color("child_bg")
             bg_mpl = (br / 255.0, bg_c / 255.0, bb / 255.0)
 
-            # ── Page layout: build outward from the state's exact bbox ────────
-            #   bbox (no margin) -> +10% height below (caption band)
-            #                    -> +15% height above (title band)
-            #                    -> +5% width each side (blank margin)
-            # The resulting content box is fit to US Letter in whichever
-            # orientation (portrait 8.5x11 / landscape 11x8.5) makes it larger,
-            # then centered on the page inside a small physical safety margin.
-            SIDE_FRAC   = 0.01                       # each side, of bbox width
-            BOTTOM_FRAC = 0.10                       # caption band, of bbox height
-            TOP_FRAC    = 0.15 if title else 0.0     # title band, of bbox height
-            PAGE_MARGIN = 0.5                        # inches, printer safe area
+            # ── Page layout: US Letter, fixed-inch title/caption bands ────────
+            # The map is fit as large as possible inside the printable area
+            # (page minus PAGE_MARGIN) after reserving fixed-height bands, in
+            # whichever orientation (portrait 8.5x11 / landscape 11x8.5) yields
+            # the larger MAP. Bands are a fixed number of inches, so they never
+            # scale with — and shrink — the map. The caption+map+title stack is
+            # centered vertically; the map is centered horizontally.
+            PAGE_MARGIN = 0.4                        # inches, printer safe area
+            TITLE_BAND  = 0.5 if title else 0.0      # inches, fixed title band
+            CAP_BAND    = 0.35                       # inches, fixed caption band
 
-            content_ratio = ((1.0 + 2 * SIDE_FRAC)
-                             / (1.0 + BOTTOM_FRAC + TOP_FRAC)) * map_ratio
-
-            def _fit_content(fw, fh):
-                pw, ph = fw - 2 * PAGE_MARGIN, fh - 2 * PAGE_MARGIN
-                if pw <= 0 or ph <= 0:
+            def _fit_map(fw, fh):
+                aw = fw - 2 * PAGE_MARGIN
+                ah = fh - 2 * PAGE_MARGIN - TITLE_BAND - CAP_BAND
+                if aw <= 0 or ah <= 0:
                     return 0.0, 0.0, 0.0
-                if pw / ph >= content_ratio:
-                    cw, ch = ph * content_ratio, ph
+                if aw / ah >= map_ratio:
+                    mh, mw = ah, ah * map_ratio
                 else:
-                    cw, ch = pw, pw / content_ratio
-                return cw, ch, cw * ch
+                    mw, mh = aw, aw / map_ratio
+                return mw, mh, mw * mh
 
-            _pw, _ph, p_area = _fit_content(8.5, 11.0)
-            _lw, _lh, l_area = _fit_content(11.0, 8.5)
+            _pw, _ph, p_area = _fit_map(8.5, 11.0)
+            _lw, _lh, l_area = _fit_map(11.0, 8.5)
             if p_area >= l_area:
                 fig_w, fig_h = 8.5, 11.0
-                content_w, content_h = _pw, _ph
+                map_w, map_h = _pw, _ph
             else:
                 fig_w, fig_h = 11.0, 8.5
-                content_w, content_h = _lw, _lh
+                map_w, map_h = _lw, _lh
 
-            map_w = content_w / (1.0 + 2 * SIDE_FRAC)
-            map_h = content_h / (1.0 + BOTTOM_FRAC + TOP_FRAC)
-            content_left   = (fig_w - content_w) / 2.0
-            content_bottom = (fig_h - content_h) / 2.0
+            map_left     = (fig_w - map_w) / 2.0
+            stack_bottom = (PAGE_MARGIN
+                            + ((fig_h - 2 * PAGE_MARGIN)
+                               - (CAP_BAND + map_h + TITLE_BAND)) / 2.0)
 
-            # Map axes = bbox, offset by the left margin and the bottom band.
-            ax_l   = (content_left + SIDE_FRAC * map_w) / fig_w
-            ax_b   = (content_bottom + BOTTOM_FRAC * map_h) / fig_h
+            ax_l   = map_left / fig_w
+            ax_b   = (stack_bottom + CAP_BAND) / fig_h
             ax_w   = map_w / fig_w
             ax_h_f = map_h / fig_h
 
-            # Text anchors (figure fractions): caption at 80% width, centered in
+            # Text anchors (figure fractions): caption at 90% width, centered in
             # the bottom band; title at 50% width, centered in the top band.
-            cap_x   = (content_left + 0.80 * content_w) / fig_w
-            cap_y   = (content_bottom + 0.5 * BOTTOM_FRAC * map_h) / fig_h
-            title_x = (content_left + 0.50 * content_w) / fig_w
-            title_y = (content_bottom
-                       + (BOTTOM_FRAC + 1.0 + 0.5 * TOP_FRAC) * map_h) / fig_h
+            cap_x   = (map_left + 0.90 * map_w) / fig_w
+            cap_y   = (stack_bottom + 0.5 * CAP_BAND) / fig_h
+            title_x = (map_left + 0.50 * map_w) / fig_w
+            title_y = (stack_bottom + CAP_BAND + map_h + 0.5 * TITLE_BAND) / fig_h
 
             fig = plt.figure(figsize=(fig_w, fig_h))
             fig.patch.set_facecolor(bg_mpl)
@@ -6529,10 +6560,12 @@ class MosaicApp:
                 # Fills: no edges (keeps PDF edge transparency independent)
                 ax.add_collection(
                     PatchCollection(patches, facecolors=colors, edgecolors='none'))
-                # Edges: stroke-only collection; set_alpha() writes a proper PDF /CA entry
+                # Precinct boundaries: prominent when the Precincts overlay is on,
+                # near-invisible when off. Stroke-only; set_alpha() writes a PDF /CA.
                 edge_coll = PatchCollection(patches, facecolors='none',
                                             edgecolors='white', linewidths=0.2)
-                edge_coll.set_alpha(0.15)
+                edge_coll.set_alpha(PRECINCT_EDGE_ALPHA if mv.precinct_overlay
+                                    else _PDF_PRECINCT_OFF_ALPHA)
                 ax.add_collection(edge_coll)
 
             # ── Pre-dissolve district & county geometries (fast, avoids
@@ -6606,7 +6639,12 @@ class MosaicApp:
                 font_path = _ASSETS_DIR / "fonts" / "inter" / "Inter-SemiBold.ttf"
                 fp = (FontProperties(fname=str(font_path))
                       if font_path.exists() else None)
-                stroke_fx = [_pe.withStroke(linewidth=1.75, foreground="black")]
+                # Cascade per label: BASE_PT if it fits, else shrink to the
+                # district's inscribed circle, else drop it (below MIN_PT it is
+                # too small to place without overlapping a neighbour). Never
+                # grows past BASE_PT, so the common case is unchanged.
+                BASE_PT, MIN_PT = 7.0, 3.5
+                pts_per_data = 72.0 * map_w / gw if gw > 0 else 0.0
                 # Pole of inaccessibility (deepest interior point) rather than
                 # representative_point(), which can sit on a concave edge.
                 _lbl_tol = max(gw, gh) / 1000.0
@@ -6625,8 +6663,24 @@ class MosaicApp:
                         label_pt = _polylabel(_dgeom, tolerance=_lbl_tol)
                     except Exception:
                         label_pt = dist_geoms.loc[d].representative_point()
-                    kw = dict(ha="center", va="center", fontsize=7,
-                              color="white", path_effects=stroke_fx)
+                    # Radius of the largest empty circle at the label point, in
+                    # points on the page.
+                    r_pt = label_pt.distance(_dgeom.boundary) * pts_per_data
+                    # Largest size whose digits fit inside that circle (diagonal
+                    # fit, ~0.9 fill), capped at BASE_PT; drop if it can't reach
+                    # MIN_PT.
+                    if r_pt > 0.0:
+                        fit = 0.9 * r_pt / np.hypot(0.275 * len(str(num)), 0.36)
+                        if fit < MIN_PT:
+                            continue
+                        size = min(BASE_PT, fit)
+                    else:
+                        size = BASE_PT
+                    kw = dict(ha="center", va="center", fontsize=size,
+                              color="white",
+                              path_effects=[_pe.withStroke(
+                                  linewidth=1.75 * size / BASE_PT,
+                                  foreground="black")])
                     if fp:
                         ax.text(label_pt.x, label_pt.y, str(num),
                                 fontproperties=fp, **kw)
@@ -6651,10 +6705,9 @@ class MosaicApp:
             # ── Write file ────────────────────────────────────────────────────
             if output_path is None:
                 timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_path = (_ASSETS_DIR.parent.parent.parent
-                               / "output" / f"map_{timestamp}.pdf")
+                output_path = output_dir() / f"map_{timestamp}.pdf"
             output_path = Path(output_path)
-            output_path.parent.mkdir(exist_ok=True)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
             fig.savefig(str(output_path), format="pdf")
             plt.close(fig)
             self.state.update(status_message=f"Map saved to {output_path}")
@@ -6722,9 +6775,9 @@ class MosaicApp:
 
             if output_path is None:
                 timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_path = Path("output") / f"map_{timestamp}.png"
+                output_path = output_dir() / f"map_{timestamp}.png"
             output_path = Path(output_path)
-            output_path.parent.mkdir(exist_ok=True)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
             new_img.save(output_path, dpi=(dpi, dpi))
             self.state.update(status_message=f"Map saved to {output_path}")
             self._open_in_os(output_path)
