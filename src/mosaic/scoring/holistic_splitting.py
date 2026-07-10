@@ -30,7 +30,7 @@ Two penalty forms, both blended 50/50 across the county and district directions
     1.33 -- the single knob is the slope, which is pure magnitude (the weight
     does the rest).
 
-  - clipped (scorecard form): the classic DRA-style band. 0 at a map-derived
+  - clipped (scorecard form): a fixed 0-100 band. 0 at a map-derived
     ideal `ref` (looser `best_target(n_c,n_d)` on the many-into-few direction,
     strict MAX_SPLITTING = 1.20 on the other), rising to 100 at `worst = ref *
     1.33` and pinned there. `pen_dir = 100 * clip((raw-ref)/(worst-ref), 0, 1)`,

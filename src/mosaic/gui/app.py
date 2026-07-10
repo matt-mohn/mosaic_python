@@ -18,7 +18,10 @@ _UPDATE_CHECK_URL = (
 _DOCS_SHAPEFILE_URL = "https://matt-mohn.github.io/mosaic_python/shapefiles.html"
 _DOWNLOAD_URL = "https://matt-mohn.github.io/mosaic_python/install.html"
 
-_ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+_ASSETS_DIR   = Path(__file__).resolve().parent.parent / "assets"
+# App-level settings/cache directory — separate from output/ which holds generated files.
+_SETTINGS_DIR = Path(__file__).resolve().parent.parent.parent.parent / ".mosaic"
+_RECENT_FILE  = _SETTINGS_DIR / "recent_shapefiles.json"
 _APP_ICON = _ASSETS_DIR / "mosaic_logo.ico"
 
 import dearpygui.dearpygui as dpg
@@ -419,6 +422,18 @@ class MosaicApp:
         # Stored after the user confirms the shapefile dialog
         self._loaded_config: Optional[ShapefileConfig] = None
 
+        # Recent shapefiles (path + column config), loaded from disk in setup()
+        self._recent_shapefiles: list = []   # [{"path": str, "config": dict}]
+        self._file_save_asgn_item = 0        # File > Save Assignments menu item
+        self._file_save_metrics_item = 0     # File > Save District Info menu item
+        self._save_name_type: str = ""       # "assignments" | "metrics"
+        self._save_name_input = 0            # filename text-input in save dialog
+        # When set, the next inspection-complete event skips the column picker
+        # and uses this config directly (one-click recent-file open).
+        self._pending_recent_config: Optional[ShapefileConfig] = None
+        # If True, auto-enable partisan overlay after the next Recent load completes.
+        self._restore_partisan_on_load: bool = False
+
         # Map background-load tracking (app-local, no SharedState).
         # Tracking by (path, gdf id) so a re-import of the same path with
         # edited content still triggers a fresh MapView load — otherwise the
@@ -428,6 +443,10 @@ class MosaicApp:
         self._map_ready: bool = False
         self._map_loaded_path: str = ""
         self._map_loaded_gdf_id: int = 0
+        # gdf id whose complete_load has fully finished (pulsed via gdf_ready).
+        # The map may only load a gdf that reached this point, so it never
+        # captures the runner mid-populate. See the map bg-load gate below.
+        self._map_data_gdf_id: int = 0
 
         # Plot appearance toggle (app-local)
         self._limit_plots: int | str = ""   # DPG checkbox tag, set during setup
@@ -452,7 +471,7 @@ class MosaicApp:
         # _renumber_enabled mirrors the "Renumber districts after run" check and
         # the radio's None option; _renumber_rule is the last chosen sweep.
         self._renumber_enabled: bool = True
-        self._renumber_rule: str = "nw_se"      # "nw_se" | "n_s"
+        self._renumber_rule: str = "proximity"  # "nw_se" | "n_s" | "proximity"
         # Cached precinct centroids (x, y) in gdf CRS, keyed by gdf identity, so
         # repeated renumbers don't recompute geometry.centroid each time.
         self._renumber_centroids = None         # (gdf_id, x_arr, y_arr) | None
@@ -559,8 +578,13 @@ class MosaicApp:
         )
         self._shp_dialog.build(_VP_W, _VP_H)
 
+        self._load_recent_shapefiles()
+
         self._build_population_popup()
         self._build_seed_popup()
+        self._build_new_confirm_popup()
+        self._build_close_confirm_popup()
+        self._build_save_name_popup()
         self._build_advanced_save_popup()
         self._build_opt_popup()
         self._build_partisan_popup()
@@ -592,7 +616,56 @@ class MosaicApp:
         # ── Main window ───────────────────────────────────────────────────────
         with dpg.window(tag="main_window", no_scrollbar=True):
 
+
             with dpg.menu_bar():
+                with dpg.menu(label="File"):
+                    dpg.add_menu_item(
+                        label="New", shortcut="Ctrl+N",
+                        callback=self._on_new,
+                    )
+                    dpg.add_menu_item(
+                        label="Open...", shortcut="Ctrl+O",
+                        callback=self._on_import_shapefile,
+                    )
+                    with dpg.menu(label="Open Recent",
+                                  tag="file_recent_menu"):
+                        if self._recent_shapefiles:
+                            for _re in self._recent_shapefiles:
+                                dpg.add_menu_item(
+                                    label=Path(_re["path"]).name,
+                                    callback=self._on_open_recent,
+                                    user_data=_re,
+                                )
+                        else:
+                            dpg.add_menu_item(
+                                label="(no recent files)", enabled=False,
+                            )
+                    dpg.add_separator()
+                    self._file_save_asgn_item = dpg.add_menu_item(
+                        label="Save Assignments", shortcut="Ctrl+S",
+                        enabled=False,
+                        callback=self._on_file_save_assignments,
+                    )
+                    self._file_save_metrics_item = dpg.add_menu_item(
+                        label="Save District Info",
+                        enabled=False,
+                        callback=self._on_file_save_metrics,
+                    )
+                    dpg.add_separator()
+                    dpg.add_menu_item(
+                        label="Open output directory...",
+                        callback=self._on_open_output_dir,
+                    )
+                    dpg.add_menu_item(
+                        label="Check for updates...",
+                        callback=self._on_check_updates,
+                    )
+                    dpg.add_separator()
+                    dpg.add_menu_item(
+                        label="Close", shortcut="Ctrl+W",
+                        callback=self._on_close,
+                    )
+
                 with dpg.menu(label="Configuration"):
                     dpg.add_menu_item(
                         label="Population...",
@@ -1802,35 +1875,49 @@ class MosaicApp:
         # Fixed size (not autosize): the inline spinner/status toggle on save and
         # we don't want the window resizing mid-export.
         with self._dialog(
-            "Export District Map as PNG", "popup_adv_save", (420, 210),
+            "Export District Map", "popup_adv_save", (420, 265),
             show=False, autosize=False,
         ):
             self._adv_save_title = dpg.add_input_text(
                 label="Title (optional)", default_value="", width=260,
                 hint="Leave blank for no title",
             )
-            dpg.add_spacer(height=4)
-            self._adv_save_dpi = dpg.add_combo(
-                label="DPI (resolution)",
-                items=["96 (screen)", "144 (1.5x)", "192 (2x)",
-                       "288 (3x)", "384 (4x)", "576 (6x)"],
-                default_value="288 (3x)", width=260,
+            dpg.add_spacer(height=8)
+            dpg.add_text("Format")
+            self._adv_save_fmt = dpg.add_radio_button(
+                ["PNG (raster)", "PDF (vector, slower)"],
+                default_value="PNG (raster)", horizontal=True,
+                callback=self._on_adv_fmt_changed,
             )
+            with dpg.group() as self._adv_dpi_group:
+                dpg.add_spacer(height=4)
+                self._adv_save_dpi = dpg.add_combo(
+                    label="Raster DPI",
+                    items=["96 (screen)", "144 (1.5x)", "192 (2x)",
+                           "288 (3x)", "384 (4x)", "576 (6x)"],
+                    default_value="288 (3x)", width=200,
+                )
             dpg.add_spacer(height=10)
             dpg.add_separator()
             dpg.add_spacer(height=6)
             with dpg.group(horizontal=True):
                 self._adv_save_btn = dpg.add_button(
-                    label="Save",   width=90,
+                    label="Save", width=80,
                     callback=self._on_advanced_save_confirm,
                 )
                 dpg.bind_item_theme(self._adv_save_btn, self.theme.nudge_theme)
-                self._adv_cancel_btn = dpg.add_button(
-                    label="Cancel", width=90,
+                self._adv_save_as_btn = dpg.add_button(
+                    label="Save As...", width=90,
+                    callback=self._on_advanced_save_as,
+                )
+                dpg.bind_item_theme(self._adv_save_as_btn,
+                                    self.theme.nudge_theme)
+                self._adv_close_btn = dpg.add_button(
+                    label="Close", width=80,
                     callback=lambda: dpg.configure_item(
                         "popup_adv_save", show=False),
                 )
-                dpg.bind_item_theme(self._adv_cancel_btn,
+                dpg.bind_item_theme(self._adv_close_btn,
                                     self.theme.antinudge_theme)
                 dpg.add_spacer(width=4)
                 self._adv_save_spinner = dpg.add_loading_indicator(
@@ -1838,7 +1925,7 @@ class MosaicApp:
                     color=self.theme.color("body"),
                     secondary_color=self.theme.color("muted"),
                 )
-                self._adv_save_status = dpg.add_text("", show=False)
+            self._adv_save_status = dpg.add_text("", show=False)
 
     def _build_opt_popup(self):
         with self._dialog(
@@ -3178,6 +3265,19 @@ class MosaicApp:
         except Exception as e:
             self.state.update(status_message=f"Could not open output folder: {e}")
 
+    def _open_in_os(self, path) -> None:
+        """Open a saved file (or folder) in the OS default handler. Best-effort."""
+        import os, sys, subprocess
+        try:
+            if sys.platform == "darwin":
+                subprocess.run(["open", str(path)], check=False)
+            elif os.name == "nt":
+                os.startfile(str(path))  # type: ignore[attr-defined]
+            else:
+                subprocess.run(["xdg-open", str(path)], check=False)
+        except Exception:
+            pass
+
     def _on_check_updates(self):
         """Manual update check (Advanced menu). Compares the local version to the
         public repo's pyproject version. Synchronous — it's user-initiated — with
@@ -3281,6 +3381,9 @@ class MosaicApp:
                         width=140,
                     )
 
+        # Recent menu is built directly from _recent_shapefiles during
+        # window construction above; _refresh_recent_menu handles updates.
+
     # ── Main loop ─────────────────────────────────────────────────────────────
 
     def run(self):
@@ -3318,29 +3421,46 @@ class MosaicApp:
             self._apply_renumber(self._renumber_rule)
         self._last_seen_status = status
 
-        # ── Inspection complete → show shapefile dialog ────────────────────────
+        # ── Inspection complete → show shapefile dialog (or skip for recent open) ─
         if snap["shp_inspect_ready"]:
             self.state.update(shp_inspect_ready=False)
             if self.runner and self.runner._pending_inspection is not None:
-                self._shp_dialog.populate(self.runner._pending_inspection)
+                if self._pending_recent_config is not None:
+                    _cfg = self._pending_recent_config
+                    self._pending_recent_config = None
+                    self._on_shp_confirm(self.runner._pending_inspection, _cfg)
+                else:
+                    self._shp_dialog.populate(self.runner._pending_inspection)
 
         # ── Load complete → update shapefile info label ────────────────────────
         if snap["gdf_ready"]:
             self.state.update(gdf_ready=False)
             self._update_shp_info_label()
+            # Mark this gdf as fully populated (all overlay arrays present) so
+            # the map bg-load below may load it. complete_load sets gdf +
+            # populations + county + elections + pp before pulsing gdf_ready,
+            # so latching here guarantees the map never captures partial data.
+            self._map_data_gdf_id = (id(self.runner.gdf)
+                                     if self.runner and self.runner.gdf is not None
+                                     else 0)
 
         # ── Map: trigger background load when new shapefile is ready ──────────
         loaded_path = self.state.shapefile_path
         loaded_gdf_id = (id(self.runner.gdf)
                          if self.runner and self.runner.gdf is not None
                          else 0)
-        not_loading = status not in (AlgorithmStatus.LOADING,
-                                     AlgorithmStatus.BUILDING_GRAPH)
+        # Gate on the fully-loaded latch, not a status snapshot: on Open Recent
+        # complete_load is kicked off in this same frame, so a stale IDLE
+        # status (left by inspection) could otherwise let the map load a
+        # runner that has only gdf+populations set — county/elections/pp still
+        # None — and the same-identity gdf never re-triggers a reload.
+        fully_loaded = (loaded_gdf_id != 0
+                        and loaded_gdf_id == self._map_data_gdf_id)
         if (loaded_path
                 and (loaded_path != self._map_loaded_path
                      or loaded_gdf_id != self._map_loaded_gdf_id)
                 and not self._map_loading
-                and not_loading
+                and fully_loaded
                 and self.runner
                 and self.runner.gdf is not None):
             self._map_loading = True
@@ -3524,10 +3644,13 @@ class MosaicApp:
                            label="Resume" if is_paused else "Pause")
         dpg.configure_item(self._reset_btn,  enabled=True)
         has_result = self.state.best_assignment is not None
-        dpg.configure_item(self._export_btn,
-                           enabled=has_result and not is_busy)
-        dpg.configure_item(self._metrics_btn,
-                           enabled=has_result and not is_busy)
+        # Allow saves while paused; block only during active running/partitioning.
+        can_save = has_result and not is_running and not is_partitioning
+        dpg.configure_item(self._export_btn,  enabled=can_save)
+        dpg.configure_item(self._metrics_btn, enabled=can_save)
+        if self._file_save_asgn_item:
+            dpg.configure_item(self._file_save_asgn_item,  enabled=can_save)
+            dpg.configure_item(self._file_save_metrics_item, enabled=can_save)
         can_revert = has_result and status in (
             AlgorithmStatus.IDLE, AlgorithmStatus.PAUSED,
             AlgorithmStatus.COMPLETED, AlgorithmStatus.ERROR,
@@ -3927,6 +4050,19 @@ class MosaicApp:
         # Phase plot (metric-vs-metric trajectory); no-op unless its panel is open
         self._update_phase_plot()
 
+        # ── Keyboard shortcuts (Ctrl+N/O/S/W) ─────────────────────────────────
+        _ctrl = (dpg.is_key_down(dpg.mvKey_LControl)
+                 or dpg.is_key_down(dpg.mvKey_RControl))
+        if _ctrl:
+            if dpg.is_key_pressed(dpg.mvKey_N):
+                self._on_new()
+            elif dpg.is_key_pressed(dpg.mvKey_O):
+                self._on_import_shapefile()
+            elif dpg.is_key_pressed(dpg.mvKey_S) and can_save:
+                self._on_file_save_assignments()
+            elif dpg.is_key_pressed(dpg.mvKey_W):
+                self._on_close()
+
     def _clear_all_series(self) -> None:
         """Clear local history buffers and blank all DPG plot series."""
         for buf in (
@@ -3984,18 +4120,17 @@ class MosaicApp:
 
     def _update_shp_info_label(self) -> None:
         """Refresh the shapefile status line after a successful load."""
-        if self.runner is None or self._loaded_config is None:
+        if self.runner is None:
             return
-        cfg  = self._loaded_config
+        # Prefer inspection path; fall back to state for the display label.
         insp = self.runner._pending_inspection
-        if insp is None:
-            return
-        stem = Path(insp.path).stem
+        path = (getattr(insp, "path", None) or self.state.shapefile_path or "")
+        stem = Path(path).stem if path else "shapefile"
         dpg.set_value(self._shp_info, f"Loaded: {stem}")
         self.theme.retoken(self._shp_info, "success_pale")
 
-        # Enable/disable county-dependent controls based on what was loaded
-        has_county = cfg.county_col is not None
+        # Read actual loaded state from runner — avoids races on _loaded_config.
+        has_county = self.runner.county_array is not None
         self.theme.retoken(self._cs_lbl,
                            "secondary" if has_county else "disabled_deep")
         dpg.configure_item(self._cs_enabled, enabled=has_county)
@@ -4017,7 +4152,7 @@ class MosaicApp:
             dpg.configure_item("panel_county_splits", show=False)
 
         # Partisan overlay map toggle
-        has_elections = bool(cfg.elections)
+        has_elections = bool(self.runner.election_arrays)
         self._has_elections = has_elections
         dpg.configure_item(self._partisan_overlay, enabled=has_elections)
         dpg.configure_item(self._district_partisan, enabled=has_elections)
@@ -4030,6 +4165,10 @@ class MosaicApp:
                 dpg.set_value(self._district_partisan, False)
                 if self.map_view:
                     self.map_view.district_partisan_overlay = False
+        elif self._restore_partisan_on_load:
+            self._restore_partisan_on_load = False
+            # Elections loaded from Recent; controls are already enabled above.
+            # User enables overlays manually to avoid unintended toggle.
 
         # Compactness and Pop. Deviation map views. PP alone is enough to shade;
         # the overlay blends in Reock when reock_data is present and falls back
@@ -4420,17 +4559,38 @@ class MosaicApp:
         )
         dpg.set_value("map_texture", rgba)
 
+    def _rerender_map(self) -> None:
+        """Re-compose and upload the current map frame with the latest overlay flags.
+
+        Overlay toggle callbacks call this instead of queuing map_needs_update so
+        the response is immediate rather than deferred to the next render-loop tick
+        (which can silently drop the update if current_assignment is transiently None).
+        Falls back to queuing when no assignment is available yet.
+        """
+        if self.map_view is None:
+            return
+        with self.state._lock:
+            asgn = (self.state.current_assignment.copy()
+                    if self.state.current_assignment is not None else None)
+            n    = self.state.num_districts
+            init = (self.state.initial_assignment.copy()
+                    if self.state.initial_assignment is not None else None)
+        if asgn is not None:
+            self.map_view.render_assignment(asgn, n, init)
+        else:
+            self.state.update(map_needs_update=True)
+
     def _on_county_overlay_toggle(self):
-        if self.map_view is None or not self.map_view._loaded:
+        if self.map_view is None:
             return
         self.map_view.county_overlay = dpg.get_value(self._county_overlay)
-        self.state.update(map_needs_update=True)
+        self._rerender_map()
 
     def _on_precinct_overlay_toggle(self):
-        if self.map_view is None or not self.map_view._loaded:
+        if self.map_view is None:
             return
         self.map_view.precinct_overlay = dpg.get_value(self._precinct_overlay)
-        self.state.update(map_needs_update=True)
+        self._rerender_map()
 
     def _on_partisan_overlay_toggle(self):
         if dpg.get_value(self._partisan_overlay):
@@ -4442,10 +4602,10 @@ class MosaicApp:
                 dpg.set_value(cb, False)
                 if self.map_view:
                     setattr(self.map_view, attr, False)
-        if self.map_view is None or not self.map_view._loaded:
+        if self.map_view is None:
             return
         self.map_view.partisan_overlay = dpg.get_value(self._partisan_overlay)
-        self.state.update(map_needs_update=True)
+        self._rerender_map()
 
     def _on_district_partisan_toggle(self):
         if dpg.get_value(self._district_partisan):
@@ -4457,16 +4617,16 @@ class MosaicApp:
                 dpg.set_value(cb, False)
                 if self.map_view:
                     setattr(self.map_view, attr, False)
-        if self.map_view is None or not self.map_view._loaded:
+        if self.map_view is None:
             return
         self.map_view.district_partisan_overlay = dpg.get_value(self._district_partisan)
-        self.state.update(map_needs_update=True)
+        self._rerender_map()
 
     def _on_splits_view_toggle(self):
-        if self.map_view is None or not self.map_view._loaded:
+        if self.map_view is None:
             return
         self.map_view.splits_view = dpg.get_value(self._splits_view)
-        self.state.update(map_needs_update=True)
+        self._rerender_map()
 
     def _on_compactness_toggle(self):
         if dpg.get_value(self._compactness_view):
@@ -4478,10 +4638,10 @@ class MosaicApp:
                 dpg.set_value(cb, False)
                 if self.map_view:
                     setattr(self.map_view, attr, False)
-        if self.map_view is None or not self.map_view._loaded:
+        if self.map_view is None:
             return
         self.map_view.compactness_view = dpg.get_value(self._compactness_view)
-        self.state.update(map_needs_update=True)
+        self._rerender_map()
 
     def _on_pop_dev_toggle(self):
         if dpg.get_value(self._pop_dev_view):
@@ -4493,45 +4653,54 @@ class MosaicApp:
                 dpg.set_value(cb, False)
                 if self.map_view:
                     setattr(self.map_view, attr, False)
-        if self.map_view is None or not self.map_view._loaded:
+        if self.map_view is None:
             return
         self.map_view.pop_dev_view = dpg.get_value(self._pop_dev_view)
-        self.state.update(map_needs_update=True)
+        self._rerender_map()
 
     def _on_labels_toggle(self):
-        if self.map_view is None or not self.map_view._loaded:
+        if self.map_view is None:
             return
         self.map_view.show_labels = dpg.get_value(self._show_labels)
-        self.state.update(map_needs_update=True)
+        self._rerender_map()
 
     # ── Action callbacks ──────────────────────────────────────────────────────
 
     def _on_import_shapefile(self):
-        # Platform split: tkinter's filedialog uses each OS's native picker
-        # (clean, what users expect) on Windows and Linux. On macOS, tkinter's
-        # Tk root and Dear PyGui both want to own the Cocoa main run loop and
-        # the combination crashes, so macOS falls back to DPG's own dialog.
-        import sys
-        if sys.platform == "darwin":
-            self._pick_shapefile_dpg()
-        else:
+        # Platform split: Windows uses a PowerShell OpenFileDialog (tkinter's
+        # native picker throws "Catastrophic failure" against DPG's Win32 loop).
+        # mac + Linux use DPG's own dialog: tkinter fights DPG for the Cocoa run
+        # loop on macOS, and PowerShell doesn't exist on either.
+        import os
+        if os.name == "nt":
             self._pick_shapefile_tk()
+        else:
+            self._pick_shapefile_dpg()
 
     def _pick_shapefile_tk(self):
-        import tkinter as tk
-        from tkinter import filedialog
+        # Use PowerShell OpenFileDialog on Windows to avoid Win32 message-loop
+        # conflicts between tkinter and DPG that cause repeated dialog opens.
+        import subprocess
         from mosaic.paths import shapefiles_dir, mosaic_data_dir
         shp_dir = shapefiles_dir()
-        initialdir = str(shp_dir if shp_dir.is_dir() else mosaic_data_dir())
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        path = filedialog.askopenfilename(
-            title="Select Shapefile",
-            filetypes=[("Shapefiles", "*.shp"), ("All files", "*.*")],
-            initialdir=initialdir,
+        init_dir = str(shp_dir if shp_dir.is_dir() else mosaic_data_dir())
+        ps = (
+            "Add-Type -AssemblyName System.Windows.Forms; "
+            "$d = New-Object System.Windows.Forms.OpenFileDialog; "
+            "$d.Title = 'Select Shapefile'; "
+            "$d.Filter = 'Shapefiles (*.shp)|*.shp|All files (*.*)|*.*'; "
+            f"$d.InitialDirectory = '{init_dir}'; "
+            "$null = $d.ShowDialog(); "
+            "Write-Output $d.FileName"
         )
-        root.destroy()
+        try:
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                capture_output=True, text=True, timeout=120,
+            )
+            path = r.stdout.strip()
+        except Exception:
+            path = ""
         if path:
             self._on_shapefile_selected(None, {"file_path_name": path})
 
@@ -5034,6 +5203,15 @@ class MosaicApp:
         self.runner = AlgorithmRunner(self.state)
         self._loaded_config = None
         self._has_elections = False
+        # Immediately disable election-dependent controls so there's no stale
+        # overlay state visible while the new file loads.
+        dpg.configure_item(self._partisan_overlay, enabled=False)
+        dpg.set_value(self._partisan_overlay, False)
+        dpg.configure_item(self._district_partisan, enabled=False)
+        dpg.set_value(self._district_partisan, False)
+        if self.map_view:
+            self.map_view.partisan_overlay = False
+            self.map_view.district_partisan_overlay = False
         # Hot start (and Relight) were tied to the previous shapefile's map.
         self.state.update(
             current_assignment=None,
@@ -5055,6 +5233,7 @@ class MosaicApp:
                         config: ShapefileConfig) -> None:
         """Called by ShapefileDialog when the user clicks Confirm and Load."""
         self._loaded_config = config
+        self._push_recent_shapefile(inspection.path, config)
         # Flush all history and series before the new load so charts start
         # fresh and the previous file's data doesn't bleed through.
         with self.state._lock:
@@ -5528,6 +5707,11 @@ class MosaicApp:
             label_map = self._infer_label_map(stable, n_dist)
             if label_map is None:        # no alignment plan loaded -> no-op
                 return
+        elif rule == "proximity":
+            from mosaic.renumber import proximity_label_map
+            x, y = self._renumber_centroids_xy()
+            pops = np.asarray(self.runner.populations, dtype=np.float64)
+            label_map = proximity_label_map(stable, x, y, pops, n_dist)
         else:
             from mosaic.renumber import geographic_label_map
             x, y = self._renumber_centroids_xy()
@@ -5568,9 +5752,10 @@ class MosaicApp:
     # ── Renumber control sync (Advanced menu check + options radio) ──────────────
 
     _RENUMBER_RULE_TO_LABEL = {
-        "nw_se": "Northwest to Southeast",
-        "n_s": "North to South",
-        "infer": "Infer from alignment",
+        "nw_se":      "Northwest to Southeast",
+        "n_s":        "North to South",
+        "proximity":  "By proximity",
+        "infer":      "Infer from alignment",
     }
     _RENUMBER_LABEL_TO_RULE = {v: k for k, v in _RENUMBER_RULE_TO_LABEL.items()}
 
@@ -5579,7 +5764,7 @@ class MosaicApp:
                 and getattr(self.runner, "alignment_data", None) is not None)
 
     def _renumber_radio_items(self) -> list:
-        items = ["None", "Northwest to Southeast", "North to South"]
+        items = ["By proximity", "Northwest to Southeast", "North to South", "None"]
         if self._alignment_loaded():
             items.append("Infer from alignment")
         return items
@@ -5588,7 +5773,7 @@ class MosaicApp:
         """Radio label reflecting current renumber state."""
         if not self._renumber_enabled:
             return "None"
-        return self._RENUMBER_RULE_TO_LABEL.get(self._renumber_rule, "Northwest to Southeast")
+        return self._RENUMBER_RULE_TO_LABEL.get(self._renumber_rule, "By proximity")
 
     def _sync_renumber_widgets(self) -> None:
         dpg.set_value(self._renumber_after_run, self._renumber_enabled)
@@ -5601,8 +5786,8 @@ class MosaicApp:
 
     def _on_renumber_after_run_toggle(self, sender, app_data) -> None:
         self._renumber_enabled = bool(app_data)
-        if self._renumber_enabled and self._renumber_rule not in ("nw_se", "n_s"):
-            self._renumber_rule = "nw_se"
+        if self._renumber_enabled and self._renumber_rule not in ("nw_se", "n_s", "proximity"):
+            self._renumber_rule = "proximity"
         self._sync_renumber_widgets()
         self._maybe_live_renumber()
 
@@ -5611,7 +5796,7 @@ class MosaicApp:
             self._renumber_enabled = False
         else:
             self._renumber_enabled = True
-            self._renumber_rule = self._RENUMBER_LABEL_TO_RULE.get(app_data, "nw_se")
+            self._renumber_rule = self._RENUMBER_LABEL_TO_RULE.get(app_data, "proximity")
         self._sync_renumber_widgets()
         self._maybe_live_renumber()
 
@@ -5619,7 +5804,7 @@ class MosaicApp:
         # "Infer from alignment" only appears when a reference plan is loaded;
         # if it was selected and the plan is gone, fall back to the diagonal.
         if self._renumber_rule == "infer" and not self._alignment_loaded():
-            self._renumber_rule = "nw_se"
+            self._renumber_rule = "proximity"
         # Rebuilt each open (radio items depend on current state); the helper
         # deletes any prior instance. _sync_renumber_widgets() guards on the tag
         # existing, so deleting it on close is safe.
@@ -5639,18 +5824,20 @@ class MosaicApp:
         dpg.focus_item("renumber_options_window")
 
     def _on_export(self):
-        # Save what's on the map -- the current (final) plan of the run, which is
-        # also what "Revert to best" leaves behind once clicked. Snapshot under
-        # the lock so a still-running worker can't swap it mid-export.
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = Path("output") / f"assignments_{timestamp}.csv"
+        self._do_export_to_path(output_path)
+
+    def _do_export_to_path(self, output_path: Path) -> None:
+        """Export labeled assignment CSV to a specific path."""
         with self.state._lock:
             current = (self.state.current_assignment.copy()
                        if self.state.current_assignment is not None else None)
         if self.runner is None or current is None:
             return
-        from datetime import datetime
         from mosaic.io import save_assignments
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = Path("output") / f"assignments_{timestamp}.csv"
+        output_path = Path(output_path)
         output_path.parent.mkdir(exist_ok=True)
 
         precinct_ids = None
@@ -5670,17 +5857,20 @@ class MosaicApp:
         self.state.update(status_message=f"Assignments saved to {output_path}")
 
     def _on_export_metrics(self):
-        # Metrics describe the same plan the assignments export writes -- the
-        # current (displayed) plan, not the best-scoring one.
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = Path("output") / f"metrics_{timestamp}.csv"
+        self._do_export_metrics_to_path(output_path)
+
+    def _do_export_metrics_to_path(self, output_path: Path) -> None:
+        """Export per-district metrics CSV to a specific path."""
         with self.state._lock:
             current = (self.state.current_assignment.copy()
                        if self.state.current_assignment is not None else None)
         if self.runner is None or current is None:
             return
-        from datetime import datetime
         from mosaic.io import save_metrics
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = Path("output") / f"metrics_{timestamp}.csv"
+        output_path = Path(output_path)
         output_path.parent.mkdir(exist_ok=True)
 
         n_dist = self.state.num_districts
@@ -5688,6 +5878,7 @@ class MosaicApp:
                      if n_dist > 0 else 1.0)
         dem = self.runner.election_arrays[0][0] if self.runner.election_arrays else None
         gop = self.runner.election_arrays[0][1] if self.runner.election_arrays else None
+        cfg = self.state.score_config
 
         save_metrics(
             self._export_labeled_assignment(current),
@@ -5697,8 +5888,220 @@ class MosaicApp:
             dem_votes=dem,
             gop_votes=gop,
             pp_data=self.runner.pp_data,
+            reock_data=self.runner.reock_data,
+            county_ids=self.runner.county_array,
+            win_prob_at_55=cfg.election_win_prob_at_55,
+            swing_sigma=cfg.election_swing_sigma,
         )
         self.state.update(status_message=f"Metrics saved to {output_path}")
+
+    # ── File menu: New / recent files / named saves ───────────────────────────
+
+    def _load_recent_shapefiles(self) -> None:
+        """Read recent-shapefile list from disk."""
+        import json
+        if not _RECENT_FILE.exists():
+            return
+        try:
+            data = json.loads(_RECENT_FILE.read_text(encoding="utf-8"))
+            self._recent_shapefiles = data if isinstance(data, list) else []
+        except Exception:
+            self._recent_shapefiles = []
+
+    def _save_recent_shapefiles(self) -> None:
+        """Persist recent-shapefile list to disk."""
+        import json
+        try:
+            _SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+            _RECENT_FILE.write_text(
+                json.dumps(self._recent_shapefiles[:5], indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+    def _push_recent_shapefile(self, path: str,
+                               config: "ShapefileConfig") -> None:
+        """Prepend path+config to the recent list, cap at 5, refresh menu."""
+        entry = {
+            "path": path,
+            "config": {
+                "pop_col":    config.pop_col,
+                "id_col":     config.id_col,
+                "county_col": config.county_col,
+                "elections":  config.elections,
+            },
+        }
+        self._recent_shapefiles = [
+            e for e in self._recent_shapefiles if e.get("path") != path
+        ]
+        self._recent_shapefiles.insert(0, entry)
+        self._recent_shapefiles = self._recent_shapefiles[:5]
+        self._save_recent_shapefiles()
+        self._refresh_recent_menu()
+
+    def _refresh_recent_menu(self) -> None:
+        """Rebuild the Open Recent submenu from _recent_shapefiles."""
+        if not dpg.does_item_exist("file_recent_menu"):
+            return
+        dpg.delete_item("file_recent_menu", children_only=True)
+        if not self._recent_shapefiles:
+            dpg.add_menu_item(
+                label="(no recent files)", enabled=False,
+                parent="file_recent_menu",
+            )
+            return
+        for entry in self._recent_shapefiles:
+            dpg.add_menu_item(
+                label=Path(entry["path"]).name,
+                callback=self._on_open_recent,
+                user_data=entry,
+                parent="file_recent_menu",
+            )
+
+    def _on_open_recent(self, sender, app_data, user_data) -> None:
+        """Open a recently used shapefile, skipping the column picker."""
+        if not user_data:
+            return
+        entry = user_data
+        path = entry.get("path", "")
+        if not path or not Path(path).exists():
+            self.state.update(
+                status_message=f"Recent file not found: {path}")
+            return
+        cfg_d = entry.get("config", {})
+        # JSON round-trips tuples as lists; restore tuples so the runner's
+        # for dem_col, gop_col in config.elections unpacking works correctly.
+        raw_elections = cfg_d.get("elections", [])
+        elections = [tuple(e) for e in raw_elections if len(e) == 2]
+        config = ShapefileConfig(
+            pop_col=cfg_d.get("pop_col", ""),
+            id_col=cfg_d.get("id_col", ""),
+            county_col=cfg_d.get("county_col"),
+            elections=elections,
+        )
+        self._pending_recent_config = config
+        self._restore_partisan_on_load = bool(elections)
+        self._on_shapefile_selected(None, {"file_path_name": path})
+
+    def _on_close(self) -> None:
+        """File > Close / Ctrl+W: warn if there are unsaved results."""
+        if self.state.best_assignment is not None:
+            dpg.configure_item("popup_close_confirm", show=True)
+        else:
+            dpg.stop_dearpygui()
+
+    def _on_new(self) -> None:
+        """File > New: clear the map with an optional unsaved-work warning."""
+        if self.state.best_assignment is not None:
+            dpg.configure_item("popup_new_confirm", show=True)
+        else:
+            self._do_new()
+
+    def _do_new(self) -> None:
+        """Discard current results and return to a clean slate."""
+        dpg.configure_item("popup_new_confirm", show=False)
+        self._on_reset()
+        self.runner = AlgorithmRunner(self.state)
+        self._loaded_config = None
+        self._has_elections = False
+        self._map_loaded_path = ""
+        self._map_loaded_gdf_id = 0
+        self._map_data_gdf_id = 0
+        self._map_loading = False
+        self._map_ready = False
+        self.state.update(shapefile_path="", status_message="")
+        self._update_hot_start_display(None)
+        dpg.set_value(self._shp_info, "Load a shapefile to begin.")
+        self.theme.retoken(self._shp_info, "muted")
+        if self.map_view is not None:
+            self.map_view.wipe()
+
+    def _build_new_confirm_popup(self) -> None:
+        with self._dialog(
+            "New Map", "popup_new_confirm", (380, 120),
+            show=False,
+            buttons=[
+                ("Discard & New", self._do_new, "primary"),
+                ("Cancel",
+                 lambda: dpg.configure_item("popup_new_confirm", show=False)),
+            ],
+        ):
+            dpg.add_text(
+                "The current run has results that have not been saved.\n"
+                "Discard them and start a new map?",
+                wrap=380 - 2 * 16,
+            )
+
+    def _build_close_confirm_popup(self) -> None:
+        with self._dialog(
+            "Close Mosaic", "popup_close_confirm", (380, 120),
+            show=False,
+            buttons=[
+                ("Close Anyway", lambda: dpg.stop_dearpygui(), "primary"),
+                ("Cancel",
+                 lambda: dpg.configure_item("popup_close_confirm", show=False)),
+            ],
+        ):
+            dpg.add_text(
+                "The current run has results that have not been saved.\n"
+                "Close anyway?",
+                wrap=380 - 2 * 16,
+            )
+
+    def _build_save_name_popup(self) -> None:
+        """Shared filename-input dialog for Save Assignments / Save District Info."""
+        with self._dialog(
+            "Save", "popup_save_name", (400, 150),
+            show=False,
+            buttons=[
+                ("Save", self._do_save_name_confirm, "primary"),
+                ("Cancel",
+                 lambda: dpg.configure_item("popup_save_name", show=False)),
+            ],
+        ):
+            dpg.add_text("Save to: output/")
+            with dpg.group(horizontal=True):
+                self._save_name_input = dpg.add_input_text(
+                    default_value="", width=318, hint="filename",
+                )
+                dpg.add_text(".csv")
+
+    def _on_file_save_assignments(self) -> None:
+        """File > Save Assignments: show filename dialog."""
+        if self.state.best_assignment is None:
+            return
+        from datetime import datetime
+        suggested = f"assignments_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        dpg.configure_item("popup_save_name", label="Save Assignments")
+        dpg.set_value(self._save_name_input, suggested)
+        self._save_name_type = "assignments"
+        dpg.configure_item("popup_save_name", show=True)
+
+    def _on_file_save_metrics(self) -> None:
+        """File > Save District Info: show filename dialog."""
+        if self.state.best_assignment is None:
+            return
+        from datetime import datetime
+        suggested = f"metrics_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        dpg.configure_item("popup_save_name", label="Save District Info")
+        dpg.set_value(self._save_name_input, suggested)
+        self._save_name_type = "metrics"
+        dpg.configure_item("popup_save_name", show=True)
+
+    def _do_save_name_confirm(self) -> None:
+        """Save Assignments / Save District Info: confirm filename and export."""
+        name = dpg.get_value(self._save_name_input).strip()
+        if not name:
+            return
+        if not name.endswith(".csv"):
+            name += ".csv"
+        output_path = Path("output") / name
+        dpg.configure_item("popup_save_name", show=False)
+        if self._save_name_type == "assignments":
+            self._do_export_to_path(output_path)
+        else:
+            self._do_export_metrics_to_path(output_path)
 
     def _render_map_at_scale(self, scale: float,
                              state_outline: bool = False) -> Optional[np.ndarray]:
@@ -5805,98 +6208,528 @@ class MosaicApp:
             return
         dpg.configure_item("popup_adv_save", show=True)
 
+    def _on_adv_fmt_changed(self):
+        """Show Raster DPI row only when PNG is selected."""
+        is_pdf = "PDF" in dpg.get_value(self._adv_save_fmt)
+        dpg.configure_item(self._adv_dpi_group, show=not is_pdf)
+
+    def _adv_save_ready(self) -> bool:
+        return (self.map_view is not None
+                and self.map_view._loaded
+                and self.state.current_assignment is not None)
+
+    def _adv_begin(self, status: str) -> None:
+        self._saving = True
+        for btn in (self._adv_save_btn, self._adv_save_as_btn,
+                    self._adv_close_btn):
+            dpg.configure_item(btn, enabled=False)
+        dpg.configure_item(self._adv_save_spinner, show=True)
+        dpg.set_value(self._adv_save_status, status)
+        dpg.configure_item(self._adv_save_status, show=True)
+
+    def _adv_finish(self, close: bool = True) -> None:
+        dpg.configure_item(self._adv_save_spinner, show=False)
+        dpg.configure_item(self._adv_save_status, show=False)
+        for btn in (self._adv_save_btn, self._adv_save_as_btn,
+                    self._adv_close_btn):
+            dpg.configure_item(btn, enabled=True)
+        if close:
+            dpg.configure_item("popup_adv_save", show=False)
+        self._saving = False
+
+    def _adv_get_dpi(self) -> int:
+        if not hasattr(self, "_adv_save_dpi") or self._adv_save_dpi is None:
+            return 192
+        return int(dpg.get_value(self._adv_save_dpi).split()[0])
+
+    def _adv_dispatch(self, output_path) -> None:
+        """Start the PNG or PDF worker for the current format selection."""
+        fmt_str = dpg.get_value(self._adv_save_fmt) if self._adv_save_fmt else ""
+        is_pdf = "PDF" in fmt_str
+        title = dpg.get_value(self._adv_save_title).strip()
+        dpi = self._adv_get_dpi()
+        if is_pdf:
+            threading.Thread(
+                target=self._pdf_vector_worker,
+                args=(title, output_path),
+                daemon=True,
+            ).start()
+        else:
+            threading.Thread(
+                target=self._png_worker,
+                args=(title, dpi, output_path),
+                daemon=True,
+            ).start()
+
     def _on_advanced_save_confirm(self):
+        """Save to an auto-timestamped path."""
         if getattr(self, "_saving", False):
             return
-        if self.map_view is None or not self.map_view._loaded:
+        if not self._adv_save_ready():
             self.state.update(status_message="Nothing to save: load a shapefile first.")
             dpg.configure_item("popup_adv_save", show=False)
             return
+        fmt_str = dpg.get_value(self._adv_save_fmt) if self._adv_save_fmt else ""
+        is_pdf = "PDF" in fmt_str
+        dpi = self._adv_get_dpi()
+        self._adv_begin("Rendering PDF..." if is_pdf else f"Rendering {dpi} DPI...")
+        self._adv_dispatch(output_path=None)
 
-        title = dpg.get_value(self._adv_save_title).strip()
-        dpi = int(dpg.get_value(self._adv_save_dpi).split()[0])
-        scale = dpi / 96.0
+    def _on_advanced_save_as(self):
+        """Save to a chosen path (Windows native dialog); auto-name elsewhere."""
+        if getattr(self, "_saving", False):
+            return
+        if not self._adv_save_ready():
+            self.state.update(status_message="Nothing to save: load a shapefile first.")
+            return
+        fmt_str = dpg.get_value(self._adv_save_fmt) if self._adv_save_fmt else ""
+        is_pdf = "PDF" in fmt_str
+        import os
+        if os.name != "nt":
+            # No native save dialog off Windows: PowerShell is Windows-only, and a
+            # tkinter dialog would risk the mac/DPG run-loop conflict the Open
+            # picker already avoids. Fall back to an auto-named file in output/.
+            dpi = self._adv_get_dpi()
+            self._adv_begin("Rendering PDF..." if is_pdf else f"Rendering {dpi} DPI...")
+            self._adv_dispatch(output_path=None)
+            return
+        self._adv_begin("Waiting for save dialog...")
 
-        self._saving = True
-        dpg.configure_item(self._adv_save_btn, enabled=False)
-        dpg.configure_item(self._adv_cancel_btn, enabled=False)
-        dpg.configure_item(self._adv_save_spinner, show=True)
-        dpg.set_value(self._adv_save_status, f"Rendering {dpi} DPI...")
-        dpg.configure_item(self._adv_save_status, show=True)
-
-        def _worker():
-            from datetime import datetime
-            from PIL import Image, ImageDraw, ImageFont
+        def _ask():
+            import subprocess
+            from datetime import datetime as _dt
+            ext = ".pdf" if is_pdf else ".png"
+            filt = ("PDF Document|*.pdf" if is_pdf else "PNG Image|*.png")
+            ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+            default_name = f"map_{ts}"
+            output_dir = _ASSETS_DIR.parent.parent.parent / "output"
+            output_dir.mkdir(exist_ok=True)
+            init_dir = str(output_dir)
+            ps = (
+                "Add-Type -AssemblyName System.Windows.Forms; "
+                "$d = New-Object System.Windows.Forms.SaveFileDialog; "
+                f"$d.Filter = '{filt}'; "
+                f"$d.DefaultExt = '{ext.lstrip('.')}'; "
+                f"$d.InitialDirectory = '{init_dir}'; "
+                f"$d.FileName = '{default_name}'; "
+                "$null = $d.ShowDialog(); "
+                "Write-Output $d.FileName"
+            )
             try:
-                rgba = self._render_map_at_scale(scale, state_outline=True)
-                if rgba is None:
-                    self.state.update(status_message="Save failed: map not ready.")
-                    return
+                r = subprocess.run(
+                    ["powershell", "-NoProfile", "-NonInteractive",
+                     "-Command", ps],
+                    capture_output=True, text=True, timeout=120,
+                )
+                path = r.stdout.strip()
+            except Exception:
+                path = ""
+            if not path:
+                self._adv_finish(close=False)
+                return
+            dpi = self._adv_get_dpi()
+            dpg.set_value(self._adv_save_status,
+                          "Rendering PDF..." if is_pdf
+                          else f"Rendering {dpi} DPI...")
+            self._adv_dispatch(output_path=Path(path))
 
-                img = Image.fromarray(rgba, mode="RGBA")
-                font_path = Path(__file__).resolve().parent.parent \
-                    / "assets" / "fonts" / "inter" / "Inter-SemiBold.ttf"
+        threading.Thread(target=_ask, daemon=True).start()
 
-                # Both strips live on the same bg as the title's strip.
-                br, bg, bb, _ = self.theme.color("child_bg")
+    # ── Save workers ─────────────────────────────────────────────────────────
 
-                # Caption strip (always present in advanced save) — sized to
-                # the caption font + margin so it never overlaps the map.
-                cap_size = max(10, int(11 * scale))
-                cap_margin = max(8, int(12 * scale))
-                bottom_strip_h = cap_size + 2 * cap_margin
-                try:
-                    cap_font = ImageFont.truetype(str(font_path), cap_size)
-                except OSError:
-                    cap_font = ImageFont.load_default()
+    def _pdf_vector_worker(self, title: str, output_path) -> None:
+        """Build a true vector PDF on US Letter paper (auto landscape/portrait).
+        Precinct fills and all outlines are real vector paths, not a raster."""
+        from datetime import datetime
+        try:
+            if self.runner is None or self.runner.gdf is None:
+                self.state.update(
+                    status_message="PDF save failed: no shapefile loaded.")
+                return
+            with self.state._lock:
+                assignment = self.state.current_assignment.copy()
+                initial = (self.state.initial_assignment.copy()
+                           if self.state.initial_assignment is not None
+                           else None)
+                n_dist = self.state.num_districts
 
-                # Optional title strip on top.
-                top_strip_h = 0
-                title_font = None
-                if title:
-                    r, g, b, _ = self.theme.color("body")
-                    top_strip_h = max(28, int(36 * scale))
-                    font_size = max(14, int(18 * scale))
+            gdf = self.runner.gdf
+            mv  = self.map_view
+            n   = len(gdf)
+
+            # ── Per-precinct fill colours (same logic as MapView LUTs) ────────
+            if mv.partisan_overlay and mv._dem_votes is not None:
+                lut = mv._build_partisan_lut()
+                fill_rgba = lut[:n]
+            elif mv.district_partisan_overlay and mv._dem_votes is not None:
+                lut = mv._build_district_partisan_lut(assignment, n_dist)
+                fill_rgba = lut[:n]
+            elif mv.compactness_view and mv._pp_data is not None:
+                lut = mv._build_compactness_lut(assignment, n_dist)
+                fill_rgba = lut[:n]
+            elif mv.pop_dev_view and mv._populations is not None:
+                lut = mv._build_pop_dev_lut(assignment, n_dist)
+                fill_rgba = lut[:n]
+            else:
+                from mosaic.gui.map_view import DISTRICT_COLORS, stable_color_mapping
+                nc = len(DISTRICT_COLORS)
+                ci_arr = (stable_color_mapping(assignment, initial, n_dist)
+                          if initial is not None and len(initial) == len(assignment)
+                          else assignment)
+                fill_rgba = np.zeros((n, 4), dtype=np.uint8)
+                for i in range(n):
+                    r, g, b = DISTRICT_COLORS[int(ci_arr[i]) % nc]
+                    fill_rgba[i] = (r, g, b, 255)
+
+            fill_mpl = fill_rgba[:, :3] / 255.0
+
+            # ── Matplotlib setup ──────────────────────────────────────────────
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+            plt.rcParams['font.family'] = 'sans-serif'
+            plt.rcParams['font.sans-serif'] = ['Arial', 'Helvetica', 'DejaVu Sans']
+            import matplotlib.patheffects as _pe
+            from matplotlib.patches import PathPatch
+            from matplotlib.path import Path as MplPath
+            from matplotlib.collections import PatchCollection
+            from matplotlib.font_manager import FontProperties
+            from shapely.ops import unary_union as _shapely_union
+
+            bounds = gdf.total_bounds
+            bx0, by0, bx1, by1 = (float(v) for v in bounds)
+            gw = max(bx1 - bx0, 1e-9)
+            gh = max(by1 - by0, 1e-9)
+            map_ratio = gw / gh
+
+            br, bg_c, bb, _ = self.theme.color("child_bg")
+            bg_mpl = (br / 255.0, bg_c / 255.0, bb / 255.0)
+
+            # ── Page layout: build outward from the state's exact bbox ────────
+            #   bbox (no margin) -> +10% height below (caption band)
+            #                    -> +15% height above (title band)
+            #                    -> +5% width each side (blank margin)
+            # The resulting content box is fit to US Letter in whichever
+            # orientation (portrait 8.5x11 / landscape 11x8.5) makes it larger,
+            # then centered on the page inside a small physical safety margin.
+            SIDE_FRAC   = 0.01                       # each side, of bbox width
+            BOTTOM_FRAC = 0.10                       # caption band, of bbox height
+            TOP_FRAC    = 0.15 if title else 0.0     # title band, of bbox height
+            PAGE_MARGIN = 0.5                        # inches, printer safe area
+
+            content_ratio = ((1.0 + 2 * SIDE_FRAC)
+                             / (1.0 + BOTTOM_FRAC + TOP_FRAC)) * map_ratio
+
+            def _fit_content(fw, fh):
+                pw, ph = fw - 2 * PAGE_MARGIN, fh - 2 * PAGE_MARGIN
+                if pw <= 0 or ph <= 0:
+                    return 0.0, 0.0, 0.0
+                if pw / ph >= content_ratio:
+                    cw, ch = ph * content_ratio, ph
+                else:
+                    cw, ch = pw, pw / content_ratio
+                return cw, ch, cw * ch
+
+            _pw, _ph, p_area = _fit_content(8.5, 11.0)
+            _lw, _lh, l_area = _fit_content(11.0, 8.5)
+            if p_area >= l_area:
+                fig_w, fig_h = 8.5, 11.0
+                content_w, content_h = _pw, _ph
+            else:
+                fig_w, fig_h = 11.0, 8.5
+                content_w, content_h = _lw, _lh
+
+            map_w = content_w / (1.0 + 2 * SIDE_FRAC)
+            map_h = content_h / (1.0 + BOTTOM_FRAC + TOP_FRAC)
+            content_left   = (fig_w - content_w) / 2.0
+            content_bottom = (fig_h - content_h) / 2.0
+
+            # Map axes = bbox, offset by the left margin and the bottom band.
+            ax_l   = (content_left + SIDE_FRAC * map_w) / fig_w
+            ax_b   = (content_bottom + BOTTOM_FRAC * map_h) / fig_h
+            ax_w   = map_w / fig_w
+            ax_h_f = map_h / fig_h
+
+            # Text anchors (figure fractions): caption at 80% width, centered in
+            # the bottom band; title at 50% width, centered in the top band.
+            cap_x   = (content_left + 0.80 * content_w) / fig_w
+            cap_y   = (content_bottom + 0.5 * BOTTOM_FRAC * map_h) / fig_h
+            title_x = (content_left + 0.50 * content_w) / fig_w
+            title_y = (content_bottom
+                       + (BOTTOM_FRAC + 1.0 + 0.5 * TOP_FRAC) * map_h) / fig_h
+
+            fig = plt.figure(figsize=(fig_w, fig_h))
+            fig.patch.set_facecolor(bg_mpl)
+
+            ax = fig.add_axes([ax_l, ax_b, ax_w, ax_h_f])
+            ax.set_facecolor(bg_mpl)
+            ax.set_aspect("equal")
+            ax.set_axis_off()
+            ax.set_xlim(bx0, bx1)
+            ax.set_ylim(by0, by1)
+
+            def _to_mpl_path(geom):
+                """Shapely Polygon/MultiPolygon → matplotlib Path with holes."""
+                if geom is None:
+                    return None
+                gtype = geom.geom_type
+                if gtype == "Polygon":
+                    polys = [geom]
+                elif gtype == "MultiPolygon":
+                    polys = list(geom.geoms)
+                else:
+                    return None
+                verts, codes = [], []
+                for poly in polys:
+                    coords = np.asarray(poly.exterior.coords)
+                    if len(coords) < 3:
+                        continue
+                    verts.append(coords)
+                    codes.append(np.array(
+                        [MplPath.MOVETO]
+                        + [MplPath.LINETO] * (len(coords) - 2)
+                        + [MplPath.CLOSEPOLY], dtype=np.uint8))
+                    for ring in poly.interiors:
+                        coords = np.asarray(ring.coords)
+                        if len(coords) < 3:
+                            continue
+                        verts.append(coords)
+                        codes.append(np.array(
+                            [MplPath.MOVETO]
+                            + [MplPath.LINETO] * (len(coords) - 2)
+                            + [MplPath.CLOSEPOLY], dtype=np.uint8))
+                if not verts:
+                    return None
+                return MplPath(np.concatenate(verts, axis=0),
+                               np.concatenate(codes))
+
+            # ── Gentle geometry simplification to shrink the vector PDF ───────
+            # Douglas-Peucker at a fraction of a print pixel (fitted map size at
+            # 300 DPI), so the deviation stays sub-pixel and invisible on paper.
+            # Per-precinct vertex count is the dominant size driver and the
+            # precinct grid reuses these same paths, so simplifying here shrinks
+            # both the fills and the grid. The district/county dissolve below
+            # keeps the original geometry (see note there). Raise _SIMPLIFY_PX to
+            # shrink more aggressively (watch for hairline gaps between precincts).
+            _SIMPLIFY_PX = 0.5
+            _data_per_px = (gw / map_w) / 300.0 if map_w > 0 else 0.0
+            _simp_tol = _data_per_px * _SIMPLIFY_PX
+            geom_simplified = (gdf.geometry.simplify(_simp_tol)
+                               if _simp_tol > 0 else gdf.geometry)
+
+            # ── Precinct fills (batched PatchCollection) ──────────────────────
+            patches, colors = [], []
+            for i, geom in enumerate(geom_simplified):
+                path = _to_mpl_path(geom)
+                if path is None:
+                    continue
+                patches.append(PathPatch(path))
+                colors.append(fill_mpl[i])
+            if patches:
+                # Fills: no edges (keeps PDF edge transparency independent)
+                ax.add_collection(
+                    PatchCollection(patches, facecolors=colors, edgecolors='none'))
+                # Edges: stroke-only collection; set_alpha() writes a proper PDF /CA entry
+                edge_coll = PatchCollection(patches, facecolors='none',
+                                            edgecolors='white', linewidths=0.2)
+                edge_coll.set_alpha(0.15)
+                ax.add_collection(edge_coll)
+
+            # ── Pre-dissolve district & county geometries (fast, avoids
+            #    looping n_dist × unary_union over all precincts) ───────────────
+            # Dissolve from ORIGINAL geometry: independently-simplified precincts
+            # no longer share exact edges, so their union leaves interior slivers
+            # that the district/county borders would trace as jagged lines.
+            gdf_work = gdf[["geometry"]].copy()
+            gdf_work["_dist"] = assignment
+            have_county = (mv._county_array is not None
+                           and (mv.county_overlay or mv.splits_view))
+            if have_county:
+                gdf_work["_cty"] = mv._county_array
+                cty_geoms = gdf_work.dissolve(by="_cty").geometry
+            dist_geoms = gdf_work.dissolve(by="_dist").geometry
+
+            # ── Splits view: dim clean (un-split) counties ────────────────────
+            if mv.splits_view and mv._county_array is not None:
+                ca  = mv._county_array
+                nct = int(ca.max()) + 1
+                flt = (ca * n_dist + assignment).astype(np.int64)
+                co_di = (np.bincount(flt, minlength=nct * n_dist)
+                           .reshape(nct, n_dist))
+                county_clean = (co_di > 0).sum(axis=1) <= 1
+                dim_c = (28 / 255, 28 / 255, 28 / 255)
+                dim_patches = []
+                for ci_idx in range(nct):
+                    if county_clean[ci_idx] and ci_idx in cty_geoms.index:
+                        p = _to_mpl_path(cty_geoms.loc[ci_idx])
+                        if p:
+                            dim_patches.append(PathPatch(p))
+                if dim_patches:
+                    ax.add_collection(
+                        PatchCollection(dim_patches,
+                                        facecolors=[dim_c] * len(dim_patches),
+                                        edgecolors="none", linewidths=0))
+
+            # ── County borders ────────────────────────────────────────────────
+            if have_county:
+                cty_color = (180 / 255, 180 / 255, 180 / 255)
+                for geom in cty_geoms:
+                    p = _to_mpl_path(geom)
+                    if p:
+                        ax.add_patch(PathPatch(p, facecolor="none",
+                                               edgecolor=cty_color,
+                                               linewidth=0.5))
+
+            # ── District borders (dissolved geoms, no per-precinct loop) ──────
+            for geom in dist_geoms:
+                p = _to_mpl_path(geom)
+                if p:
+                    ax.add_patch(PathPatch(p, facecolor="none",
+                                           edgecolor="black", linewidth=0.7))
+
+            # ── State outline (union of already-dissolved district geoms) ──────
+            state_geom = _shapely_union(list(dist_geoms.values))
+            p = _to_mpl_path(state_geom)
+            if p:
+                ax.add_patch(PathPatch(p, facecolor="none",
+                                       edgecolor="black", linewidth=1.2))
+
+            # ── District labels ───────────────────────────────────────────────
+            if mv.show_labels:
+                from mosaic.gui.map_view import stable_color_mapping
+                from shapely.ops import polylabel as _polylabel
+                ci_arr = (stable_color_mapping(assignment, initial, n_dist)
+                          if initial is not None and len(initial) == len(assignment)
+                          else assignment)
+                lm     = mv.district_label_map
+                use_lm = lm is not None and len(lm) == n_dist
+                font_path = _ASSETS_DIR / "fonts" / "inter" / "Inter-SemiBold.ttf"
+                fp = (FontProperties(fname=str(font_path))
+                      if font_path.exists() else None)
+                stroke_fx = [_pe.withStroke(linewidth=1.75, foreground="black")]
+                # Pole of inaccessibility (deepest interior point) rather than
+                # representative_point(), which can sit on a concave edge.
+                _lbl_tol = max(gw, gh) / 1000.0
+                for d in range(n_dist):
+                    if d not in dist_geoms.index:
+                        continue
+                    mask = assignment == d
+                    if not mask.any():
+                        continue
+                    si       = int(ci_arr[mask][0])
+                    num      = int(lm[si]) if use_lm else si + 1
+                    _dgeom = dist_geoms.loc[d]
+                    if _dgeom.geom_type == "MultiPolygon":
+                        _dgeom = max(_dgeom.geoms, key=lambda g: g.area)
                     try:
-                        title_font = ImageFont.truetype(str(font_path), font_size)
-                    except OSError:
-                        title_font = ImageFont.load_default()
+                        label_pt = _polylabel(_dgeom, tolerance=_lbl_tol)
+                    except Exception:
+                        label_pt = dist_geoms.loc[d].representative_point()
+                    kw = dict(ha="center", va="center", fontsize=7,
+                              color="white", path_effects=stroke_fx)
+                    if fp:
+                        ax.text(label_pt.x, label_pt.y, str(num),
+                                fontproperties=fp, **kw)
+                    else:
+                        ax.text(label_pt.x, label_pt.y, str(num),
+                                fontweight="bold", **kw)
 
-                new_img = Image.new(
-                    "RGBA",
-                    (img.width, img.height + top_strip_h + bottom_strip_h),
-                    (br, bg, bb, 255),
-                )
-                new_img.paste(img, (0, top_strip_h), img)
-                draw = ImageDraw.Draw(new_img)
-                if title:
-                    draw.text(
-                        (img.width // 2, top_strip_h // 2), title,
-                        fill=(r, g, b, 255), font=title_font, anchor="mm",
-                    )
-                cap_r, cap_g, cap_b, _ = self.theme.color("body")
+            # ── Title (50% width, centered in the top band) ───────────────────
+            if title:
+                body_r, body_g, body_b, _ = self.theme.color("body")
+                fig.text(title_x, title_y, title,
+                         ha="center", va="center",
+                         fontsize=14, fontweight="bold",
+                         color=(body_r / 255, body_g / 255, body_b / 255))
+
+            # ── Caption (80% width, centered in the bottom band) ──────────────
+            cap_r, cap_g, cap_b, _ = self.theme.color("body")
+            fig.text(cap_x, cap_y, "Made with Mosaic",
+                     ha="center", va="center", fontsize=7,
+                     color=(cap_r / 255, cap_g / 255, cap_b / 255))
+
+            # ── Write file ────────────────────────────────────────────────────
+            if output_path is None:
+                timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_path = (_ASSETS_DIR.parent.parent.parent
+                               / "output" / f"map_{timestamp}.pdf")
+            output_path = Path(output_path)
+            output_path.parent.mkdir(exist_ok=True)
+            fig.savefig(str(output_path), format="pdf")
+            plt.close(fig)
+            self.state.update(status_message=f"Map saved to {output_path}")
+            self._open_in_os(output_path)
+
+        except Exception as exc:
+            self.state.update(status_message=f"PDF export failed: {exc}")
+        finally:
+            self._adv_finish()
+
+    def _png_worker(self, title: str, dpi: int, output_path) -> None:
+        """Rasterise the map at the given DPI and save as PNG."""
+        from datetime import datetime
+        from PIL import Image, ImageDraw, ImageFont
+        scale = dpi / 96.0
+        try:
+            rgba = self._render_map_at_scale(scale, state_outline=True)
+            if rgba is None:
+                self.state.update(status_message="Save failed: map not ready.")
+                return
+
+            img = Image.fromarray(rgba, mode="RGBA")
+            font_path = _ASSETS_DIR / "fonts" / "inter" / "Inter-SemiBold.ttf"
+
+            br, bg, bb, _ = self.theme.color("child_bg")
+
+            cap_size       = max(10, int(11 * scale))
+            cap_margin     = max(8,  int(12 * scale))
+            bottom_strip_h = cap_size + 2 * cap_margin
+            try:
+                cap_font = ImageFont.truetype(str(font_path), cap_size)
+            except OSError:
+                cap_font = ImageFont.load_default()
+
+            top_strip_h = 0
+            title_font  = None
+            if title:
+                r, g, b, _ = self.theme.color("body")
+                top_strip_h = max(28, int(36 * scale))
+                font_size   = max(14, int(18 * scale))
+                try:
+                    title_font = ImageFont.truetype(str(font_path), font_size)
+                except OSError:
+                    title_font = ImageFont.load_default()
+
+            new_img = Image.new(
+                "RGBA",
+                (img.width, img.height + top_strip_h + bottom_strip_h),
+                (br, bg, bb, 255),
+            )
+            new_img.paste(img, (0, top_strip_h), img)
+            draw = ImageDraw.Draw(new_img)
+            if title:
                 draw.text(
-                    (new_img.width - cap_margin,
-                     new_img.height - cap_margin),
-                    "Made with Mosaic",
-                    fill=(cap_r, cap_g, cap_b, 255),
-                    font=cap_font, anchor="rs",
+                    (img.width // 2, top_strip_h // 2), title,
+                    fill=(r, g, b, 255), font=title_font, anchor="mm",
                 )
-                img = new_img
+            cap_r, cap_g, cap_b, _ = self.theme.color("body")
+            draw.text(
+                (new_img.width - cap_margin, new_img.height - cap_margin),
+                "Made with Mosaic",
+                fill=(cap_r, cap_g, cap_b, 255),
+                font=cap_font, anchor="rs",
+            )
 
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            if output_path is None:
+                timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
                 output_path = Path("output") / f"map_{timestamp}.png"
-                output_path.parent.mkdir(exist_ok=True)
-                img.save(output_path, dpi=(dpi, dpi))
-                self.state.update(status_message=f"Map saved to {output_path}")
-            finally:
-                dpg.configure_item(self._adv_save_spinner, show=False)
-                dpg.configure_item(self._adv_save_status, show=False)
-                dpg.configure_item(self._adv_save_btn, enabled=True)
-                dpg.configure_item(self._adv_cancel_btn, enabled=True)
-                dpg.configure_item("popup_adv_save", show=False)
-                self._saving = False
-        threading.Thread(target=_worker, daemon=True).start()
+            output_path = Path(output_path)
+            output_path.parent.mkdir(exist_ok=True)
+            new_img.save(output_path, dpi=(dpi, dpi))
+            self.state.update(status_message=f"Map saved to {output_path}")
+            self._open_in_os(output_path)
+        finally:
+            self._adv_finish()
 
 
 def main():
