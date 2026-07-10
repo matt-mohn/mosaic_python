@@ -175,3 +175,84 @@ def infer_label_map_from_reference(
                 used.add(nxt)
                 nxt += 1
     return label_map
+
+
+def proximity_label_map(
+    assignment: np.ndarray,
+    x: np.ndarray,
+    y: np.ndarray,
+    weights: np.ndarray,
+    k: int,
+) -> np.ndarray:
+    """Label districts 1..k by greedy nearest-neighbor traversal of centroids.
+
+    Starts from the NW-most district (same anchor as the nw_se rule) and at
+    each step picks the unvisited district whose centroid is closest to the
+    last visited one.  Empty districts are appended last, sorted by index.
+
+    Args:
+        assignment: (n,) district index per precinct, 0..k-1. Pass stable
+                    color indices so numbers align with colors and panels.
+        x, y:       (n,) precinct centroid coordinates in a north-up CRS.
+        weights:    (n,) per-precinct weight (population).
+        k:          number of districts.
+
+    Returns:
+        (k,) int32 where label_map[d] is district d's 1..k label.
+    """
+    w = np.asarray(weights, dtype=np.float64)
+    assignment = np.asarray(assignment)
+
+    wsum = np.bincount(assignment, weights=w, minlength=k).astype(np.float64)
+    cx_w = np.bincount(assignment,
+                       weights=w * np.asarray(x, dtype=np.float64), minlength=k)
+    cy_w = np.bincount(assignment,
+                       weights=w * np.asarray(y, dtype=np.float64), minlength=k)
+    nonempty = wsum > 0
+    with np.errstate(invalid="ignore", divide="ignore"):
+        cx = np.where(nonempty, cx_w / wsum, 0.0)
+        cy = np.where(nonempty, cy_w / wsum, 0.0)
+
+    nonempty_idx = np.where(nonempty)[0]
+    empty_idx    = np.where(~nonempty)[0]
+
+    if len(nonempty_idx) == 0:
+        return np.arange(1, k + 1, dtype=np.int32)
+
+    # NW-most starting district (mirrors nw_se anchor)
+    cx_lo = cx[nonempty_idx].min(); cx_hi = cx[nonempty_idx].max()
+    cy_lo = cy[nonempty_idx].min(); cy_hi = cy[nonempty_idx].max()
+    cx_rng = max(cx_hi - cx_lo, 1e-9)
+    cy_rng = max(cy_hi - cy_lo, 1e-9)
+    nx_ne = (cx[nonempty_idx] - cx_lo) / cx_rng   # 0=west, 1=east
+    ny_ne = (cy[nonempty_idx] - cy_lo) / cy_rng   # 0=south, 1=north
+    start_in_ne = int(np.argmax(ny_ne + (1.0 - nx_ne)))
+    start = int(nonempty_idx[start_in_ne])
+
+    # Greedy nearest-neighbour over non-empty districts, O(k^2)
+    remaining = set(nonempty_idx.tolist())
+    order: list[int] = [start]
+    remaining.discard(start)
+    cur = start
+
+    while remaining:
+        cx_cur = cx[cur]
+        cy_cur = cy[cur]
+        best_dist = float("inf")
+        best = -1
+        for d in remaining:
+            dist = (cx[d] - cx_cur) ** 2 + (cy[d] - cy_cur) ** 2
+            if dist < best_dist or (dist == best_dist and d < best):
+                best_dist = dist
+                best = d
+        order.append(best)
+        remaining.discard(best)
+        cur = best
+
+    # Empty districts last, sorted by index for stability
+    order.extend(sorted(empty_idx.tolist()))
+
+    label_map = np.empty(k, dtype=np.int32)
+    for label_1indexed, d in enumerate(order, 1):
+        label_map[d] = label_1indexed
+    return label_map

@@ -399,6 +399,26 @@ class MapView:
         self._last_rgba = rgba
         dpg.set_value(self._ttag, self._to_dpg(rgba))
 
+    def wipe(self) -> None:
+        """Clear the canvas to solid background and drop all loaded geometry.
+
+        Called by File > New so the old shapefile outline doesn't persist.
+        """
+        bg = np.full((self._h, self._w, 4), self._bg_color, dtype=np.uint8)
+        dpg.set_value(self._ttag, self._to_dpg(bg))
+        self._loaded = False
+        self._pixel_map = None
+        self._last_rgba = None
+        self._n_precincts = 0
+        self._county_array = None
+        self._dem_votes = None
+        self._gop_votes = None
+        self._pp_data = None
+        self._reock_data = None
+        self._populations = None
+        self._precinct_centroids = None
+        self._label_centers_cache = None
+
     def render_assignment(
         self,
         assignment: np.ndarray,
@@ -500,7 +520,7 @@ class MapView:
             pb_mask[:, :-1] |= pb_v
             pb_mask[:, 1:]  |= pb_v
             if pb_mask.any():
-                alpha = 0.35
+                alpha = 0.15
                 blended = rgba[pb_mask].astype(np.float32)
                 blended[:, :3] = blended[:, :3] * (1.0 - alpha) + 255.0 * alpha
                 rgba[pb_mask] = blended.astype(np.uint8)

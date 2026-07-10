@@ -269,9 +269,10 @@
           <dt><strong>Renumber options</strong></dt>
           <dd>Pick the rule:
             <ul>
-              <li><strong>None</strong> &mdash; draw-order numbering (no renumber).</li>
+              <li><strong>By proximity</strong> (default) &mdash; greedy nearest-neighbour traversal: district 1 is the furthest-northwest, then each subsequent number goes to the unvisited district whose centroid is closest to the last one. Keeps consecutively numbered districts geographically adjacent.</li>
               <li><strong>NW to SE</strong> &mdash; diagonal sweep: district 1 sits furthest northwest, the last furthest southeast. Each axis is normalized so the diagonal stays balanced regardless of the state's shape.</li>
               <li><strong>North to South</strong> &mdash; district 1 is northernmost, ties broken west-to-east.</li>
+              <li><strong>None</strong> &mdash; draw-order numbering (no renumber).</li>
               <li><strong>Infer from alignment</strong> &mdash; available only with a reference plan loaded (see the <a href="#metrics">Alignment</a> metric). Each proposed district adopts the <em>number</em> of the reference district it most overlaps, decided by a global maximum-overlap matching so two districts never claim the same number; any surplus districts get fresh numbers. Lets a new map carry the enacted map's district numbers.</li>
             </ul>
           </dd>
@@ -541,16 +542,21 @@
           <dt><strong>Save Assignments &rarr; <code>output/assignments_YYYYMMDD_HHMMSS.csv</code></strong></dt>
           <dd>One row per precinct: the precinct's ID (from whichever column you picked at load) and the district number. District numbers match the labels shown on the live map — same colours, same labels, no surprises.</dd>
           <dt><strong>Save Metrics &rarr; <code>output/metrics_YYYYMMDD_HHMMSS.csv</code></strong></dt>
-          <dd>One row per district: population, deviation from ideal, optional vote totals and Dem/Rep percentages, optional Polsby-Popper compactness. Same district numbering as the assignments CSV.</dd>
+          <dd>One row per district, same numbering as the assignments CSV. Columns: <code>district</code>, <code>population</code>, <code>pop_dev_pct</code>, <code>pop_dev_pct_abs</code>, <code>cut_edges</code>, <code>counties_touched</code>, <code>dem_votes</code>, <code>rep_votes</code>, <code>dem_pct</code>, <code>rep_pct</code>, <code>dem_margin</code>, <code>win_prob</code>, <code>polsby_popper</code>, <code>reock</code>, <code>holistic_compactness</code>. The partisan columns (<code>dem_votes</code> through <code>win_prob</code>) appear only when election data is loaded; <code>cut_edges</code>, <code>polsby_popper</code>, <code>reock</code>, and <code>holistic_compactness</code> only when the matching compactness data is present, and <code>counties_touched</code> only when a county column is loaded. <code>reock</code> and <code>holistic_compactness</code> here are per-district raw ratings in [0, 1] (higher = more compact), not the penalty form used in the score-history charts.</dd>
         </dl>
         <p>Both files load directly into Dave's Redistricting App via its <strong>Color Map from File</strong> feature, or join back to your shapefile in QGIS / ArcGIS using the precinct ID column.</p>
-        <h3 class="text-xl font-semibold tracking-tight mt-8">Map image (PNG)</h3>
+        <h3 class="text-xl font-semibold tracking-tight mt-8">Map image (PNG / PDF)</h3>
         <p>Two icons sit at the right end of the map-overlay row, just under the District Map panel.</p>
         <dl>
           <dt><strong>Camera icon &rarr; <code>output/map_YYYYMMDD_HHMMSS.png</code></strong></dt>
           <dd>Quick PNG of the current map. Re-rasterized at native resolution and cropped to the state's bounding box (so vertical states like Mississippi save tall, not letterboxed). Preserves whichever overlays are currently checked.</dd>
           <dt><strong>"..." (Photo Menu) icon</strong></dt>
-          <dd>Opens an export dialog for high-resolution output: optional title bar, DPI selection (96 / 144 / 192 / 288 / 384 / 576 &mdash; 288 is the default), and a "Made with Mosaic" caption strip across the bottom. The map is re-rasterized at the chosen resolution (not upscaled), border and label thicknesses scale at about half rate so high-DPI exports don't over-emphasize the lines, and a black state-edge outline is added so the boundary reads cleanly when the image is shared.</dd>
+          <dd>Opens an export dialog with an optional title bar and a "Made with Mosaic" caption strip across the bottom. Pick a <strong>Format</strong>:
+            <ul>
+              <li><strong>PNG (raster)</strong> &mdash; re-rasterized at the selected <strong>DPI</strong> (96 / 144 / 192 / 288 / 384 / 576 &mdash; 288 is the default), not upscaled. Border and label thicknesses scale at about half rate so high-DPI exports don't over-emphasize the lines, and a black state-edge outline is added so the boundary reads cleanly.</li>
+              <li><strong>PDF (vector, slower)</strong> &mdash; a true vector PDF on US Letter paper (auto portrait/landscape): precinct fills, district and county borders, and the state outline are real paths, not a raster, so it stays sharp at any zoom. The DPI setting does not apply.</li>
+            </ul>
+            <strong>Save</strong> writes a timestamped file to <code>output/</code>; <strong>Save As...</strong> opens a native file picker to choose the path (on macOS / Linux it falls back to an auto-named file in <code>output/</code>).</dd>
         </dl>
       </section>
 
