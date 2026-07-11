@@ -840,8 +840,14 @@ class UpdatesMixin:
                 self._on_new()
             elif dpg.is_key_pressed(dpg.mvKey_O):
                 self._on_import_shapefile()
-            elif dpg.is_key_pressed(dpg.mvKey_S) and can_save:
-                self._on_file_save_assignments()
+            elif dpg.is_key_pressed(dpg.mvKey_S):
+                # Gate the Save shortcut like the Save button: a result exists
+                # and no run is active (see _update_ui's can_save).
+                _status = self.state.get_all()["status"]
+                if (self.state.best_assignment is not None
+                        and _status != AlgorithmStatus.RUNNING
+                        and _status != AlgorithmStatus.PARTITIONING):
+                    self._on_file_save_assignments()
             elif dpg.is_key_pressed(dpg.mvKey_W):
                 self._on_close()
 
