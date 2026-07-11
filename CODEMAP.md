@@ -37,7 +37,7 @@ that owns a concern directly, instead of scanning. Line counts are approximate.
 | File | ~LOC | Owns |
 |------|-----:|------|
 | `score.py` | 431 | `ScoreConfig`, `PlanScore`, the score aggregator |
-| `partisan.py` | 457 | Partisan metrics (EG, MM, bias, seats, responsiveness, gini) |
+| `partisan.py` | 436 | Partisan metrics (EG, MM, bias, seats, gini) |
 | `alignment.py` | 294 | Alignment-to-reference scoring |
 | `reock.py` | 260 | Reock compactness |
 | `holistic_splitting.py` | 208 | Holistic county-congruence |

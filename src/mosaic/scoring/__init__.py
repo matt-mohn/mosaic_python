@@ -32,6 +32,8 @@ from mosaic.scoring.partisan import (
     score_efficiency_gap,
     score_dem_seats,
     score_majority_chance,
+    score_partisan_bias,
+    score_partisan_gini,
 )
 
 __all__ = [
@@ -69,4 +71,6 @@ __all__ = [
     "score_efficiency_gap",
     "score_dem_seats",
     "score_majority_chance",
+    "score_partisan_bias",
+    "score_partisan_gini",
 ]

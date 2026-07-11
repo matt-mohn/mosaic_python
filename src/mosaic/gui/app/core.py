@@ -134,7 +134,6 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         self._buf_mm        = _SeriesBuffer()
         self._buf_eg        = _SeriesBuffer()
         self._buf_pb        = _SeriesBuffer()
-        self._buf_resp      = _SeriesBuffer()
         self._buf_pg        = _SeriesBuffer()
         self._buf_seats     = _SeriesBuffer()
         self._buf_pp        = _SeriesBuffer()

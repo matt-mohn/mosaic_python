@@ -414,7 +414,7 @@
 
           <dt><strong>Competitiveness</strong></dt>
           <dd>
-            <p>Soft-Bernoulli competitiveness rating. Per-district kernel <code>1 − 4·(P_win − 0.5)²</code> rewards toss-ups; cap at 75% competitive-equivalent districts.</p>
+            <p>Soft-Bernoulli competitiveness rating. Per-district kernel <code>1 − 4·(P_win − 0.5)²</code> rewards toss-ups. Unclipped by default (Partisanship Settings): a two-segment scale that spends most of its range on the achievable competitive band and reserves the top few points for the near-impossible all-toss-up range, so the optimizer keeps a gradient. Off = clipped scorecard form that saturates once ~75% of seats are toss-ups.</p>
             <table class="meta">
               <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
               <tr><th>Direction</th><td>lower contribution is better</td></tr>

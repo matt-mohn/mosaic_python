@@ -599,7 +599,6 @@ class IOMixin:
             self.state.mm_history = []
             self.state.eg_history = []
             self.state.partisan_bias_history = []
-            self.state.responsiveness_history = []
             self.state.partisan_gini_history = []
             self.state.dem_seats_history = []
             self.state.pp_history = []

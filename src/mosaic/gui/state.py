@@ -96,6 +96,8 @@ class SharedState:
     county_unified_districts_history: list = field(default_factory=list)
     mm_history: list = field(default_factory=list)
     eg_history: list = field(default_factory=list)
+    partisan_bias_history: list = field(default_factory=list)
+    partisan_gini_history: list = field(default_factory=list)
     dem_seats_history: list = field(default_factory=list)
     pp_history: list = field(default_factory=list)
     reock_history: list = field(default_factory=list)
@@ -222,6 +224,8 @@ class SharedState:
             self.county_unified_districts_history = []
             self.mm_history = []
             self.eg_history = []
+            self.partisan_bias_history = []
+            self.partisan_gini_history = []
             self.dem_seats_history = []
             self.pp_history = []
             self.reock_history = []

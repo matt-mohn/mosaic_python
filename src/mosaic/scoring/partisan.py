@@ -359,3 +359,78 @@ def score_majority_chance(
         p_rep = 1.0 - p_dem_ge_tie
 
     return p_dem, p_rep, (1.0 - p_dem) ** 1.5 * 100.0, (1.0 - p_rep) ** 1.5 * 100.0
+
+
+# ── Seats-votes-curve metrics (Partisan Bias, Partisan Gini) ──
+# All three read the smooth expected D seat share under a uniform partisan swing:
+#   S(v) = mean_i Phi((share_i + (v - v0) - 0.5) / sigma_comb)
+# with v0 the statewide two-party D share. Same Phi/sigma model as EG-robust, so
+# they stay continuous (good for Metropolis) and consistent with the partisan
+# stack. Pure functions of the shared per-iteration data; return (raw, penalty).
+
+_GINI_BOUND: float = 0.12      # partisan-Gini area at which the penalty saturates to 100
+_GINI_GRID = np.arange(0.35, 0.6501, 0.02)   # statewide vote grid for the S-V curve
+
+
+def _statewide_dem_share(shares: np.ndarray, total_d: np.ndarray) -> float:
+    """Vote-weighted statewide two-party Dem share."""
+    tv = float(total_d.sum())
+    return float((shares * total_d).sum() / tv) if tv > 0.0 else 0.5
+
+
+def _seat_curve(shares: np.ndarray, sigma: float, deltas: np.ndarray) -> np.ndarray:
+    """Expected D seat share at each uniform swing in `deltas` (vectorized).
+
+    row j = mean_i Phi((share_i + deltas[j] - 0.5) / sigma).
+    """
+    return ndtr((shares[None, :] + deltas[:, None] - 0.5) / sigma).mean(axis=1)
+
+
+def score_partisan_bias(
+    shares: np.ndarray,
+    total_d: np.ndarray,
+    sigma_comb: float,
+    mode: str = "fair",          # "fair" | "favor_dem" | "favor_rep"
+    bound: float = 0.25,
+    quadratic_penalty: bool = False,
+) -> tuple[float, float]:
+    """Partisan bias: D seat-share surplus at a hypothetical 50/50 statewide vote.
+
+    raw = 0.5 - S(0.5); raw > 0 means the map favors R (R holds a seat majority at
+    a tied vote), raw < 0 favors D. Same fair/favor_dem/favor_rep + bound +
+    optional-square mapping as EG, so weights are comparable.
+
+    Returns (raw, penalty in [0, 100]).
+    """
+    v0 = _statewide_dem_share(shares, total_d)
+    s50 = float(_seat_curve(shares, sigma_comb, np.array([0.5 - v0]))[0])
+    raw = 0.5 - s50
+    if mode == "favor_dem":
+        d = max(0.0, min(1.0, (raw + bound) / (2.0 * bound)))
+    elif mode == "favor_rep":
+        d = max(0.0, min(1.0, (bound - raw) / (2.0 * bound)))
+    else:  # "fair"
+        d = min(1.0, abs(raw) / bound)
+    penalty = (d * d if quadratic_penalty else d) * 100.0
+    return raw, penalty
+
+
+def score_partisan_gini(
+    shares: np.ndarray,
+    total_d: np.ndarray,
+    sigma_comb: float,
+) -> tuple[float, float]:
+    """Partisan Gini: area between the S-V curve and its reflection 1 - S(1 - v).
+
+    Unsigned symmetry measure (fair-only): 0 = perfectly symmetric. Trapezoid over
+    _GINI_GRID; penalty = min(1, area / _GINI_BOUND) * 100.
+
+    Returns (area, penalty in [0, 100]).
+    """
+    v0 = _statewide_dem_share(shares, total_d)
+    s = _seat_curve(shares, sigma_comb, _GINI_GRID - v0)
+    s_refl = 1.0 - _seat_curve(shares, sigma_comb, (1.0 - _GINI_GRID) - v0)
+    diff = np.abs(s - s_refl)
+    area = float(np.sum((diff[:-1] + diff[1:]) * np.diff(_GINI_GRID)) / 2.0)
+    d = min(1.0, area / _GINI_BOUND)
+    return area, d * 100.0
