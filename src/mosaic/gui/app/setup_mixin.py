@@ -110,7 +110,6 @@ class SetupMixin:
         self._build_mm_panel()
         self._build_eg_panel()
         self._build_pb_panel()
-        self._build_resp_panel()
         self._build_pg_panel()
         self._build_dem_seats_panel()
         self._build_pp_panel()
@@ -290,12 +289,6 @@ class SetupMixin:
                             "score_row_pb", dpg.get_value(self._svis_pb),
                             self._pb_enabled, self._on_pb_toggle),
                     )
-                    self._svis_resp = dpg.add_menu_item(
-                        label="Responsiveness", check=True, default_value=False,
-                        callback=lambda: self._set_score_row_vis(
-                            "score_row_resp", dpg.get_value(self._svis_resp),
-                            self._resp_enabled, self._on_resp_toggle),
-                    )
                     self._svis_pg = dpg.add_menu_item(
                         label="Partisan Gini", check=True, default_value=False,
                         callback=lambda: self._set_score_row_vis(
@@ -386,10 +379,6 @@ class SetupMixin:
                     self._panel_pb_item = dpg.add_menu_item(
                         label="Partisan Bias", check=True, default_value=False,
                         callback=self._on_panel_pb_toggle,
-                    )
-                    self._panel_resp_item = dpg.add_menu_item(
-                        label="Responsiveness", check=True, default_value=False,
-                        callback=self._on_panel_resp_toggle,
                     )
                     self._panel_pg_item = dpg.add_menu_item(
                         label="Partisan Gini", check=True, default_value=False,
@@ -1122,27 +1111,6 @@ class SetupMixin:
                                 self._pb_dir = dpg.add_radio_button(
                                     items=["Fair", "D", "R"],
                                     default_value="Fair", horizontal=True,
-                                )
-                            dpg.add_spacer(height=4)
-
-                        with dpg.group(tag="score_row_resp", show=False):
-                            with dpg.group(horizontal=True):
-                                self._resp_enabled = dpg.add_checkbox(
-                                    default_value=False, enabled=False,
-                                    callback=self._on_resp_toggle,
-                                )
-                                self._resp_lbl = self.theme.text(
-                                    "Responsiveness",
-                                    "disabled_deep",
-                                )
-                                self._hint(self._resp_lbl, "responsiveness")
-                                dpg.add_button(label="↗", width=24,
-                                    callback=lambda: self._show_panel("panel_resp", self._panel_resp_item))
-                            with dpg.group(tag="resp_controls", show=False):
-                                self._w_responsiveness = dpg.add_slider_int(
-                                    label="Weight",
-                                    default_value=25, min_value=0, max_value=100,
-                                    width=_SCORE_COL_W - 100,
                                 )
                             dpg.add_spacer(height=4)
 

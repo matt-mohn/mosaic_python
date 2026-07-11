@@ -40,7 +40,6 @@ class RunnerMixin:
             self.state.mm_history               = self.state.mm_history[:n_score]
             self.state.eg_history               = self.state.eg_history[:n_score]
             self.state.partisan_bias_history    = self.state.partisan_bias_history[:n_score]
-            self.state.responsiveness_history   = self.state.responsiveness_history[:n_score]
             self.state.partisan_gini_history    = self.state.partisan_gini_history[:n_score]
             self.state.dem_seats_history        = self.state.dem_seats_history[:n_score]
             self.state.pp_history               = self.state.pp_history[:n_score]
@@ -161,7 +160,6 @@ class RunnerMixin:
         mm_on      = dpg.get_value(self._mm_enabled)
         eg_on      = dpg.get_value(self._eg_enabled)
         pb_on      = dpg.get_value(self._pb_enabled)
-        resp_on    = dpg.get_value(self._resp_enabled)
         pg_on      = dpg.get_value(self._pg_enabled)
         seats_on   = dpg.get_value(self._seats_enabled)
         maj_on     = dpg.get_value(self._majority_enabled)
@@ -225,12 +223,12 @@ class RunnerMixin:
             weight_partisan_bias=dpg.get_value(self._w_partisan_bias) if pb_on else 0.0,
             pbias_mode=_DIR_TO_MODE[dpg.get_value(self._pb_dir)],
             pbias_bound=dpg.get_value(self._pbias_bound),
-            weight_responsiveness=dpg.get_value(self._w_responsiveness) if resp_on else 0.0,
             weight_partisan_gini=dpg.get_value(self._w_partisan_gini) if pg_on else 0.0,
             weight_dem_seats=dpg.get_value(self._w_dem_seats) if seats_on else 0.0,
             dem_seats_favor_dem=(dpg.get_value(self._dem_seats_dir) == "D"),
             weight_holistic_proportionality=w_hprop,
             weight_holistic_competitiveness=w_hcmp,
+            competitiveness_unclipped=dpg.get_value(self._comp_unclipped),
             weight_majority_chance_dem=(dpg.get_value(self._w_majority)
                                         if maj_on and dpg.get_value(self._majority_dem_chk)
                                         else 0.0),
@@ -304,7 +302,6 @@ class RunnerMixin:
             self.state.mm_history = []
             self.state.eg_history = []
             self.state.partisan_bias_history = []
-            self.state.responsiveness_history = []
             self.state.partisan_gini_history = []
             self.state.dem_seats_history = []
             self.state.pp_history = []

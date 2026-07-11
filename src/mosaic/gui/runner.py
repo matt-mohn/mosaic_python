@@ -119,6 +119,10 @@ def _build_score_breakdown(ps, cfg) -> dict:
              _mm_eg_pen(ps.efficiency_gap, cfg.eg_mode, cfg.eg_bound))
     if cfg.weight_dem_seats:
         _add("Dem Seats", cfg.weight_dem_seats * ps.dem_seats_penalty)
+    if cfg.weight_partisan_bias:
+        _add("Partisan Bias", cfg.weight_partisan_bias *
+             _mm_eg_pen(ps.partisan_bias, cfg.pbias_mode, cfg.pbias_bound))
+    _add("Partisan Gini", cfg.weight_partisan_gini * ps.partisan_gini)
     _add("Proportionality",
          cfg.weight_holistic_proportionality * ps.holistic_proportionality)
     _add("Competitiveness",
@@ -550,6 +554,8 @@ class AlgorithmRunner:
                 self.state.county_unified_districts_history.append(current_ps.county_unified_districts)
                 self.state.mm_history.append(current_ps.mean_median)
                 self.state.eg_history.append(current_ps.efficiency_gap)
+                self.state.partisan_bias_history.append(current_ps.partisan_bias)
+                self.state.partisan_gini_history.append(current_ps.partisan_gini)
                 self.state.dem_seats_history.append(current_ps.dem_seats)
                 self.state.pp_history.append(1.0 - current_ps.polsby_popper / 100.0)
                 self.state.reock_history.append(1.0 - current_ps.reock / 100.0)
@@ -740,6 +746,8 @@ class AlgorithmRunner:
                     self.state.county_unified_districts_history.append(current_ps.county_unified_districts)
                     self.state.mm_history.append(current_ps.mean_median)
                     self.state.eg_history.append(current_ps.efficiency_gap)
+                    self.state.partisan_bias_history.append(current_ps.partisan_bias)
+                    self.state.partisan_gini_history.append(current_ps.partisan_gini)
                     self.state.dem_seats_history.append(current_ps.dem_seats)
                     self.state.pp_history.append(1.0 - current_ps.polsby_popper / 100.0)
                     self.state.reock_history.append(1.0 - current_ps.reock / 100.0)

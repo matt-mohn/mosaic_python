@@ -5,14 +5,18 @@ Per-district soft competitiveness = 1 - 4 * (P_win - 0.5)**2:
   P_win = 0.5      -> kernel = 1.0   (perfect toss-up)
   P_win in {0, 1}  -> kernel = 0     (locked seat)
 
-Fraction of competitive-equivalent districts cDf = mean(kernel) is clipped to
-[0, 0.75] and linearly mapped to a rating. The 0.75 cap reflects that real
-plans rarely exceed 75% truly competitive districts; above that the curve
-saturates.
+The competitive-equivalent fraction cDf = mean(kernel) maps to a rating two ways:
 
-Coexists with the linear Competitiveness score: same sigma, different kernel
-shape. Both rank "all P=0.5" as best and "all P=0/1" as worst, so they never
-disagree at the extremes; they weigh the middle ground differently.
+  - unclipped (DEFAULT): a two-segment line with a knee at cDf = _KNEE. The
+    achievable range [0, _KNEE] spends _KNEE_LOW of the scale (penalty 100 -> 5);
+    the remaining [_KNEE, 1] spends the last 5% (penalty 5 -> 0). No realistic map
+    bottoms out at 0, and the top few points are reserved for the (near-impossible)
+    all-toss-up range, so the optimizer keeps a gradient throughout.
+
+  - clipped (scorecard form): cDf clipped to [0, _CLIP_BEST] and linearly mapped;
+    cDf >= _CLIP_BEST saturates at 0 penalty.
+
+Both rank "all P=0.5" as best and "all P=0/1" as worst.
 """
 
 from __future__ import annotations
@@ -21,14 +25,21 @@ import numpy as np
 from scipy.special import ndtr
 
 
-_CLIP_BEST = 0.75  # cDf >= 0.75 saturates at 0 penalty
+_CLIP_BEST = 0.75   # clipped form: cDf >= this saturates at 0 penalty
+_KNEE      = 0.50   # unclipped form: knee cDf (achievable range below, reserve above)
+_KNEE_LOW  = 0.95   # unclipped form: fraction of the rating spent reaching the knee
 
 
 def holistic_competitiveness_from_shares(
     shares: np.ndarray,
     sigma_comb: float,
+    unclipped: bool = True,
 ) -> tuple[float, float]:
     """
+    Args:
+        unclipped: if True (default), two-segment knee mapping (keeps a gradient
+                   above the knee); if False, the clipped scorecard form.
+
     Returns:
         cDf     -- soft competitive-equivalent fraction (display, in [0, 1])
         penalty -- [0, 100] (lower = more competitive)
@@ -44,6 +55,13 @@ def holistic_competitiveness_from_shares(
     kernel = 1.0 - 4.0 * (p_wins - 0.5) ** 2
     cdf_val = float(kernel.mean())
 
-    cdf_clipped = max(0.0, min(_CLIP_BEST, cdf_val))
-    rating = cdf_clipped / _CLIP_BEST * 100.0
+    c = max(0.0, min(1.0, cdf_val))
+    if unclipped:
+        if c <= _KNEE:
+            rating = c / _KNEE * (_KNEE_LOW * 100.0)
+        else:
+            rating = (_KNEE_LOW * 100.0
+                      + (c - _KNEE) / (1.0 - _KNEE) * ((1.0 - _KNEE_LOW) * 100.0))
+    else:
+        rating = min(_CLIP_BEST, c) / _CLIP_BEST * 100.0
     return cdf_val, 100.0 - rating

@@ -335,7 +335,7 @@ class PopupsMixin:
 
     def _build_partisan_popup(self):
         with self._dialog(
-            "Partisanship Settings", "popup_partisan", (460, 320),
+            "Partisanship Settings", "popup_partisan", (460, 420),
             show=False,
             secondary=("Close",
                        lambda: dpg.configure_item("popup_partisan", show=False)),
@@ -422,6 +422,20 @@ class PopupsMixin:
             self._tooltip(
                 self._pbias_bound,
                 "Partisan Bias penalty reaches 100 at this |raw| seat-tilt, then saturates.",
+            )
+            dpg.add_spacer(height=10)
+            dpg.add_separator()
+            dpg.add_spacer(height=6)
+            self.theme.text("Competitiveness", "heading")
+            self._comp_unclipped = dpg.add_checkbox(
+                label="Unclipped Competitiveness", default_value=True,
+            )
+            self._tooltip(
+                self._comp_unclipped,
+                "Two-segment knee mapping: the achievable competitive range spends most "
+                "of the penalty scale and reserves the top few points for the near-"
+                "impossible all-toss-up range, so the optimizer keeps a gradient. Off = "
+                "clipped scorecard form (saturates once ~75% of seats are toss-ups).",
             )
 
     def _build_help_popup(self):

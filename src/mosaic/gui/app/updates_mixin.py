@@ -483,7 +483,6 @@ class UpdatesMixin:
             _md   = list(self.state.mm_history[self._buf_mm.read:])
             _ed   = list(self.state.eg_history[self._buf_eg.read:])
             _pbd  = list(self.state.partisan_bias_history[self._buf_pb.read:])
-            _respd = list(self.state.responsiveness_history[self._buf_resp.read:])
             _pgd  = list(self.state.partisan_gini_history[self._buf_pg.read:])
             _sed  = list(self.state.dem_seats_history[self._buf_seats.read:])
             _pd   = list(self.state.pp_history[self._buf_pp.read:])
@@ -511,7 +510,6 @@ class UpdatesMixin:
         self._buf_mm.add(_md)
         self._buf_eg.add(_ed)
         self._buf_pb.add(_pbd)
-        self._buf_resp.add(_respd)
         self._buf_pg.add(_pgd)
         self._buf_seats.add(_sed)
         self._buf_pp.add([v * 100.0 for v in _pd])
@@ -631,11 +629,6 @@ class UpdatesMixin:
             dpg.configure_item("pb_inactive_lbl", show=not self._has_elections)
             if self._has_elections:
                 _render(self._buf_pb, "pb_series", "pb_x", "pb_y")
-        if dpg.is_item_shown("panel_resp"):
-            dpg.configure_item("resp_plot_grp",     show=self._has_elections)
-            dpg.configure_item("resp_inactive_lbl", show=not self._has_elections)
-            if self._has_elections:
-                _render(self._buf_resp, "resp_series", "resp_x", "resp_y", fit_y=False)
         if dpg.is_item_shown("panel_pg"):
             dpg.configure_item("pg_plot_grp",     show=self._has_elections)
             dpg.configure_item("pg_inactive_lbl", show=not self._has_elections)
@@ -857,7 +850,7 @@ class UpdatesMixin:
             self._buf_score, self._buf_acc, self._buf_temp,
             self._buf_cs_score, self._buf_cs_excess, self._buf_cs_clean,
             self._buf_mm, self._buf_eg, self._buf_seats,
-            self._buf_pb, self._buf_resp, self._buf_pg,
+            self._buf_pb, self._buf_pg,
             self._buf_pp, self._buf_reock, self._buf_hc,
             self._buf_hsplit, self._buf_hprop, self._buf_hcmp,
             self._buf_popdev,
@@ -871,7 +864,7 @@ class UpdatesMixin:
             "score_series", "acc_series", "panel_temp_series",
             "cs_excess_series", "cs_clean_series",
             "mm_series", "eg_series", "seats_series",
-            "pb_series", "resp_series", "pg_series",
+            "pb_series", "pg_series",
             "pp_series", "reock_series",
             "popdev_max_series", "popdev_mean_series", "cuts_series",
             "alignment_mean_series", "alignment_min_series",
@@ -884,7 +877,7 @@ class UpdatesMixin:
             "cs_excess_x", "cs_excess_y",
             "cs_clean_x", "cs_clean_y",
             "mm_x", "mm_y", "eg_x", "eg_y",
-            "pb_x", "pb_y", "resp_x", "resp_y", "pg_x", "pg_y",
+            "pb_x", "pb_y", "pg_x", "pg_y",
             "seats_x", "seats_y",
             "pp_x", "pp_y", "popdev_x", "popdev_y", "cuts_x", "cuts_y",
             "alignment_x", "alignment_y",
@@ -900,7 +893,6 @@ class UpdatesMixin:
         dpg.set_axis_limits("hinge_y",  0.0, 100.0)
         dpg.set_axis_limits("popdev_y", 0.0, 5.0)
         dpg.set_axis_limits("alignment_y", 0.0, 100.0)
-        dpg.set_axis_limits("resp_y", 0.0, 100.0)
         dpg.set_axis_limits("pg_y", 0.0, 100.0)
         for s in self._partisan_bar_series:
             dpg.set_value(s, empty)
@@ -985,7 +977,6 @@ class UpdatesMixin:
             (self._mm_enabled,       self._mm_lbl),
             (self._eg_enabled,       self._eg_lbl),
             (self._pb_enabled,       self._pb_lbl),
-            (self._resp_enabled,     self._resp_lbl),
             (self._pg_enabled,       self._pg_lbl),
             (self._hprop_enabled,    self._hprop_lbl),
             (self._hcmp_enabled,     self._hcmp_lbl),
@@ -1000,7 +991,6 @@ class UpdatesMixin:
                 (self._mm_enabled,       "mm_controls"),
                 (self._eg_enabled,       "eg_controls"),
                 (self._pb_enabled,       "pb_controls"),
-                (self._resp_enabled,     "resp_controls"),
                 (self._pg_enabled,       "pg_controls"),
                 (self._hprop_enabled,    "hprop_controls"),
                 (self._hcmp_enabled,     "hcmp_controls"),
@@ -1017,7 +1007,6 @@ class UpdatesMixin:
             (self._panel_mm_item,         "panel_mm"),
             (self._panel_eg_item,         "panel_eg"),
             (self._panel_pb_item,         "panel_pb"),
-            (self._panel_resp_item,       "panel_resp"),
             (self._panel_pg_item,         "panel_pg"),
             (self._panel_hprop_item,      "panel_hprop"),
             (self._panel_seats_item,      "panel_dem_seats"),

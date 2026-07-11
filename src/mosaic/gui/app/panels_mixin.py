@@ -402,28 +402,6 @@ class PanelsMixin:
                 "muted",
             )
 
-    def _build_resp_panel(self):
-        with dpg.window(
-            label="Responsiveness", tag="panel_resp",
-            show=False, width=500, height=280,
-            pos=[_LEFT_W + 80, 80],
-            on_close=lambda: dpg.set_value(self._panel_resp_item, False),
-        ):
-            with dpg.group(tag="resp_plot_grp"):
-                with dpg.plot(height=-1, width=-1, no_menus=True):
-                    dpg.add_plot_legend()
-                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="resp_x")
-                    with dpg.plot_axis(dpg.mvYAxis, label="Penalty (0 = best)", tag="resp_y"):
-                        dpg.add_line_series([], [], label="Responsiveness", tag="resp_series")
-            self.theme.track(
-                dpg.add_text(
-                    "Load election data to use this panel.",
-                    tag="resp_inactive_lbl", show=False,
-                ),
-                "muted",
-            )
-        dpg.set_axis_limits("resp_y", 0.0, 100.0)
-
     def _build_pg_panel(self):
         with dpg.window(
             label="Partisan Gini", tag="panel_pg",

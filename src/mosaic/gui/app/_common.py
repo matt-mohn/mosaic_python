@@ -75,7 +75,6 @@ _PHASE_METRICS: list[tuple[str, str, str]] = [
     ("Efficiency Gap (abs)", "eg_history",                        "abs"),
     ("Partisan Bias",        "partisan_bias_history",             "raw"),
     ("Partisan Bias (abs)",  "partisan_bias_history",             "abs"),
-    ("Responsiveness",       "responsiveness_history",            "raw"),
     ("Partisan Gini",        "partisan_gini_history",             "raw"),
     ("Mean-Median",          "mm_history",                        "raw"),
     ("Mean-Median (abs)",    "mm_history",                        "abs"),
@@ -271,7 +270,6 @@ _CONTRIB_BAR_METRICS = [
     ("Mean-Median",     "MM",     (240, 140, 60,  220)),
     ("Efficiency Gap",  "EG",     (225, 75,  75,  220)),
     ("Partisan Bias",   "P.Bias", (235, 110, 110, 220)),
-    ("Responsiveness",  "Resp",   (110, 180, 235, 220)),
     ("Partisan Gini",   "Gini",   (200, 120, 160, 220)),
     ("Dem Seats",       "Seats",  (180, 80,  220, 220)),
     ("D Majority",      "D Maj",  (70,  130, 210, 220)),
@@ -394,10 +392,6 @@ _HINTS: dict[str, str] = {
     "partisan_bias": (
         "Seat-share tilt at a hypothetical 50/50 statewide vote (uniform swing). "
         "0 = symmetric; sign shows which party would hold the seat majority at a tie."
-    ),
-    "responsiveness": (
-        "Slope of the seats-votes curve near 50/50: how sharply seats respond to "
-        "vote swings. Low = a locked-in map; higher = more competitive."
     ),
     "partisan_gini": (
         "Area between the seats-votes curve and its mirror image. Unsigned "

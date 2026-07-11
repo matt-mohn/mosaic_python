@@ -35,6 +35,7 @@ from mosaic.scoring.partisan import (
     score_mean_median, score_efficiency_gap,
     score_dem_seats,
     score_majority_chance, score_hinge_chance,
+    score_partisan_bias, score_partisan_gini,
 )
 
 
@@ -64,10 +65,15 @@ class ScoreConfig:
     eg_bound: float = 0.35
     use_robust_eg: bool = True
     partisan_quadratic_penalty: bool = False   # advanced toggle in Partisanship Settings popup
+    weight_partisan_bias: float = 0.0
+    pbias_mode: str = "fair"            # "fair" | "favor_dem" | "favor_rep"
+    pbias_bound: float = 0.25
+    weight_partisan_gini: float = 0.0   # fair-only (bound is a module constant)
     weight_dem_seats: float = 0.0
     dem_seats_favor_dem: bool = True   # True = optimize toward more D seats, False = more R
     weight_holistic_proportionality: float = 0.0
     weight_holistic_competitiveness: float = 0.0
+    competitiveness_unclipped: bool = True   # two-segment knee form (annealing gradient)
     weight_majority_chance_dem: float = 0.0
     weight_majority_chance_rep: float = 0.0
     election_win_prob_at_55: float = 0.9
@@ -103,6 +109,8 @@ class PlanScore:
     dem_seats_penalty: float = 0.0     # directional linear [0, 100] penalty (lower = better)
     holistic_proportionality: float = 0.0  # [0, 100] penalty (lower = more proportional)
     holistic_competitiveness: float = 0.0  # [0, 100] penalty (lower = more competitive)
+    partisan_bias: float = 0.0             # raw: 0.5 - D seat share at a tied vote (+ = pro-R)
+    partisan_gini: float = 0.0             # [0, 100] penalty (lower = more symmetric)
     majority_chance_dem: float = 0.0   # P(Dems win >= ceil(n/2) districts)
     majority_chance_rep: float = 0.0   # 1 - majority_chance_dem
     hinge_chance: float = 0.0          # P(selected party wins >= hinge_threshold)
@@ -149,6 +157,8 @@ def score_plan(
     mm_raw = eg_raw = seats_raw = 0.0
     seats_penalty = 0.0
     hprop_pen = hcmp_pen = 0.0
+    bias_raw = 0.0
+    gini_pen = 0.0
     maj_d_raw = maj_r_raw = hinge_raw = 0.0
 
     # excess/unified county scorers and holistic_splitting all need the same
@@ -321,10 +331,24 @@ def score_plan(
             total += config.weight_holistic_proportionality * hprop_pen
 
         _, hcmp_pen = holistic_competitiveness_from_shares(
-            _shares, _sigma_comb,
+            _shares, _sigma_comb, unclipped=config.competitiveness_unclipped,
         )
         if config.weight_holistic_competitiveness:
             total += config.weight_holistic_competitiveness * hcmp_pen
+
+        # Seats-votes-curve fairness metrics (all reuse _shares/_total_d/_sigma_comb).
+        bias_raw, bias_pen = score_partisan_bias(
+            _shares, _total_d, _sigma_comb,
+            mode=config.pbias_mode,
+            bound=config.pbias_bound,
+            quadratic_penalty=config.partisan_quadratic_penalty,
+        )
+        if config.weight_partisan_bias:
+            total += config.weight_partisan_bias * bias_pen
+
+        _, gini_pen = score_partisan_gini(_shares, _total_d, _sigma_comb)
+        if config.weight_partisan_gini:
+            total += config.weight_partisan_gini * gini_pen
 
         maj_d_raw, maj_r_raw, maj_d_pen, maj_r_pen = score_majority_chance(
             assignment, dem_votes, gop_votes, n_districts,
@@ -393,6 +417,8 @@ def score_plan(
         dem_seats_penalty=seats_penalty,
         holistic_proportionality=hprop_pen,
         holistic_competitiveness=hcmp_pen,
+        partisan_bias=bias_raw,
+        partisan_gini=gini_pen,
         majority_chance_dem=maj_d_raw,
         majority_chance_rep=maj_r_raw,
         hinge_chance=hinge_raw,

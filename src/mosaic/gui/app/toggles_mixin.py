@@ -112,12 +112,6 @@ class TogglesMixin:
                            "accent_green" if en else "disabled")
         dpg.configure_item("pb_controls", show=en)
 
-    def _on_resp_toggle(self):
-        en = dpg.get_value(self._resp_enabled)
-        self.theme.retoken(self._resp_lbl,
-                           "accent_green" if en else "disabled")
-        dpg.configure_item("resp_controls", show=en)
-
     def _on_pg_toggle(self):
         en = dpg.get_value(self._pg_enabled)
         self.theme.retoken(self._pg_lbl,
@@ -216,9 +210,6 @@ class TogglesMixin:
 
     def _on_panel_pb_toggle(self):
         dpg.configure_item("panel_pb", show=dpg.get_value(self._panel_pb_item))
-
-    def _on_panel_resp_toggle(self):
-        dpg.configure_item("panel_resp", show=dpg.get_value(self._panel_resp_item))
 
     def _on_panel_pg_toggle(self):
         dpg.configure_item("panel_pg", show=dpg.get_value(self._panel_pg_item))

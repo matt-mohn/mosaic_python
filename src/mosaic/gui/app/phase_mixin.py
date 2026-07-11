@@ -185,7 +185,7 @@ class PhaseMixin:
             # Always computed from the election data -> available with elections.
             active.update((
                 "mm_history", "eg_history", "dem_seats_history",
-                "partisan_bias_history", "responsiveness_history",
+                "partisan_bias_history",
                 "partisan_gini_history",
                 "holistic_proportionality_history",
                 "holistic_competitiveness_history",
