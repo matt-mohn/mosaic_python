@@ -614,6 +614,7 @@ class IOMixin:
             self.state.majority_dem_history = []
             self.state.majority_rep_history = []
             self.state.hinge_history = []
+            self.state.inversion_history = []
         self._clear_all_series()
         dpg.set_value(self._shp_info, "Building graph...")
         self.theme.retoken(self._shp_info, "muted")

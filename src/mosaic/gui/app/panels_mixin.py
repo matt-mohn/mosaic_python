@@ -342,9 +342,11 @@ class PanelsMixin:
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="hprop_x")
                     with dpg.plot_axis(dpg.mvYAxis, label="Proportionality (100 = best)", tag="hprop_y"):
                         dpg.add_line_series([], [], label="Proportionality", tag="hprop_series")
+                        dpg.add_line_series([], [], label="Inversion Risk", tag="hprop_inversion_series")
             self._tooltip(
                 "hprop_plot_grp",
-                "Bias-from-proportional rating; higher = closer to proportional.",
+                "Proportionality rating (higher = closer to proportional), and "
+                "Inversion Risk: the chance the popular-vote loser controls the chamber.",
             )
             self.theme.track(
                 dpg.add_text(

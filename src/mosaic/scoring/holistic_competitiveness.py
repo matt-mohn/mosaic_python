@@ -7,11 +7,11 @@ Per-district soft competitiveness = 1 - 4 * (P_win - 0.5)**2:
 
 The competitive-equivalent fraction cDf = mean(kernel) maps to a rating two ways:
 
-  - unclipped (DEFAULT): a two-segment line with a knee at cDf = _KNEE. The
-    achievable range [0, _KNEE] spends _KNEE_LOW of the scale (penalty 100 -> 5);
-    the remaining [_KNEE, 1] spends the last 5% (penalty 5 -> 0). No realistic map
-    bottoms out at 0, and the top few points are reserved for the (near-impossible)
-    all-toss-up range, so the optimizer keeps a gradient throughout.
+  - unclipped (DEFAULT): ride the clipped slope down to penalty _DIVERGE_PEN, then a
+    power ease-out that curves to a flat (slope-0) landing at cDf = 1. _UNCLIP_EXP is
+    chosen so the tail leaves the divergence point at the clipped slope (no kink), so
+    unclipped tracks the scorecard down to penalty _DIVERGE_PEN and then keeps a
+    gradient across the top end where clipped saturates at 0.
 
   - clipped (scorecard form): cDf clipped to [0, _CLIP_BEST] and linearly mapped;
     cDf >= _CLIP_BEST saturates at 0 penalty.
@@ -25,9 +25,13 @@ import numpy as np
 from scipy.special import ndtr
 
 
-_CLIP_BEST = 0.75   # clipped form: cDf >= this saturates at 0 penalty
-_KNEE      = 0.50   # unclipped form: knee cDf (achievable range below, reserve above)
-_KNEE_LOW  = 0.95   # unclipped form: fraction of the rating spent reaching the knee
+_CLIP_BEST   = 0.75   # clipped form: cDf >= this saturates at 0 penalty
+# Unclipped: ride the clipped slope to penalty _DIVERGE_PEN, then a power ease-out
+# curving to a flat (slope-0) landing at cDf = 1. _UNCLIP_EXP is derived so the tail
+# leaves the divergence point at the clipped slope -- no kink at the knee.
+_DIVERGE_PEN = 25.0   # penalty where unclipped peels off clipped
+_UNCLIP_KNEE = _CLIP_BEST * (1.0 - _DIVERGE_PEN / 100.0)   # cDf at the divergence (0.5625)
+_UNCLIP_EXP  = (100.0 / _CLIP_BEST) * (1.0 - _UNCLIP_KNEE) / _DIVERGE_PEN   # tail exp (~2.33)
 
 
 def holistic_competitiveness_from_shares(
@@ -37,8 +41,9 @@ def holistic_competitiveness_from_shares(
 ) -> tuple[float, float]:
     """
     Args:
-        unclipped: if True (default), two-segment knee mapping (keeps a gradient
-                   above the knee); if False, the clipped scorecard form.
+        unclipped: if True (default), ride the clipped slope to penalty _DIVERGE_PEN
+                   then a flat-landing ease-out (keeps a gradient where clipped
+                   saturates); if False, the clipped scorecard form.
 
     Returns:
         cDf     -- soft competitive-equivalent fraction (display, in [0, 1])
@@ -57,11 +62,11 @@ def holistic_competitiveness_from_shares(
 
     c = max(0.0, min(1.0, cdf_val))
     if unclipped:
-        if c <= _KNEE:
-            rating = c / _KNEE * (_KNEE_LOW * 100.0)
+        if c <= _UNCLIP_KNEE:
+            rating = c / _CLIP_BEST * 100.0            # rides the clipped slope
         else:
-            rating = (_KNEE_LOW * 100.0
-                      + (c - _KNEE) / (1.0 - _KNEE) * ((1.0 - _KNEE_LOW) * 100.0))
+            u = (1.0 - c) / (1.0 - _UNCLIP_KNEE)       # 1 at the knee -> 0 at cDf = 1
+            rating = 100.0 - _DIVERGE_PEN * u ** _UNCLIP_EXP   # ease-out: flat at cDf = 1
     else:
         rating = min(_CLIP_BEST, c) / _CLIP_BEST * 100.0
     return cdf_val, 100.0 - rating

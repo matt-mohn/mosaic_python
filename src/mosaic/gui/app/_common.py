@@ -80,6 +80,7 @@ _PHASE_METRICS: list[tuple[str, str, str]] = [
     ("Mean-Median (abs)",    "mm_history",                        "abs"),
     ("Expected Dem Seats",   "dem_seats_history",                 "raw"),
     ("Proportionality",      "holistic_proportionality_history",  "rating"),
+    ("Inversion Risk",       "inversion_history",                 "x100"),
     ("Competitiveness",      "holistic_competitiveness_history",  "rating"),
     ("Dem Majority",         "majority_dem_history",              "x100"),
     ("Rep Majority",         "majority_rep_history",              "x100"),
@@ -101,6 +102,7 @@ _PHASE_AXIS_UNIT = {
     "Dem Majority":       "(%)",
     "Rep Majority":       "(%)",
     "Hinge":              "(%)",
+    "Inversion Risk":     "(%)",
 }
 
 # Recency ramps (old -> hot). Dark = magma (bright-on-black); light = mako

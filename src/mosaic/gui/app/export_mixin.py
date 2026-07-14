@@ -13,6 +13,12 @@ from ._common import (
     threading,
 )
 
+# Exports always render on white with dark text, regardless of the app theme.
+_EXPORT_BG = (255, 255, 255, 255)
+_EXPORT_FG = (28, 30, 34, 255)
+# Splits view dims un-split counties; on the white page they recede to light grey.
+_EXPORT_SPLITS_DIM = (230, 232, 236, 255)
+
 
 class ExportMixin:
     """CSV/metric export and map image save (PNG/PDF workers)."""
@@ -200,7 +206,8 @@ class ExportMixin:
             h = long_edge
             w = max(1, int(round(long_edge * gw / gh)))
         offscreen = MapView(texture_tag="__offscreen", draw_w=w, draw_h=h)
-        offscreen._bg_color = src._bg_color.copy()
+        offscreen._bg_color = np.array(_EXPORT_BG, dtype=np.uint8)
+        offscreen._splits_dim = np.array(_EXPORT_SPLITS_DIM, dtype=np.uint8)
         for flag in ("county_overlay", "partisan_overlay",
                      "district_partisan_overlay", "splits_view",
                      "compactness_view", "pop_dev_view", "show_labels",
@@ -469,7 +476,7 @@ class ExportMixin:
             gh = max(by1 - by0, 1e-9)
             map_ratio = gw / gh
 
-            br, bg_c, bb, _ = self.theme.color("child_bg")
+            br, bg_c, bb, _ = _EXPORT_BG
             bg_mpl = (br / 255.0, bg_c / 255.0, bb / 255.0)
 
             # ── Page layout: US Letter, fixed-inch title/caption bands ────────
@@ -621,7 +628,8 @@ class ExportMixin:
                 co_di = (np.bincount(flt, minlength=nct * n_dist)
                            .reshape(nct, n_dist))
                 county_clean = (co_di > 0).sum(axis=1) <= 1
-                dim_c = (28 / 255, 28 / 255, 28 / 255)
+                dim_c = (_EXPORT_SPLITS_DIM[0] / 255, _EXPORT_SPLITS_DIM[1] / 255,
+                         _EXPORT_SPLITS_DIM[2] / 255)
                 dim_patches = []
                 for ci_idx in range(nct):
                     if county_clean[ci_idx] and ci_idx in cty_geoms.index:
@@ -722,14 +730,14 @@ class ExportMixin:
 
             # ── Title (50% width, centered in the top band) ───────────────────
             if title:
-                body_r, body_g, body_b, _ = self.theme.color("body")
+                body_r, body_g, body_b, _ = _EXPORT_FG
                 fig.text(title_x, title_y, title,
                          ha="center", va="center",
                          fontsize=14, fontweight="bold",
                          color=(body_r / 255, body_g / 255, body_b / 255))
 
             # ── Caption (80% width, centered in the bottom band) ──────────────
-            cap_r, cap_g, cap_b, _ = self.theme.color("body")
+            cap_r, cap_g, cap_b, _ = _EXPORT_FG
             fig.text(cap_x, cap_y, "Made with Mosaic",
                      ha="center", va="center", fontsize=7,
                      color=(cap_r / 255, cap_g / 255, cap_b / 255))
@@ -765,7 +773,7 @@ class ExportMixin:
             img = Image.fromarray(rgba, mode="RGBA")
             font_path = _ASSETS_DIR / "fonts" / "inter" / "Inter-SemiBold.ttf"
 
-            br, bg, bb, _ = self.theme.color("child_bg")
+            br, bg, bb, _ = _EXPORT_BG
 
             cap_size       = max(10, int(11 * scale))
             cap_margin     = max(8,  int(12 * scale))
@@ -778,7 +786,7 @@ class ExportMixin:
             top_strip_h = 0
             title_font  = None
             if title:
-                r, g, b, _ = self.theme.color("body")
+                r, g, b, _ = _EXPORT_FG
                 top_strip_h = max(28, int(36 * scale))
                 font_size   = max(14, int(18 * scale))
                 try:
@@ -798,7 +806,7 @@ class ExportMixin:
                     (img.width // 2, top_strip_h // 2), title,
                     fill=(r, g, b, 255), font=title_font, anchor="mm",
                 )
-            cap_r, cap_g, cap_b, _ = self.theme.color("body")
+            cap_r, cap_g, cap_b, _ = _EXPORT_FG
             draw.text(
                 (new_img.width - cap_margin, new_img.height - cap_margin),
                 "Made with Mosaic",

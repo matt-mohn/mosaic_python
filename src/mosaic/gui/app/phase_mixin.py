@@ -188,6 +188,7 @@ class PhaseMixin:
                 "partisan_bias_history",
                 "partisan_gini_history",
                 "holistic_proportionality_history",
+                "inversion_history",
                 "holistic_competitiveness_history",
                 "majority_dem_history", "majority_rep_history",
             ))
@@ -281,20 +282,28 @@ class PhaseMixin:
     def _phase_fit_axes(self, xs, ys, ages, hx: float, hy: float) -> None:
         """Axis limits with margin. 'Fit all' holds sticky total bounds that only
         ever grow, so the view never jitters or shrinks mid-run; 'Follow dot'
-        fits the last _PHASE_FOLLOW iterations. The live dot always stays inside."""
-        def _pad(lo, hi):
+        fits the last _PHASE_FOLLOW iterations. The live dot always stays inside.
+        abs metrics anchor the axis floor at 0 (0 = perfectly fair)."""
+        def _pad(lo, hi, floor0=False):
             lo, hi = min(lo, hi), max(lo, hi)
+            if floor0:
+                # 0 is the hard floor; keep min-span breathing room but grow it
+                # upward from 0 instead of centering (which would dip below 0).
+                hi = max(hi, _PHASE_MIN_SPAN)
+                return 0.0, hi + hi * 0.08
             if hi - lo < _PHASE_MIN_SPAN:      # floor tiny ranges (Follow dot zoom)
                 c = 0.5 * (lo + hi)
                 lo, hi = c - _PHASE_MIN_SPAN / 2, c + _PHASE_MIN_SPAN / 2
             pad = (hi - lo) * 0.08
             return lo - pad, hi + pad
 
+        fx = _PHASE_KIND[self._phase_x_label] == "abs"
+        fy = _PHASE_KIND[self._phase_y_label] == "abs"
         if not self._phase_fit_all:
             m = ages <= _PHASE_FOLLOW
             xv, yv = xs[m], ys[m]
-            xlo, xhi = _pad(min(float(xv.min()), hx), max(float(xv.max()), hx))
-            ylo, yhi = _pad(min(float(yv.min()), hy), max(float(yv.max()), hy))
+            xlo, xhi = _pad(min(float(xv.min()), hx), max(float(xv.max()), hx), fx)
+            ylo, yhi = _pad(min(float(yv.min()), hy), max(float(yv.max()), hy), fy)
         else:
             dxlo, dxhi = min(float(xs.min()), hx), max(float(xs.max()), hx)
             dylo, dyhi = min(float(ys.min()), hy), max(float(ys.max()), hy)
@@ -305,7 +314,7 @@ class PhaseMixin:
                 lim = (min(pxlo, dxlo), max(pxhi, dxhi),      # sticky: grow only,
                        min(pylo, dylo), max(pyhi, dyhi))      # never shrink
             self._phase_lim = lim
-            xlo, xhi = _pad(lim[0], lim[1])
-            ylo, yhi = _pad(lim[2], lim[3])
+            xlo, xhi = _pad(lim[0], lim[1], fx)
+            ylo, yhi = _pad(lim[2], lim[3], fy)
         dpg.set_axis_limits("phase_x", xlo, xhi)
         dpg.set_axis_limits("phase_y", ylo, yhi)

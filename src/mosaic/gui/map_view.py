@@ -171,6 +171,9 @@ class MapView:
         self._last_rgba: Optional[np.ndarray] = None
         # Background color used outside polygon pixels; theme can override.
         self._bg_color: np.ndarray = _BG_COLOR.copy()
+        # Fill for un-split counties in splits view; exports override it so the
+        # dim recedes toward the (white) page instead of going near-black.
+        self._splits_dim: np.ndarray = _SPLITS_DIM_RGBA.copy()
         self._county_array: Optional[np.ndarray] = None
         self._dem_votes: Optional[np.ndarray] = None
         self._gop_votes: Optional[np.ndarray] = None
@@ -503,7 +506,7 @@ class MapView:
             clean_mask[valid] = county_is_clean[cmap_vals[valid]]
 
             if clean_mask.any():
-                rgba[clean_mask] = _SPLITS_DIM_RGBA
+                rgba[clean_mask] = self._splits_dim
 
             # County borders always visible in splits view
             rgba[self._thicken(self._county_border_mask(pm))] = _COUNTY_BORDER_RGBA

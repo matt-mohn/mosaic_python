@@ -338,7 +338,7 @@
 
           <dt><strong>Compactness</strong></dt>
           <dd>
-            <p>Mosaic's primary compactness score &mdash; on by default at weight 50. One dial that blends mean Polsby-Popper and mean Reock 50/50, each linearly normalized into [0, 100] over a fixed band, so you can optimize compactness without juggling the two separate weights.</p>
+            <p>Mosaic's primary compactness score &mdash; on by default at weight 50. One dial that blends mean Polsby-Popper and mean Reock 50/50, each mapped over a fixed band, so you can optimize compactness without juggling the two separate weights. Unclipped by default (Annealing Settings): instead of saturating at the band cap, it tracks the scorecard down to penalty 15 then eases to a flat landing at a realistic ceiling, so the optimizer keeps rounding districts out past &ldquo;compact enough.&rdquo; Off = clipped scorecard form that saturates at the cap.</p>
             <table class="meta">
               <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
               <tr><th>Direction</th><td>lower contribution is better</td></tr>
@@ -404,7 +404,7 @@
 
           <dt><strong>Proportionality</strong></dt>
           <dd>
-            <p>Single 0-100 rating of seat-share vs vote-share fairness. Antimajoritarian plans (majority-vote, minority-seat) get an instant 100 penalty.</p>
+            <p>Single 0-100 rating of seat-share vs vote-share fairness. Unclipped by default (Partisanship Settings): a smooth seat-vs-vote gap (winner's bonus forgiven) escalated by <code>P_inv</code>, the swing-integrated probability that the popular-vote loser controls the chamber &mdash; so the optimizer feels antimajoritarian risk build up continuously rather than hitting a binary trip. Stays in [0, 100]. Off = clipped scorecard form: a linear-to-cap deviation with an instant 100 penalty for an antimajoritarian outcome (majority-vote, minority-seat).</p>
             <table class="meta">
               <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
               <tr><th>Direction</th><td>lower contribution is better</td></tr>
@@ -414,7 +414,7 @@
 
           <dt><strong>Competitiveness</strong></dt>
           <dd>
-            <p>Soft-Bernoulli competitiveness rating. Per-district kernel <code>1 − 4·(P_win − 0.5)²</code> rewards toss-ups. Unclipped by default (Partisanship Settings): a two-segment scale that spends most of its range on the achievable competitive band and reserves the top few points for the near-impossible all-toss-up range, so the optimizer keeps a gradient. Off = clipped scorecard form that saturates once ~75% of seats are toss-ups.</p>
+            <p>Soft-Bernoulli competitiveness rating. Per-district kernel <code>1 − 4·(P_win − 0.5)²</code> rewards toss-ups. Unclipped by default (Partisanship Settings): it tracks the clipped scorecard down to penalty 25, then curves off to a flat (slope-0) landing at the near-impossible all-toss-up end instead of clamping to 0, so the optimizer keeps a gradient where clipped saturates. Off = clipped scorecard form that saturates once ~75% of seats are toss-ups.</p>
             <table class="meta">
               <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
               <tr><th>Direction</th><td>lower contribution is better</td></tr>
