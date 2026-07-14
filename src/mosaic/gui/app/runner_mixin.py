@@ -59,6 +59,7 @@ class RunnerMixin:
             self.state.majority_dem_history     = self.state.majority_dem_history[:n_score]
             self.state.majority_rep_history     = self.state.majority_rep_history[:n_score]
             self.state.hinge_history            = self.state.hinge_history[:n_score]
+            self.state.inversion_history        = self.state.inversion_history[:n_score]
 
         # Tell the worker to stop, then wait for it to exit before we touch
         # state -- a worker parked in its pause-wait loop can otherwise wake
@@ -90,6 +91,7 @@ class RunnerMixin:
             self._buf_popdev_max, self._buf_popdev_mean, self._buf_cuts,
             self._buf_align_mean, self._buf_align_min,
             self._buf_maj_dem, self._buf_maj_rep, self._buf_hinge,
+            self._buf_inversion,
         ):
             buf.trim_to(best_iter, n_score)
         self._buf_temp.trim_to(best_iter, n_temp)
@@ -206,6 +208,7 @@ class RunnerMixin:
             weight_polsby_popper=w_pp,
             weight_reock=w_reock,
             weight_holistic_compactness=w_hc,
+            compactness_unclipped=dpg.get_value(self._hcompact_unclipped),
             weight_pop_deviation=w_pd,
             pop_deviation_safe_harbor=_harbor,
             weight_alignment=w_align,
@@ -227,6 +230,7 @@ class RunnerMixin:
             weight_dem_seats=dpg.get_value(self._w_dem_seats) if seats_on else 0.0,
             dem_seats_favor_dem=(dpg.get_value(self._dem_seats_dir) == "D"),
             weight_holistic_proportionality=w_hprop,
+            proportionality_unclipped=dpg.get_value(self._prop_unclipped),
             weight_holistic_competitiveness=w_hcmp,
             competitiveness_unclipped=dpg.get_value(self._comp_unclipped),
             weight_majority_chance_dem=(dpg.get_value(self._w_majority)
@@ -310,6 +314,7 @@ class RunnerMixin:
             self.state.holistic_splitting_history = []
             self.state.holistic_proportionality_history = []
             self.state.holistic_competitiveness_history = []
+            self.state.inversion_history = []
             self.state.pop_deviation_history = []
             self.state.pop_dev_max_history = []
             self.state.pop_dev_mean_history = []

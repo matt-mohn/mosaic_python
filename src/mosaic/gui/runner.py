@@ -572,6 +572,7 @@ class AlgorithmRunner:
                 self.state.majority_dem_history.append(current_ps.majority_chance_dem)
                 self.state.majority_rep_history.append(current_ps.majority_chance_rep)
                 self.state.hinge_history.append(current_ps.hinge_chance)
+                self.state.inversion_history.append(current_ps.inversion_chance)
 
             self.state.update(
                 status=AlgorithmStatus.RUNNING,
@@ -764,6 +765,7 @@ class AlgorithmRunner:
                     self.state.majority_dem_history.append(current_ps.majority_chance_dem)
                     self.state.majority_rep_history.append(current_ps.majority_chance_rep)
                     self.state.hinge_history.append(current_ps.hinge_chance)
+                    self.state.inversion_history.append(current_ps.inversion_chance)
                     n_score = len(self.state.score_history)
                     if ann is not None:
                         self.state.temperature_history.append(ann.temperature)

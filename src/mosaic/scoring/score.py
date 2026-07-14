@@ -50,6 +50,7 @@ class ScoreConfig:
     weight_polsby_popper: float = 0.0
     weight_reock: float = 0.0
     weight_holistic_compactness: float = 0.0
+    compactness_unclipped: bool = True   # clipped then flat-landing ease-out (gradient)
     weight_pop_deviation: float = 0.0
     pop_deviation_safe_harbor: float = 0.0   # fractional; 0 = no safe harbor
     weight_alignment: float = 0.0       # least-change vs a reference plan
@@ -72,8 +73,9 @@ class ScoreConfig:
     weight_dem_seats: float = 0.0
     dem_seats_favor_dem: bool = True   # True = optimize toward more D seats, False = more R
     weight_holistic_proportionality: float = 0.0
+    proportionality_unclipped: bool = True   # probabilistic form (magnitude + swing P_inv)
     weight_holistic_competitiveness: float = 0.0
-    competitiveness_unclipped: bool = True   # two-segment knee form (annealing gradient)
+    competitiveness_unclipped: bool = True   # clipped then flat-landing ease-out (gradient)
     weight_majority_chance_dem: float = 0.0
     weight_majority_chance_rep: float = 0.0
     election_win_prob_at_55: float = 0.9
@@ -108,6 +110,7 @@ class PlanScore:
     dem_seats: float = 0.0             # expected number of Dem seats (raw, for display)
     dem_seats_penalty: float = 0.0     # directional linear [0, 100] penalty (lower = better)
     holistic_proportionality: float = 0.0  # [0, 100] penalty (lower = more proportional)
+    inversion_chance: float = 0.0          # P(vote-loser controls the chamber), [0, 1]
     holistic_competitiveness: float = 0.0  # [0, 100] penalty (lower = more competitive)
     partisan_bias: float = 0.0             # raw: 0.5 - D seat share at a tied vote (+ = pro-R)
     partisan_gini: float = 0.0             # [0, 100] penalty (lower = more symmetric)
@@ -156,7 +159,7 @@ def score_plan(
     cs_excess = cs_unified = 0
     mm_raw = eg_raw = seats_raw = 0.0
     seats_penalty = 0.0
-    hprop_pen = hcmp_pen = 0.0
+    hprop_pen = hcmp_pen = hprop_inv = 0.0
     bias_raw = 0.0
     gini_pen = 0.0
     maj_d_raw = maj_r_raw = hinge_raw = 0.0
@@ -213,7 +216,8 @@ def score_plan(
     if config.weight_holistic_compactness and pp_data is not None \
             and reock_data is not None and assignment is not None \
             and n_districts is not None:
-        hc_raw = holistic_compactness_from_scores(pp_raw, reock_raw)
+        hc_raw = holistic_compactness_from_scores(
+            pp_raw, reock_raw, unclipped=config.compactness_unclipped)
         total += config.weight_holistic_compactness * hc_raw
 
     pd_max = pd_mean = 0.0
@@ -324,8 +328,11 @@ def score_plan(
 
         # Holistic scores piggyback on the shared partisan calibration so they
         # rank plans consistently with the rest of the partisan stack.
-        _, hprop_pen = holistic_proportionality_from_shares(
+        _, hprop_pen, hprop_inv = holistic_proportionality_from_shares(
             _shares, _total_d, _sigma_comb,
+            unclipped=config.proportionality_unclipped,
+            swing_sigma=config.election_swing_sigma,
+            p_wins=_p_wins,
         )
         if config.weight_holistic_proportionality:
             total += config.weight_holistic_proportionality * hprop_pen
@@ -416,6 +423,7 @@ def score_plan(
         dem_seats=seats_raw,
         dem_seats_penalty=seats_penalty,
         holistic_proportionality=hprop_pen,
+        inversion_chance=hprop_inv,
         holistic_competitiveness=hcmp_pen,
         partisan_bias=bias_raw,
         partisan_gini=gini_pen,

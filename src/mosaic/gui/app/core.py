@@ -151,6 +151,7 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         self._buf_maj_dem   = _SeriesBuffer()
         self._buf_maj_rep   = _SeriesBuffer()
         self._buf_hinge     = _SeriesBuffer()
+        self._buf_inversion = _SeriesBuffer()
 
         # Phase plot: selected metric labels + view / smoothing prefs.
         self._phase_x_label = "Compactness"

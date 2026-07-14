@@ -500,6 +500,7 @@ class UpdatesMixin:
             _mjd  = list(self.state.majority_dem_history[self._buf_maj_dem.read:])
             _mjr  = list(self.state.majority_rep_history[self._buf_maj_rep.read:])
             _hgd  = list(self.state.hinge_history[self._buf_hinge.read:])
+            _ivd  = list(self.state.inversion_history[self._buf_inversion.read:])
 
         self._buf_score.add(_sd)
         self._buf_acc.add_pairs(_ad, scale=100.0)
@@ -530,6 +531,7 @@ class UpdatesMixin:
         self._buf_maj_dem.add([v * 100.0 for v in _mjd])
         self._buf_maj_rep.add([v * 100.0 for v in _mjr])
         self._buf_hinge.add([v * 100.0 for v in _hgd])
+        self._buf_inversion.add([v * 100.0 for v in _ivd])
 
         limit = dpg.get_value(self._limit_plots) if self._limit_plots else False
 
@@ -692,6 +694,7 @@ class UpdatesMixin:
             dpg.configure_item("hprop_inactive_lbl", show=not self._has_elections)
             if self._has_elections:
                 _render(self._buf_hprop, "hprop_series", "hprop_x", "hprop_y")
+                _render(self._buf_inversion, "hprop_inversion_series", "hprop_x", "hprop_y")
         if dpg.is_item_shown("panel_hcmp"):
             dpg.configure_item("hcmp_plot_grp",     show=self._has_elections)
             dpg.configure_item("hcmp_inactive_lbl", show=not self._has_elections)
@@ -857,6 +860,7 @@ class UpdatesMixin:
             self._buf_popdev_max, self._buf_popdev_mean, self._buf_cuts,
             self._buf_align_mean, self._buf_align_min,
             self._buf_maj_dem, self._buf_maj_rep, self._buf_hinge,
+            self._buf_inversion,
         ):
             buf.clear()
         empty = [[], []]

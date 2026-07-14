@@ -275,6 +275,22 @@ class PopupsMixin:
                 "scorecard form (pins at the cap).",
             )
 
+            dpg.add_spacer(height=10)
+            dpg.add_separator()
+            dpg.add_spacer(height=6)
+            self.theme.text("Compactness", "heading")
+            self._hcompact_unclipped = dpg.add_checkbox(
+                label="Unclipped Compactness", default_value=True,
+            )
+            self._tooltip(
+                self._hcompact_unclipped,
+                "Extends the compactness reward past the scorecard cap: tracks the "
+                "scorecard down to penalty 15, then eases to a flat landing at a "
+                "realistic ceiling, so the optimizer keeps rounding districts out "
+                "past 'compact enough'. Off = clipped scorecard form (saturates at "
+                "the cap).",
+            )
+
     def _build_alignment_settings_popup(self):
         # Non-modal exception: this window spawns a file dialog ("Load reference
         # plan..."), and a modal-over-modal stack misbehaves in DPG.
@@ -432,10 +448,26 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._comp_unclipped,
-                "Two-segment knee mapping: the achievable competitive range spends most "
-                "of the penalty scale and reserves the top few points for the near-"
-                "impossible all-toss-up range, so the optimizer keeps a gradient. Off = "
-                "clipped scorecard form (saturates once ~75% of seats are toss-ups).",
+                "Tracks the clipped scorecard down to penalty 25, then curves off to a "
+                "flat landing at the all-toss-up end instead of clamping to 0, so the "
+                "optimizer keeps a gradient where clipped saturates. Off = clipped "
+                "scorecard form (saturates once ~75% of seats are toss-ups).",
+            )
+
+            dpg.add_spacer(height=10)
+            dpg.add_separator()
+            dpg.add_spacer(height=6)
+            self.theme.text("Proportionality", "heading")
+            self._prop_unclipped = dpg.add_checkbox(
+                label="Unclipped Proportionality", default_value=True,
+            )
+            self._tooltip(
+                self._prop_unclipped,
+                "Probabilistic form: a smooth seat-vs-vote gap escalated by the swing-"
+                "integrated chance the popular-vote loser controls the chamber, so the "
+                "optimizer feels antimajoritarian risk building instead of hitting a "
+                "binary trip. Off = clipped scorecard (winner's-bonus basin, a hard 100 "
+                "cap, and a binary antimajoritarian flip).",
             )
 
     def _build_help_popup(self):

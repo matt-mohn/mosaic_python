@@ -114,6 +114,7 @@ class SharedState:
     majority_dem_history: list = field(default_factory=list)
     majority_rep_history: list = field(default_factory=list)
     hinge_history: list = field(default_factory=list)
+    inversion_history: list = field(default_factory=list)
 
     # Score breakdown: metric name → % of total weighted score (updated by runner)
     score_breakdown: dict = field(default_factory=dict)
@@ -242,6 +243,7 @@ class SharedState:
             self.majority_dem_history = []
             self.majority_rep_history = []
             self.hinge_history = []
+            self.inversion_history = []
             self.score_breakdown = {}
             self.initial_assignment = None
             self.district_label_map = None
