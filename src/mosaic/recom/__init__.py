@@ -1,8 +1,8 @@
 """ReCom algorithm implementation."""
 
-from mosaic.recom.partition import create_initial_partition
-from mosaic.recom.recombination import recom_step_ig, recom_step_ig_n3, GraphContext
 from mosaic.recom.flip import flip_step_ig
+from mosaic.recom.partition import create_initial_partition
+from mosaic.recom.recombination import GraphContext, recom_step_ig, recom_step_ig_n3
 
 __all__ = [
     "create_initial_partition",

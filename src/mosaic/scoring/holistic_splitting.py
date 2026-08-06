@@ -45,7 +45,7 @@ plain split count is Classic Splitting's job, not this one.
 from __future__ import annotations
 
 import numpy as np
-
+from numba import njit
 
 _MAX_SPLITTING    = 1.20   # clipped scorecard form only
 _MIN_SPLITTING    = 1.00
@@ -60,7 +60,6 @@ _UNCLIPPED_SLOPE  = 45.0   # unclipped penalty per unit of raw excess over 1.0
 # accumulates per-d across the c outer loop. A whole district inside one county
 # (or whole county inside one district) collapses into its own bucket. No
 # fastmath. Exact == on pop sums is safe (integer pops, exact in float64).
-from numba import njit
 
 
 @njit(cache=True)

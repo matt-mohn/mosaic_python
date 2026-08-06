@@ -210,8 +210,9 @@ class ExportMixin:
         offscreen._splits_dim = np.array(_EXPORT_SPLITS_DIM, dtype=np.uint8)
         for flag in ("county_overlay", "partisan_overlay",
                      "district_partisan_overlay", "splits_view",
-                     "compactness_view", "pop_dev_view", "show_labels",
-                     "precinct_overlay"):
+                     "compactness_view", "pop_dev_view", "demographic_overlay",
+                     "precinct_demographic_overlay",
+                     "show_labels", "precinct_overlay"):
             setattr(offscreen, flag, getattr(src, flag))
         offscreen.fast_labels = False  # precise label placement for export
         offscreen.state_outline = state_outline
@@ -230,6 +231,7 @@ class ExportMixin:
             pp_data=self.runner.pp_data,
             reock_data=self.runner.reock_data,
             populations=self.runner.populations,
+            vap_data=self.runner.vap_data,
         )
 
         with self.state._lock:
@@ -443,6 +445,12 @@ class ExportMixin:
                 fill_rgba = lut[:n]
             elif mv.pop_dev_view and mv._populations is not None:
                 lut = mv._build_pop_dev_lut(assignment, n_dist)
+                fill_rgba = lut[:n]
+            elif mv.precinct_demographic_overlay and mv._vap is not None:
+                lut = mv._build_precinct_demographic_lut()
+                fill_rgba = lut[:n]
+            elif mv.demographic_overlay and mv._vap is not None:
+                lut = mv._build_demographic_lut(assignment, n_dist)
                 fill_rgba = lut[:n]
             else:
                 from mosaic.gui.map_view import DISTRICT_COLORS, stable_color_mapping

@@ -2,9 +2,10 @@
 
 import time
 from dataclasses import dataclass
-import numpy as np
-import igraph as ig
 from typing import Optional
+
+import igraph as ig
+import numpy as np
 
 
 @dataclass
@@ -67,9 +68,12 @@ try:
         for i in range(n_nodes):
             cursor[i] = indptr[i]
         for i in range(len(eu_m)):
-            u = eu_m[i]; v = ev_m[i]
-            indices[cursor[u]] = v; cursor[u] += 1
-            indices[cursor[v]] = u; cursor[v] += 1
+            u = eu_m[i]
+            v = ev_m[i]
+            indices[cursor[u]] = v
+            cursor[u] += 1
+            indices[cursor[v]] = u
+            cursor[v] += 1
 
     @_njit(cache=True)
     def _nb_bfs_subtree(indptr, indices, n_nodes, sub_pops,
@@ -83,13 +87,15 @@ try:
         head = np.int32(0)
         tail = np.int32(1)
         while head < tail:
-            v = bfs_q[head]; head += 1
+            v = bfs_q[head]
+            head += 1
             for j in range(indptr[v], indptr[v + 1]):
                 nb = indices[j]
                 if not visited[nb]:
                     visited[nb] = True
                     parent[nb]  = v
-                    bfs_q[tail] = nb; tail += 1
+                    bfs_q[tail] = nb
+                    tail += 1
         for i in range(n_nodes):
             stpops[i] = sub_pops[i]
         for i in range(tail - 1, -1, -1):
@@ -414,7 +420,8 @@ def find_balanced_cut_ig(
             bfs_queue = [root]
             head = 0
             while head < len(bfs_queue):
-                v = bfs_queue[head]; head += 1
+                v = bfs_queue[head]
+                head += 1
                 for nb in tree_adj[v]:
                     if not visited[nb]:
                         visited[nb] = True

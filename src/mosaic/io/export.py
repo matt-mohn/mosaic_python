@@ -1,9 +1,10 @@
 """Export utilities for redistricting results."""
 
 import logging
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
 
 log = logging.getLogger("mosaic")
 

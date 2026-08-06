@@ -1,5 +1,15 @@
 """Map render/overlay toggles and theme synchronisation."""
-from ._common import _MAP_DH, _MAP_DW, _build_camera_icon, _build_more_icon, dpg, np
+from ._common import (
+    _FILL_ATTRS,
+    _FILL_NEEDS,
+    _FILL_NONE,
+    _FILL_OPTIONS,
+    _MAP_DH,
+    _MAP_DW,
+    _build_camera_icon,
+    dpg,
+    np,
+)
 
 
 class MapMixin:
@@ -13,47 +23,12 @@ class MapMixin:
         self._sync_camera_icon_to_theme()
         self._phase_apply_fade()        # repaint phase trail for the new palette
 
-    def _align_photo_icons(self, *_):
-        """Resize the overlay-row spacer so the photo icons hug the right edge.
-
-        Called once after first render and again on every viewport resize.
-        Uses the actual measured positions/sizes rather than guessing widths
-        because checkbox widths depend on the font in use.
-        """
-        fill = getattr(self, "_overlay_fill", None)
-        cam = getattr(self, "_cam_btn", None)
-        more = getattr(self, "_more_btn", None)
-        spinner = getattr(self, "_save_spinner", None)
-        if not all(t is not None and dpg.does_item_exist(t)
-                   for t in (fill, cam, more, spinner)):
-            return
-        if not dpg.does_item_exist("map_container"):
-            return
-        container_w = dpg.get_item_rect_size("map_container")[0]
-        if container_w <= 1:
-            return
-        cam_x = dpg.get_item_pos(cam)[0]
-        cam_w = dpg.get_item_rect_size(cam)[0] or 28
-        more_w = dpg.get_item_rect_size(more)[0] or 28
-        spinner_w = dpg.get_item_rect_size(spinner)[0] or 0
-        photo_block = cam_w + more_w + spinner_w + 16
-        right_pad = 12
-        target_cam_x = container_w - photo_block - right_pad
-        try:
-            current_w = dpg.get_item_configuration(fill).get("width", 20)
-        except SystemError:
-            current_w = 20
-        new_w = max(8, int(current_w + (target_cam_x - cam_x)))
-        dpg.configure_item(fill, width=new_w)
-
     def _sync_camera_icon_to_theme(self):
-        """Repaint the map-toolbar icon textures in the current palette's body color."""
+        """Repaint the map-toolbar camera icon in the current palette's body color."""
         r, g, b, _ = self.theme.color("body")
         fg = (int(r), int(g), int(b))
         if dpg.does_item_exist("camera_icon_texture"):
             dpg.set_value("camera_icon_texture", _build_camera_icon(fg))
-        if dpg.does_item_exist("more_icon_texture"):
-            dpg.set_value("more_icon_texture", _build_more_icon(fg))
         body = self.theme.color("body")
         muted = self.theme.color("muted")
         for tag_attr in ("_save_spinner", "_adv_save_spinner"):
@@ -123,70 +98,86 @@ class MapMixin:
         self.map_view.precinct_overlay = dpg.get_value(self._precinct_overlay)
         self._rerender_map()
 
-    def _on_partisan_overlay_toggle(self):
-        if dpg.get_value(self._partisan_overlay):
-            for cb, attr in [
-                (self._district_partisan, "district_partisan_overlay"),
-                (self._compactness_view,  "compactness_view"),
-                (self._pop_dev_view,      "pop_dev_view"),
-            ]:
-                dpg.set_value(cb, False)
-                if self.map_view:
-                    setattr(self.map_view, attr, False)
+    # ── Map fill combo ───────────────────────────────────────────────────────
+    def _fill_labels(self) -> list[str]:
+        """Combo items for the current data availability, unavailable entries
+        suffixed rather than dropped.
+
+        Deliberately a flat list. Separator rows were tried and reverted: a DPG
+        combo's value IS the item string, so three identical divider strings are
+        ambiguous, and items carry no per-item styling to grey or colour them.
+        The "Results - " / "Demographics - " prefixes carry the grouping instead.
+        """
+        avail = getattr(self, "_fill_avail", {})
+        out = [_FILL_NONE]
+        for label, _attr, need in _FILL_OPTIONS:
+            out.append(label if avail.get(need, False)
+                       else f"{label}  ({_FILL_NEEDS[need]})")
+        return out
+
+    def _set_fill(self, view_attr):
+        """Point the map at exactly one fill (or None) and repaint."""
         if self.map_view is None:
             return
-        self.map_view.partisan_overlay = dpg.get_value(self._partisan_overlay)
+        for a in _FILL_ATTRS:
+            setattr(self.map_view, a, a == view_attr)
         self._rerender_map()
 
-    def _on_district_partisan_toggle(self):
-        if dpg.get_value(self._district_partisan):
-            for cb, attr in [
-                (self._partisan_overlay, "partisan_overlay"),
-                (self._compactness_view, "compactness_view"),
-                (self._pop_dev_view,     "pop_dev_view"),
-            ]:
-                dpg.set_value(cb, False)
-                if self.map_view:
-                    setattr(self.map_view, attr, False)
-        if self.map_view is None:
+    def _on_fill_combo(self):
+        """Apply the chosen fill; refuse (and snap back to None) if its data is
+        absent, since the item is listed but not usable."""
+        choice = dpg.get_value(self._fill_combo)
+        if choice == _FILL_NONE:
+            self._set_fill(None)
             return
-        self.map_view.district_partisan_overlay = dpg.get_value(self._district_partisan)
-        self._rerender_map()
+        avail = getattr(self, "_fill_avail", {})
+        for label, attr, need in _FILL_OPTIONS:
+            if choice.startswith(label):
+                if avail.get(need, False):
+                    self._set_fill(attr)
+                else:
+                    dpg.set_value(self._fill_combo, _FILL_NONE)
+                    self._set_fill(None)
+                return
+        dpg.set_value(self._fill_combo, _FILL_NONE)
+        self._set_fill(None)
+
+    def _clear_fill(self):
+        """Reset to None -- used on load/new so a previous file's fill can't
+        linger over fresh data."""
+        if getattr(self, "_fill_combo", None) is None:
+            return
+        dpg.set_value(self._fill_combo, _FILL_NONE)
+        self._set_fill(None)
+
+    def _sync_fill_availability(self, *, elections: bool, race: bool,
+                                compact: bool, pops: bool):
+        """Refresh the combo's labels for what data is loaded, and drop the
+        current selection if it just became unavailable. Replaces the per-
+        checkbox enable/disable bookkeeping the old toolbar needed."""
+        if getattr(self, "_fill_combo", None) is None:
+            return
+        avail = {"elections": elections, "race": race,
+                 "compact": compact, "pops": pops}
+        if avail == getattr(self, "_fill_avail", None):
+            return                      # per-frame call; only rebuild on change
+        self._fill_avail = avail
+        current = dpg.get_value(self._fill_combo)
+        dpg.configure_item(self._fill_combo, items=self._fill_labels())
+        for label, _attr, need in _FILL_OPTIONS:
+            if current.startswith(label):
+                if avail.get(need, False):
+                    dpg.set_value(self._fill_combo, label)   # drop needs-suffix
+                else:
+                    dpg.set_value(self._fill_combo, _FILL_NONE)
+                    self._set_fill(None)
+                return
+        dpg.set_value(self._fill_combo, _FILL_NONE)
 
     def _on_splits_view_toggle(self):
         if self.map_view is None:
             return
         self.map_view.splits_view = dpg.get_value(self._splits_view)
-        self._rerender_map()
-
-    def _on_compactness_toggle(self):
-        if dpg.get_value(self._compactness_view):
-            for cb, attr in [
-                (self._partisan_overlay, "partisan_overlay"),
-                (self._district_partisan, "district_partisan_overlay"),
-                (self._pop_dev_view, "pop_dev_view"),
-            ]:
-                dpg.set_value(cb, False)
-                if self.map_view:
-                    setattr(self.map_view, attr, False)
-        if self.map_view is None:
-            return
-        self.map_view.compactness_view = dpg.get_value(self._compactness_view)
-        self._rerender_map()
-
-    def _on_pop_dev_toggle(self):
-        if dpg.get_value(self._pop_dev_view):
-            for cb, attr in [
-                (self._partisan_overlay, "partisan_overlay"),
-                (self._district_partisan, "district_partisan_overlay"),
-                (self._compactness_view, "compactness_view"),
-            ]:
-                dpg.set_value(cb, False)
-                if self.map_view:
-                    setattr(self.map_view, attr, False)
-        if self.map_view is None:
-            return
-        self.map_view.pop_dev_view = dpg.get_value(self._pop_dev_view)
         self._rerender_map()
 
     def _on_labels_toggle(self):

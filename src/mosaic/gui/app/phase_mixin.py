@@ -89,6 +89,9 @@ class PhaseMixin:
                 dpg.add_checkbox(label="Fade", default_value=True,
                                  callback=self._on_phase_fade_change)
             dpg.add_spacer(height=4)
+            # Empty-state note shown (with the plot hidden) when a selected axis
+            # points at a weighted-off score, which score_plan skips computing.
+            dpg.add_text("", tag="phase_note", show=False, wrap=380)
             with dpg.plot(height=-1, width=-1, tag="phase_plot", no_menus=True):
                 dpg.add_plot_axis(dpg.mvXAxis, label="Compactness", tag="phase_x")
                 with dpg.plot_axis(dpg.mvYAxis, label="Efficiency Gap",
@@ -182,29 +185,76 @@ class PhaseMixin:
         if cfg.weight_pop_deviation or ratchet:
             active.update(("pop_dev_max_history", "pop_dev_mean_history"))
         if has:
-            # Always computed from the election data -> available with elections.
+            # Cheap tier: always computed once election data loads (see score.py).
             active.update((
                 "mm_history", "eg_history", "dem_seats_history",
                 "partisan_bias_history",
-                "partisan_gini_history",
-                "holistic_proportionality_history",
-                "inversion_history",
-                "holistic_competitiveness_history",
-                "majority_dem_history", "majority_rep_history",
             ))
-            # Hinge needs a user-established threshold (the Hinge score toggle),
-            # not just election data -- else its value is against a stale default.
-            if dpg.get_value(self._hinge_enabled):
+            # Expensive tier: weight-gated in score_plan, so populated only when
+            # the score carries weight. Mirror score.py's gating exactly.
+            if cfg.weight_partisan_gini:
+                active.add("partisan_gini_history")
+            if cfg.weight_holistic_proportionality:
+                active.update(("holistic_proportionality_history", "inversion_history"))
+            if cfg.weight_holistic_competitiveness:
+                active.add("holistic_competitiveness_history")
+            if cfg.weight_majority_chance_dem or cfg.weight_majority_chance_rep:
+                active.update(("majority_dem_history", "majority_rep_history"))
+            if cfg.weight_hinge:
                 active.add("hinge_history")
+        # Demographic overall penalties: populated only when their score is
+        # weighted (score.py gates them), and only with VAP data loaded.
+        if getattr(self, "_has_race", False):
+            if cfg.weight_representation:
+                active.add("representation_overall_history")
+            if cfg.weight_minority_cohesion:
+                active.add("minority_cohesion_overall_history")
+            if cfg.weight_community_congruence:
+                active.add("community_congruence_overall_history")
         always = {"cut_edges_history", "score_history", "temperature_history"}
-        return [l for l in _PHASE_LABELS
-                if _PHASE_ATTR[l] in always or _PHASE_ATTR[l] in active]
+        return [lbl for lbl in _PHASE_LABELS
+                if _PHASE_ATTR[lbl] in always or _PHASE_ATTR[lbl] in active]
+
+    def _phase_available_labels(self) -> list:
+        """Metrics offered in the picker: those whose DATA SOURCE exists, whether
+        or not the score is currently weighted. A weighted-off metric stays
+        selectable but the comet shows an 'enable the score' note rather than an
+        empty trajectory (see _update_phase_plot). Partisan metrics need election
+        data to exist at all; everything else is always drawable from the map."""
+        has = getattr(self, "_has_elections", False)
+        has_race = getattr(self, "_has_race", False)
+        partisan = {
+            "mm_history", "eg_history", "dem_seats_history", "partisan_bias_history",
+            "partisan_gini_history", "holistic_proportionality_history",
+            "inversion_history", "holistic_competitiveness_history",
+            "majority_dem_history", "majority_rep_history", "hinge_history",
+        }
+        demographic = {"representation_overall_history",
+                       "minority_cohesion_overall_history",
+                       "community_congruence_overall_history"}
+        out = []
+        for lbl in _PHASE_LABELS:
+            attr = _PHASE_ATTR[lbl]
+            if attr in partisan and not has:
+                continue
+            if attr in demographic and not has_race:
+                continue
+            out.append(lbl)
+        return out
+
+    def _phase_gated_attrs(self) -> set:
+        """Attrs offered in the picker but not currently populated (their score is
+        unweighted) -> the comet shows a note instead of plotting empty data."""
+        populated = {_PHASE_ATTR[lbl] for lbl in self._phase_active_labels()}
+        return {_PHASE_ATTR[lbl] for lbl in self._phase_available_labels()
+                if _PHASE_ATTR[lbl] not in populated}
 
     def _phase_sync_available_metrics(self) -> None:
-        """Rebuild the axis pickers to the metrics active for this run's config;
-        bump a now-hidden axis to a safe intrinsic. Re-syncs only on a change
-        (config is set at run start, so the picker tracks the live histories)."""
-        labels = self._phase_active_labels()
+        """Rebuild the axis pickers to the metrics available for this run (data
+        source present), keeping weighted-off metrics selectable so the user can
+        discover them; bump only a now-unavailable axis to a safe intrinsic. A
+        selected-but-gated axis is handled by the note in _update_phase_plot."""
+        labels = self._phase_available_labels()
         sig = tuple(labels)
         if self._phase_metric_sig == sig:
             return
@@ -222,6 +272,22 @@ class PhaseMixin:
         if not dpg.is_item_shown("panel_phase"):
             return
         self._phase_sync_available_metrics()
+        # An axis pointed at a weighted-off score has no data (score_plan skips
+        # it) -> prompt the user to enable the score instead of drawing empty/NaN.
+        gated = self._phase_gated_attrs()
+        gx = _PHASE_ATTR[self._phase_x_label] in gated
+        gy = _PHASE_ATTR[self._phase_y_label] in gated
+        if gx or gy:
+            which = ([f"'{self._phase_x_label}' (X)"] if gx else []) \
+                + ([f"'{self._phase_y_label}' (Y)"] if gy else [])
+            dpg.set_value("phase_note",
+                          f"Give {' and '.join(which)} a weight in the Scores "
+                          f"panel to populate this view.")
+            dpg.configure_item("phase_note", show=True)
+            dpg.configure_item("phase_plot", show=False)
+            return
+        dpg.configure_item("phase_note", show=False)
+        dpg.configure_item("phase_plot", show=True)
         xa, ya = _PHASE_ATTR[self._phase_x_label], _PHASE_ATTR[self._phase_y_label]
         with self.state._lock:
             xh = getattr(self.state, xa)

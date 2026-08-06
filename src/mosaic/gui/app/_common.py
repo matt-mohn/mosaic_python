@@ -9,6 +9,20 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
+import dearpygui.dearpygui as dpg
+import numpy as np
+
+from mosaic import __version__
+from mosaic.gui.map_view import PRECINCT_EDGE_ALPHA, MapView
+from mosaic.gui.runner import AlgorithmRunner
+from mosaic.gui.shp_dialog import ShapefileDialog
+from mosaic.gui.state import AlgorithmStatus, SharedState
+from mosaic.gui.theme import ThemeManager
+from mosaic.io.inspect import ShapefileConfig, ShapefileInspection
+from mosaic.paths import output_dir
+from mosaic.recom.annealing import AnnealingConfig
+from mosaic.scoring.score import ScoreConfig
+
 log = logging.getLogger("mosaic")
 
 _DOCS_URL = "https://matt-mohn.github.io/mosaic_python/"
@@ -26,20 +40,6 @@ _SETTINGS_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / ".
 _RECENT_FILE  = _SETTINGS_DIR / "recent_shapefiles.json"
 _APP_ICON = _ASSETS_DIR / "mosaic_logo.ico"
 _PDF_PRECINCT_OFF_ALPHA = 0.05   # faint precinct hairlines in PDF even when the overlay is off
-
-import dearpygui.dearpygui as dpg
-import numpy as np
-
-from mosaic import __version__
-from mosaic.gui.map_view import PRECINCT_EDGE_ALPHA, MapView
-from mosaic.gui.runner import AlgorithmRunner
-from mosaic.gui.shp_dialog import ShapefileDialog
-from mosaic.gui.state import AlgorithmStatus, SharedState
-from mosaic.gui.theme import ThemeManager
-from mosaic.io.inspect import ShapefileConfig, ShapefileInspection
-from mosaic.paths import output_dir
-from mosaic.recom.annealing import AnnealingConfig
-from mosaic.scoring.score import ScoreConfig
 
 _PLOT_LIMIT   = 10_000   # max points rendered when limit-plots is on
 _COMPACT_AT   = 20_000   # compact local buffer when it exceeds this
@@ -85,6 +85,11 @@ _PHASE_METRICS: list[tuple[str, str, str]] = [
     ("Dem Majority",         "majority_dem_history",              "x100"),
     ("Rep Majority",         "majority_rep_history",              "x100"),
     ("Hinge",                "hinge_history",                     "x100"),
+    # Demographic — dropped from the pickers when no VAP data is loaded. The
+    # aggregate penalties actually minimized in annealing (0 = best).
+    ("Electoral Opportunity", "representation_overall_history",   "raw"),
+    ("Neighborhood Severance", "minority_cohesion_overall_history", "raw"),
+    ("Community Dispersion", "community_congruence_overall_history", "raw"),
 ]
 _PHASE_ATTR   = {lbl: attr for lbl, attr, _ in _PHASE_METRICS}
 _PHASE_KIND   = {lbl: kind for lbl, _, kind in _PHASE_METRICS}
@@ -103,6 +108,9 @@ _PHASE_AXIS_UNIT = {
     "Rep Majority":       "(%)",
     "Hinge":              "(%)",
     "Inversion Risk":     "(%)",
+    "Electoral Opportunity": "(penalty, 0 = best)",
+    "Neighborhood Severance": "(penalty, 0 = best)",
+    "Community Dispersion": "(penalty, 0 = best)",
 }
 
 # Recency ramps (old -> hot). Dark = magma (bright-on-black); light = mako
@@ -261,27 +269,61 @@ class _SeriesBuffer:
 # (name, x-tick label, RGBA fill)
 _DIR_TO_MODE = {"Fair": "fair", "D": "favor_dem", "R": "favor_rep"}
 
+# The map-toolbar fills: these colour the map body, exactly one at a time, so
+# they live in a single combo rather than a row of checkboxes. Six independent
+# -looking checkboxes implied they combined, while the code silently cleared the
+# others; the combo makes the exclusivity honest and reclaims a toolbar row.
+#
+# (combo label, MapView attribute, data this fill requires)
+_FILL_NONE = "None (District)"
+_FILL_OPTIONS: tuple[tuple[str, str, str], ...] = (
+    ("Results - Precinct",      "partisan_overlay",             "elections"),
+    ("Results - District",      "district_partisan_overlay",    "elections"),
+    ("Demographics - Precinct", "precinct_demographic_overlay", "race"),
+    ("Demographics - District", "demographic_overlay",          "race"),
+    ("Compactness",             "compactness_view",             "compact"),
+    ("Population Deviation",    "pop_dev_view",                 "pops"),
+)
+# Suffix shown when a fill's data is absent. The entry stays in the list rather
+# than vanishing, so the feature is still discoverable before a load; picking one
+# snaps back to None (DPG cannot disable an individual combo item).
+_FILL_NEEDS = {
+    "elections": "needs elections",
+    "race":      "needs demographics",
+    "compact":   "needs geometry",
+    "pops":      "needs population",
+}
+_FILL_ATTRS: tuple[str, ...] = tuple(a for _, a, _ in _FILL_OPTIONS)
+
+
+
+# (display name, bar rgba). Names are spelled out: the contributor chart plots
+# horizontally, so a full label fits on the category axis and no abbreviation
+# table is needed.
 _CONTRIB_BAR_METRICS = [
-    ("Cut Edges",       "Cuts",   (160, 160, 165, 220)),
-    ("Excess Splits",    "Co.Exc", (190, 170, 130, 220)),
-    ("Single-County Districts", "1-Co Dist", (160, 200, 130, 220)),
-    ("Population Deviation", "PopDev", (220, 200, 70,  220)),
-    ("Alignment",       "Align", (150, 120, 210, 220)),
-    ("Polsby-Popper",   "PP",    (90,  160, 220, 220)),
-    ("Reock",           "Reock", (60,  190, 200, 220)),
-    ("Mean-Median",     "MM",     (240, 140, 60,  220)),
-    ("Efficiency Gap",  "EG",     (225, 75,  75,  220)),
-    ("Partisan Bias",   "P.Bias", (235, 110, 110, 220)),
-    ("Partisan Gini",   "Gini",   (200, 120, 160, 220)),
-    ("Dem Seats",       "Seats",  (180, 80,  220, 220)),
-    ("D Majority",      "D Maj",  (70,  130, 210, 220)),
-    ("R Majority",      "R Maj",  (210, 70,  70,  220)),
-    ("Hinge",           "Hinge",  (140, 90,  200, 220)),
+    ("Cut Edges",               (160, 160, 165, 220)),
+    ("Excess Splits",           (190, 170, 130, 220)),
+    ("Single-County Districts", (160, 200, 130, 220)),
+    ("Population Deviation",    (220, 200, 70,  220)),
+    ("Alignment",               (150, 120, 210, 220)),
+    ("Polsby-Popper",           (90,  160, 220, 220)),
+    ("Reock",                   (60,  190, 200, 220)),
+    ("Mean-Median",             (240, 140, 60,  220)),
+    ("Efficiency Gap",          (225, 75,  75,  220)),
+    ("Partisan Bias",           (235, 110, 110, 220)),
+    ("Partisan Gini",           (200, 120, 160, 220)),
+    ("Dem Seats",               (180, 80,  220, 220)),
+    ("D Majority",              (70,  130, 210, 220)),
+    ("R Majority",              (210, 70,  70,  220)),
+    ("Partisan Hinge",          (140, 90,  200, 220)),
     # Single-rating composites
-    ("Compactness",              "Comp",    (220, 160, 60,  220)),
-    ("County Congruence",        "Cty Cong", (200, 140, 50, 220)),
-    ("Proportionality",          "Prop",    (170, 90,  50,  220)),
-    ("Competitiveness",          "Cmptv",   (50,  150, 90,  220)),
+    ("Compactness",             (220, 160, 60,  220)),
+    ("County Congruence",       (200, 140, 50,  220)),
+    ("Proportionality",         (170, 90,  50,  220)),
+    ("Competitiveness",         (50,  150, 90,  220)),
+    ("Electoral Opportunity",   (120, 180, 120, 220)),
+    ("Neighborhood Severance",  (90,  150, 175, 220)),
+    ("Community Dispersion",    (110, 185, 165, 220)),
 ]
 
 # ── Layout constants ──────────────────────────────────────────────────────────
@@ -304,7 +346,11 @@ _DIALOG_BTN_W = 90     # standard footer button width
 _DIALOG_RM    = 6      # right margin inside the content region for the footer
 _MAP_DH       = _MAP_H - 22            # texture pixel height (~368)
 _PLOT_H       = 155    # single-plot height (score row)
-_HALF_PLOT_H  = 150    # height of the two side-by-side plots
+_HALF_PLOT_H  = 150    # height of the two side-by-side plots (Score / Entropy)
+# Do not raise this without also raising _TOP_H. These plots are the last items
+# in the _TOP_H container and DPG clips rather than scrolls, so any overflow eats
+# the x-axis off the bottom of both charts. 150 exactly fills the space that
+# _TOP_H = 640 leaves after the map, the one-row toolbar and the headings.
 _HALF_PLOT_W  = (_MAP_DW - 10) // 2   # width of each half-plot (~429)
 
 
@@ -381,6 +427,20 @@ _HINTS: dict[str, str] = {
         "One 0-100 rating that rewards districts near a 50/50 win probability. "
         "The credit tapers off as seats get safer, and caps once about 75% of "
         "districts are competitive."
+    ),
+    "representation": (
+        "One 0-100 rating of minority opportunity to elect, scored per group "
+        "against what this state's geography can actually draw. Higher = better."
+    ),
+    "minority_cohesion": (
+        "Penalizes cutting district lines through the core of a Black, Latino or "
+        "Asian community, even one too small to elect. Correlates with Cut Edges, "
+        "so start the weight low."
+    ),
+    "community_congruence": (
+        "Keeps a minority community in as few districts as population equality "
+        "allows, so one too big for a single district is not charged for an "
+        "unavoidable split. Counts pieces, not where lines fall."
     ),
     "mean_median": (
         "Gap between the mean and median Democratic vote share across districts. "
@@ -488,6 +548,10 @@ __all__ = [
     "_build_more_icon",
     "_SeriesBuffer",
     "_DIR_TO_MODE",
+    "_FILL_NONE",
+    "_FILL_OPTIONS",
+    "_FILL_NEEDS",
+    "_FILL_ATTRS",
     "_CONTRIB_BAR_METRICS",
     "_VP_W",
     "_VP_H",

@@ -1,8 +1,8 @@
 """I/O operations for shapefiles and exports."""
 
-from mosaic.io.shapefile import load_shapefile
 from mosaic.io.export import save_assignments, save_metrics
-from mosaic.io.inspect import inspect_shapefile, ShapefileConfig, ShapefileInspection, ColumnInfo
+from mosaic.io.inspect import ColumnInfo, ShapefileConfig, ShapefileInspection, inspect_shapefile
+from mosaic.io.shapefile import load_shapefile
 
 __all__ = [
     "load_shapefile",

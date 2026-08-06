@@ -1,8 +1,9 @@
 """Shapefile loading utilities."""
 
 import hashlib
-import geopandas as gpd
 from pathlib import Path
+
+import geopandas as gpd
 
 
 def load_shapefile(path: str | Path) -> gpd.GeoDataFrame:

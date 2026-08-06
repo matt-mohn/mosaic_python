@@ -1,4 +1,6 @@
 """Modal popup builders (settings, help, confirmations)."""
+from mosaic.scoring.opportunity import GROUPS
+
 from ._common import _DOCS_SHAPEFILE_URL, _DOCS_URL, __version__, dpg, webbrowser
 
 
@@ -469,6 +471,95 @@ class PopupsMixin:
                 "binary trip. Off = clipped scorecard (winner's-bonus basin, a hard 100 "
                 "cap, and a binary antimajoritarian flip).",
             )
+
+    def _build_representation_popup(self):
+        with self._dialog(
+            "Electoral Opportunity Settings", "popup_representation", (460, 380),
+            show=False,
+            secondary=("Close",
+                       lambda: dpg.configure_item("popup_representation", show=False)),
+        ):
+            self.theme.text(
+                "Chances for minority groups to elect their candidate of choice, "
+                "measured against what this state's geography can actually draw. "
+                "Needs demographic columns from the shapefile.",
+                "muted", wrap=440,
+            )
+            dpg.add_separator()
+            dpg.add_spacer(height=6)
+
+            self._representation_unclipped = dpg.add_checkbox(
+                label="Unclipped Electoral Opportunity", default_value=True,
+            )
+            self._tooltip(
+                self._representation_unclipped,
+                "Softens the per-district credit cap so the optimizer keeps a "
+                "gradient at the solid level. Moves the Overall penalty; the "
+                "per-group Rating lines stay hard-capped either way.",
+            )
+            self._opportunity_smart_targets = dpg.add_checkbox(
+                label="Smart targets", default_value=True,
+            )
+            self._tooltip(
+                self._opportunity_smart_targets,
+                "Judge each group against what this state's geography can actually "
+                "draw, not the best precincts anywhere in it. Off, the benchmark "
+                "can describe a district assembled from cities hundreds of miles "
+                "apart. Costs a few seconds at the start of a run.",
+            )
+            dpg.add_spacer(height=10)
+            dpg.add_separator()
+            dpg.add_spacer(height=6)
+            self.theme.text("Opportunity curve", "heading")
+
+            self._opportunity_midpoint = dpg.add_slider_float(
+                label="Midpoint",
+                default_value=0.44, min_value=0.30, max_value=0.65,
+                format="%.2f", width=200,
+            )
+            self._tooltip(
+                self._opportunity_midpoint,
+                "The group's share of a district at which it has a 50/50 chance to "
+                "elect its candidate of choice. About 0.44 centers the reward on "
+                "the range where that chance is realistic.",
+            )
+            self._opportunity_steepness = dpg.add_slider_float(
+                label="Steepness",
+                default_value=0.05, min_value=0.01, max_value=0.15,
+                format="%.3f", width=200,
+            )
+            self._tooltip(
+                self._opportunity_steepness,
+                "How sharply the chance rises around the midpoint; smaller = more "
+                "of a threshold, larger = more of a gradual climb.",
+            )
+            self._opportunity_solid = dpg.add_slider_float(
+                label="Solid level",
+                default_value=0.55, min_value=0.45, max_value=0.65,
+                format="%.2f", width=200,
+            )
+            self._tooltip(
+                self._opportunity_solid,
+                "The group's share of a district at which it counts as one full "
+                "opportunity district; the climb up to it is rewarded, packing "
+                "beyond it is not.",
+            )
+            dpg.add_spacer(height=10)
+            dpg.add_separator()
+            dpg.add_spacer(height=6)
+            self.theme.text("What this map is aiming for", "heading")
+            self.theme.text(
+                "Opportunity districts this state's geography can support, "
+                "by group.",
+                "muted", wrap=440,
+            )
+            dpg.add_spacer(height=4)
+            # One item per group so a dispersed group can grey out on its own.
+            self._repr_target_lbls = [
+                self.theme.text("", "body", wrap=440) for _ in range(len(GROUPS))
+            ]
+            self._repr_counts_lbl = self.theme.text(
+                "Start a run to work out the targets.", "muted", wrap=440)
 
     def _build_help_popup(self):
         # Fixed-size reader: the doc text scrolls inside its own child_window,

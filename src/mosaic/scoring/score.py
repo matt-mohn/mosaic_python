@@ -15,28 +15,35 @@ from typing import Optional
 
 import numpy as np
 
-from mosaic.scoring.precompute import PPData
-from mosaic.scoring.reock import ReockData
+from mosaic.scoring.alignment import score_alignment
+from mosaic.scoring.community_congruence import score_community_congruence
 
 # Module-scope scorer imports: nothing imports score.py back, so lazy
 # per-call imports would just be hot-loop overhead.
 from mosaic.scoring.county_splits import score_county_splits
 from mosaic.scoring.holistic_compactness import holistic_compactness_from_scores
-from mosaic.scoring.holistic_proportionality import holistic_proportionality_from_shares
 from mosaic.scoring.holistic_competitiveness import holistic_competitiveness_from_shares
+from mosaic.scoring.holistic_proportionality import holistic_proportionality_from_shares
 from mosaic.scoring.holistic_splitting import score_holistic_splitting
-from mosaic.scoring.polsby_popper import score_polsby_popper
-from mosaic.scoring.reock import score_reock
-from mosaic.scoring.alignment import score_alignment
-from mosaic.scoring.population import score_pop_deviation
-from mosaic.scoring.precompute import build_county_district_matrix
+from mosaic.scoring.minority_cohesion import score_minority_cohesion
+from mosaic.scoring.opportunity import compute_opportunity
 from mosaic.scoring.partisan import (
-    district_dem_shares, k_to_sigma, build_p_wins_matrix,
-    score_mean_median, score_efficiency_gap,
+    build_p_wins_matrix,
+    district_dem_shares,
+    k_to_sigma,
     score_dem_seats,
-    score_majority_chance, score_hinge_chance,
-    score_partisan_bias, score_partisan_gini,
+    score_efficiency_gap,
+    score_hinge_chance,
+    score_majority_chance,
+    score_mean_median,
+    score_partisan_bias,
+    score_partisan_gini,
 )
+from mosaic.scoring.polsby_popper import score_polsby_popper
+from mosaic.scoring.population import score_pop_deviation
+from mosaic.scoring.precompute import PPData, build_county_district_matrix
+from mosaic.scoring.reock import ReockData, score_reock
+from mosaic.scoring.representation import representation_from_opportunity
 
 
 @dataclass
@@ -83,6 +90,16 @@ class ScoreConfig:
     weight_hinge: float = 0.0
     hinge_threshold: int = 1      # seat count for the selected party
     hinge_dem: bool = True        # True = D wants >= threshold; False = R
+    # Demographic metrics (require VAP data; independent of election data)
+    weight_representation: float = 0.0
+    representation_unclipped: bool = True    # smoothed cap (gradient) vs hard scorecard
+    representation_mode: str = "proportional"  # "proportional" (v1); "maximize" reserved
+    weight_minority_cohesion: float = 0.0    # keep minority neighborhoods intact
+    weight_community_congruence: float = 0.0  # keep minority communities whole
+    opportunity_midpoint: float = 0.44       # logistic center on group VAP share
+    opportunity_steepness: float = 0.05      # logistic scale
+    opportunity_solid: float = 0.55          # solid-majority share = one full opportunity district
+    opportunity_smart_targets: bool = True   # local-pool feasibility + ceiling
 
 
 @dataclass
@@ -96,7 +113,7 @@ class PlanScore:
     polsby_popper: float = 0.0          # stored as 1 - mean_PP (penalty form)
     reock: float = 0.0                  # stored as 1 - mean_Reock (penalty form)
     holistic_compactness: float = 0.0   # stored as 100 - rating (penalty form)
-    pop_deviation: float = 0.0          # mean squared excess dev × 10,000
+    pop_deviation: float = 0.0          # sum squared excess dev × 100,000 / n_districts
     pop_dev_max: float = 0.0            # max |deviation| as % (display only)
     pop_dev_mean: float = 0.0           # mean |deviation| as % (display only)
     alignment: float = 0.0             # 100 * weighted mean (1 - cohesion) penalty
@@ -117,6 +134,23 @@ class PlanScore:
     majority_chance_dem: float = 0.0   # P(Dems win >= ceil(n/2) districts)
     majority_chance_rep: float = 0.0   # 1 - majority_chance_dem
     hinge_chance: float = 0.0          # P(selected party wins >= hinge_threshold)
+    # Demographic metrics
+    representation: float = 0.0            # [0, 100] penalty (lower = more proportional)
+    representation_rating: float = 0.0     # [0, 100] rating (higher = better; display)
+    opportunity_black: float = 0.0         # expected opportunity districts (display)
+    opportunity_latino: float = 0.0
+    opportunity_asian: float = 0.0
+    representation_black: float = -1.0     # per-group 0-100 rating (-1 = not applicable)
+    representation_latino: float = -1.0
+    representation_asian: float = -1.0
+    minority_cohesion: float = 0.0         # [0, 100] penalty (0 = no minority-core edges cut)
+    cohesion_black: float = -1.0           # per-group community-preservation % (-1 = n/a; display)
+    cohesion_latino: float = -1.0
+    cohesion_asian: float = -1.0
+    community_congruence: float = 0.0      # [0, 100] penalty; band PROVISIONAL, see module
+    congruence_black: float = -1.0         # per-group congruence % (-1 = n/a; display)
+    congruence_latino: float = -1.0
+    congruence_asian: float = -1.0
 
 
 def score_plan(
@@ -137,6 +171,10 @@ def score_plan(
     gop_votes: Optional[np.ndarray] = None,
     real_edge_mask: Optional[np.ndarray] = None,
     force_pop_components: bool = False,
+    vap_data: Optional[dict] = None,
+    minority_cohesion_data=None,
+    community_congruence_data=None,
+    opportunity_coords: Optional[np.ndarray] = None,
 ) -> PlanScore:
     """
     Compute the weighted plan score.
@@ -163,6 +201,13 @@ def score_plan(
     bias_raw = 0.0
     gini_pen = 0.0
     maj_d_raw = maj_r_raw = hinge_raw = 0.0
+    rep_pen = rep_rating = 0.0
+    opp_black = opp_latino = opp_asian = 0.0
+    rep_black = rep_latino = rep_asian = -1.0
+    mc_pen = 0.0
+    coh_black = coh_latino = coh_asian = -1.0
+    cc_pen = 0.0
+    cong_black = cong_latino = cong_asian = -1.0
 
     # excess/unified county scorers and holistic_splitting all need the same
     # CxD population matrix; build it once and share it.
@@ -280,17 +325,16 @@ def score_plan(
                     and assignment is not None and n_districts is not None)
 
     if has_election:
-        # Compute once; pass to all partisan functions to avoid redundant work.
+        # Shared per-iteration partisan model, reused by every metric below (and
+        # by the map's partisan display): district shares/totals + the two sigmas.
         _shares, _total_d = district_dem_shares(
             assignment, dem_votes, gop_votes, n_districts)
         _sigma_d = k_to_sigma(config.election_win_prob_at_55)
         _sigma_comb = float(np.sqrt(
             config.election_swing_sigma ** 2 + _sigma_d ** 2))
-        # majority_chance and hinge_chance (both always computed below) need the
-        # identical (M, n) Gauss-Hermite win-prob matrix. Build it once here.
-        _p_wins = build_p_wins_matrix(
-            _shares, _sigma_d, config.election_swing_sigma)
 
+        # ── Cheap tier: always computed (free riders on the shared model — each is
+        # one bincount/ndtr read — so their display panels stay live at ~no cost).
         mm_raw, mm_penalty = score_mean_median(
             assignment, dem_votes, gop_votes, n_districts,
             mode=config.mm_mode,
@@ -326,24 +370,6 @@ def score_plan(
         if config.weight_dem_seats:
             total += config.weight_dem_seats * seats_penalty
 
-        # Holistic scores piggyback on the shared partisan calibration so they
-        # rank plans consistently with the rest of the partisan stack.
-        _, hprop_pen, hprop_inv = holistic_proportionality_from_shares(
-            _shares, _total_d, _sigma_comb,
-            unclipped=config.proportionality_unclipped,
-            swing_sigma=config.election_swing_sigma,
-            p_wins=_p_wins,
-        )
-        if config.weight_holistic_proportionality:
-            total += config.weight_holistic_proportionality * hprop_pen
-
-        _, hcmp_pen = holistic_competitiveness_from_shares(
-            _shares, _sigma_comb, unclipped=config.competitiveness_unclipped,
-        )
-        if config.weight_holistic_competitiveness:
-            total += config.weight_holistic_competitiveness * hcmp_pen
-
-        # Seats-votes-curve fairness metrics (all reuse _shares/_total_d/_sigma_comb).
         bias_raw, bias_pen = score_partisan_bias(
             _shares, _total_d, _sigma_comb,
             mode=config.pbias_mode,
@@ -353,53 +379,124 @@ def score_plan(
         if config.weight_partisan_bias:
             total += config.weight_partisan_bias * bias_pen
 
-        _, gini_pen = score_partisan_gini(_shares, _total_d, _sigma_comb)
+        # ── Expensive tier: gated by weight. Each does real work — a full seat-
+        # curve sweep (gini) or the Poisson-binomial seat-count DP (majority,
+        # hinge) — so an unweighted metric is pure waste. Unweighted -> skipped,
+        # and its display panel blanks (the runner appends NaN). The (M, n)
+        # Gauss-Hermite win-prob matrix is shared by majority, hinge, and
+        # proportionality's inversion risk; build it once, only when one is on.
+        _need_pwins = bool(config.weight_majority_chance_dem
+                           or config.weight_majority_chance_rep
+                           or config.weight_hinge
+                           or config.weight_holistic_proportionality)
+        _p_wins = (build_p_wins_matrix(_shares, _sigma_d, config.election_swing_sigma)
+                   if _need_pwins else None)
+
+        if config.weight_holistic_proportionality:
+            _, hprop_pen, hprop_inv = holistic_proportionality_from_shares(
+                _shares, _total_d, _sigma_comb,
+                unclipped=config.proportionality_unclipped,
+                swing_sigma=config.election_swing_sigma,
+                p_wins=_p_wins,
+            )
+            total += config.weight_holistic_proportionality * hprop_pen
+
+        if config.weight_holistic_competitiveness:
+            _, hcmp_pen = holistic_competitiveness_from_shares(
+                _shares, _sigma_comb, unclipped=config.competitiveness_unclipped,
+            )
+            total += config.weight_holistic_competitiveness * hcmp_pen
+
         if config.weight_partisan_gini:
+            _, gini_pen = score_partisan_gini(_shares, _total_d, _sigma_comb)
             total += config.weight_partisan_gini * gini_pen
 
-        maj_d_raw, maj_r_raw, maj_d_pen, maj_r_pen = score_majority_chance(
-            assignment, dem_votes, gop_votes, n_districts,
-            win_prob_at_55=config.election_win_prob_at_55,
-            swing_sigma=config.election_swing_sigma,
-            _shares=_shares,
-            _sigma_d=_sigma_d,
-            _p_wins=_p_wins,
-        )
-        if config.weight_majority_chance_dem:
-            total += config.weight_majority_chance_dem * maj_d_pen
-        if config.weight_majority_chance_rep:
-            total += config.weight_majority_chance_rep * maj_r_pen
+        if config.weight_majority_chance_dem or config.weight_majority_chance_rep:
+            maj_d_raw, maj_r_raw, maj_d_pen, maj_r_pen = score_majority_chance(
+                assignment, dem_votes, gop_votes, n_districts,
+                win_prob_at_55=config.election_win_prob_at_55,
+                swing_sigma=config.election_swing_sigma,
+                _shares=_shares,
+                _sigma_d=_sigma_d,
+                _p_wins=_p_wins,
+            )
+            if config.weight_majority_chance_dem:
+                total += config.weight_majority_chance_dem * maj_d_pen
+            if config.weight_majority_chance_rep:
+                total += config.weight_majority_chance_rep * maj_r_pen
 
-        # Hinge — always computed so the panel updates even when weight=0
-        if config.hinge_dem:
-            dem_thr = max(1, min(config.hinge_threshold, n_districts))
-            p_hinge_d = score_hinge_chance(
-                assignment, dem_votes, gop_votes, n_districts,
-                dem_threshold=dem_thr,
-                win_prob_at_55=config.election_win_prob_at_55,
-                swing_sigma=config.election_swing_sigma,
-                _shares=_shares,
-                _sigma_d=_sigma_d,
-                _p_wins=_p_wins,
-            )
-            hinge_raw = p_hinge_d
-            hinge_pen = (1.0 - p_hinge_d) ** 1.5 * 100.0
-        else:
-            # R wants >= threshold: convert to D-perspective threshold
-            dem_thr = max(1, n_districts - config.hinge_threshold + 1)
-            p_hinge_d = score_hinge_chance(
-                assignment, dem_votes, gop_votes, n_districts,
-                dem_threshold=dem_thr,
-                win_prob_at_55=config.election_win_prob_at_55,
-                swing_sigma=config.election_swing_sigma,
-                _shares=_shares,
-                _sigma_d=_sigma_d,
-                _p_wins=_p_wins,
-            )
-            hinge_raw = 1.0 - p_hinge_d   # P(R wins >= threshold)
-            hinge_pen = (1.0 - hinge_raw) ** 1.5 * 100.0
         if config.weight_hinge:
+            if config.hinge_dem:
+                dem_thr = max(1, min(config.hinge_threshold, n_districts))
+                p_hinge_d = score_hinge_chance(
+                    assignment, dem_votes, gop_votes, n_districts,
+                    dem_threshold=dem_thr,
+                    win_prob_at_55=config.election_win_prob_at_55,
+                    swing_sigma=config.election_swing_sigma,
+                    _shares=_shares, _sigma_d=_sigma_d, _p_wins=_p_wins,
+                )
+                hinge_raw = p_hinge_d
+                hinge_pen = (1.0 - p_hinge_d) ** 1.5 * 100.0
+            else:
+                # R wants >= threshold: convert to D-perspective threshold
+                dem_thr = max(1, n_districts - config.hinge_threshold + 1)
+                p_hinge_d = score_hinge_chance(
+                    assignment, dem_votes, gop_votes, n_districts,
+                    dem_threshold=dem_thr,
+                    win_prob_at_55=config.election_win_prob_at_55,
+                    swing_sigma=config.election_swing_sigma,
+                    _shares=_shares, _sigma_d=_sigma_d, _p_wins=_p_wins,
+                )
+                hinge_raw = 1.0 - p_hinge_d   # P(R wins >= threshold)
+                hinge_pen = (1.0 - hinge_raw) ** 1.5 * 100.0
             total += config.weight_hinge * hinge_pen
+
+    # Demographic metrics — only run when VAP data is present (independent of
+    # election data). Builds the shared opportunity engine once, per proposal.
+    has_race = (vap_data is not None and assignment is not None
+                and n_districts is not None)
+    if has_race and config.weight_representation:
+        _opp = compute_opportunity(
+            assignment, vap_data, n_districts,
+            midpoint=config.opportunity_midpoint,
+            steepness=config.opportunity_steepness,
+            solid=config.opportunity_solid,
+            coords=opportunity_coords,
+            smart_targets=config.opportunity_smart_targets,
+        )
+        rep_rating, rep_pen, _rr, _reff = representation_from_opportunity(
+            _opp, mode=config.representation_mode,
+            unclipped=config.representation_unclipped,
+        )
+        opp_black, opp_latino, opp_asian = _reff["black"], _reff["latino"], _reff["asian"]
+        rep_black = _rr["black"] if _rr["black"] is not None else -1.0
+        rep_latino = _rr["latino"] if _rr["latino"] is not None else -1.0
+        rep_asian = _rr["asian"] if _rr["asian"] is not None else -1.0
+        total += config.weight_representation * rep_pen
+
+    # Neighborhood Severance — minority-weighted cut-edge penalty (keep minority
+    # neighborhoods intact). Independent of Representation. Scores the cut set:
+    # which edges the plan severs, weighted by how much minority adjacency each
+    # carries. k sets the race-blind expectation the ratio is measured against.
+    if (config.weight_minority_cohesion and minority_cohesion_data is not None
+            and n_districts is not None):
+        mc_pen, _coh = score_minority_cohesion(
+            cut_edge_indices, minority_cohesion_data, n_districts)
+        coh_black, coh_latino, coh_asian = _coh["black"], _coh["latino"], _coh["asian"]
+        total += config.weight_minority_cohesion * mc_pen
+
+    # Community Dispersion — partition penalty (keep a minority community inside
+    # as few districts as population equality allows). The complement to Minority
+    # Cohesion: that score measures boundary through minority fabric, this one
+    # measures how many pieces the community lands in, normalised by how many
+    # pieces its size forces. Needs the assignment itself, not the cut set.
+    if (config.weight_community_congruence and community_congruence_data is not None
+            and assignment is not None and n_districts is not None):
+        cc_pen, _cong = score_community_congruence(
+            assignment, community_congruence_data, n_districts, ideal_pop)
+        cong_black, cong_latino, cong_asian = (
+            _cong["black"], _cong["latino"], _cong["asian"])
+        total += config.weight_community_congruence * cc_pen
 
     return PlanScore(
         total=total,
@@ -430,4 +527,20 @@ def score_plan(
         majority_chance_dem=maj_d_raw,
         majority_chance_rep=maj_r_raw,
         hinge_chance=hinge_raw,
+        representation=rep_pen,
+        representation_rating=rep_rating,
+        opportunity_black=opp_black,
+        opportunity_latino=opp_latino,
+        opportunity_asian=opp_asian,
+        representation_black=rep_black,
+        representation_latino=rep_latino,
+        representation_asian=rep_asian,
+        minority_cohesion=mc_pen,
+        cohesion_black=coh_black,
+        cohesion_latino=coh_latino,
+        cohesion_asian=coh_asian,
+        community_congruence=cc_pen,
+        congruence_black=cong_black,
+        congruence_latino=cong_latino,
+        congruence_asian=cong_asian,
     )

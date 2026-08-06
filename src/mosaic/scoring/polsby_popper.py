@@ -14,6 +14,7 @@ polsby_popper_metric scale so that weights are comparable to other metrics:
 from __future__ import annotations
 
 import numpy as np
+from numba import njit
 
 from mosaic.scoring.precompute import PPData
 
@@ -25,7 +26,6 @@ _TWO_PI = 4.0 * 3.141592653589793
 # three sequential loops with zero temporaries. Perimeter is summed in three
 # isolated accumulators (base / eu-cut / ev-cut) combined in a fixed order. No
 # fastmath.
-from numba import njit
 
 
 @njit(cache=True)

@@ -220,8 +220,10 @@ def proximity_label_map(
         return np.arange(1, k + 1, dtype=np.int32)
 
     # NW-most starting district (mirrors nw_se anchor)
-    cx_lo = cx[nonempty_idx].min(); cx_hi = cx[nonempty_idx].max()
-    cy_lo = cy[nonempty_idx].min(); cy_hi = cy[nonempty_idx].max()
+    cx_lo = cx[nonempty_idx].min()
+    cx_hi = cx[nonempty_idx].max()
+    cy_lo = cy[nonempty_idx].min()
+    cy_hi = cy[nonempty_idx].max()
     cx_rng = max(cx_hi - cx_lo, 1e-9)
     cy_rng = max(cy_hi - cy_lo, 1e-9)
     nx_ne = (cx[nonempty_idx] - cx_lo) / cx_rng   # 0=west, 1=east

@@ -556,15 +556,11 @@ class IOMixin:
         self.runner = AlgorithmRunner(self.state)
         self._loaded_config = None
         self._has_elections = False
-        # Immediately disable election-dependent controls so there's no stale
-        # overlay state visible while the new file loads.
-        dpg.configure_item(self._partisan_overlay, enabled=False)
-        dpg.set_value(self._partisan_overlay, False)
-        dpg.configure_item(self._district_partisan, enabled=False)
-        dpg.set_value(self._district_partisan, False)
-        if self.map_view:
-            self.map_view.partisan_overlay = False
-            self.map_view.district_partisan_overlay = False
+        # Drop the map fill immediately so no stale overlay from the previous
+        # file is visible while the new one loads. _sync_fill_availability
+        # relabels the combo once the new file's data is known.
+        self._fill_avail = None
+        self._clear_fill()
         # Hot start (and Relight) were tied to the previous shapefile's map.
         self.state.update(
             current_assignment=None,
@@ -607,6 +603,22 @@ class IOMixin:
             self.state.holistic_splitting_history = []
             self.state.holistic_proportionality_history = []
             self.state.holistic_competitiveness_history = []
+            self.state.representation_black_history = []
+            self.state.representation_latino_history = []
+            self.state.representation_asian_history = []
+            self.state.representation_black_seats_history = []
+            self.state.representation_latino_seats_history = []
+            self.state.representation_asian_seats_history = []
+            self.state.congruence_black_history = []
+            self.state.congruence_latino_history = []
+            self.state.congruence_asian_history = []
+            self.state.representation_overall_history = []
+            self.state.minority_cohesion_overall_history = []
+            self.state.community_congruence_overall_history = []
+            self.state.representation_counts = [0.0, 0.0, 0.0]
+            self.state.representation_ratings = [-1.0, -1.0, -1.0]
+            self.state.opportunity_targets = {}
+            self.state.race_score_applicable = {}
             self.state.pop_deviation_history = []
             self.state.pop_dev_max_history = []
             self.state.pop_dev_mean_history = []

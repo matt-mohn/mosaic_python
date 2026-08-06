@@ -21,6 +21,7 @@ import numpy as np
 
 from mosaic.recom.recombination import GraphContext
 from mosaic.recom.tree import _NUMBA_OK
+
 if _NUMBA_OK:
     from mosaic.recom.tree import _nb_district_connected_without
 

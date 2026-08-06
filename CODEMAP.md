@@ -38,22 +38,33 @@ that owns a concern directly, instead of scanning. Line counts are approximate.
 |------|-----:|------|
 | `score.py` | 431 | `ScoreConfig`, `PlanScore`, the score aggregator |
 | `partisan.py` | 436 | Partisan metrics (EG, MM, bias, seats, gini) |
+| `opportunity.py` | 563 | Shared opportunity-to-elect engine — per-district group curves, proportional benchmark `T`, drawability gate, achievable ceiling `f(state)`, smart targets. Feeds every demographic score |
+| `community_congruence.py` | 384 | Community Dispersion — layered per-group cores, `N_eff / m` |
 | `alignment.py` | 294 | Alignment-to-reference scoring |
+| `minority_cohesion.py` | 286 | Neighborhood Severance — minority-weighted cut-edge enrichment ratio |
 | `reock.py` | 260 | Reock compactness |
 | `holistic_splitting.py` | 208 | Holistic county-congruence |
 | `precompute.py` | 192 | Per-precinct precomputation |
+| `representation.py` | 147 | Electoral Opportunity — top-`round(T)` credit vs `f(state)` |
 | `population.py` | 128 | Population deviation |
 | `cache.py` | 100 | Score cache |
 | `county_splits.py` / `polsby_popper.py` / `holistic_proportionality.py` / `holistic_competitiveness.py` | <100 each | Named single metrics |
+
+The three demographic scores are independent axes, not proxies for one another:
+Electoral Opportunity asks whether a group can elect, Neighborhood Severance
+where district lines fall through a community, Community Dispersion how many
+pieces a community lands in. Each returns its BEST value when it has nothing to
+measure, so the GUI gates them on `state.race_score_applicable` rather than on
+the score itself.
 
 ## io/ — data in/out
 
 | File | ~LOC | Owns |
 |------|-----:|------|
-| `inspect.py` | 270 | `ShapefileConfig`, `ShapefileInspection` — column detection |
+| `inspect.py` | 272 | `ShapefileConfig`, `ShapefileInspection` — column detection (population, id, county, election pairs, demographic groups) |
 | `hot_start.py` | 212 | Load an existing assignment as a warm start |
 | `export.py` | 185 | Assignment / metric CSV export |
-| `validate.py` | 155 | Shapefile validation |
+| `validate.py` | 248 | Shapefile validation — geometry, columns, demographics, connectivity |
 
 ## gui/ — Dear PyGui front end
 

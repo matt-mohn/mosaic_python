@@ -87,7 +87,7 @@ class PanelsMixin:
         ]
 
     def _build_partisanship_panel(self):
-        # Create 12 themes for partisan color gradient (using map_view palette)
+        # One bar theme per partisan-palette bucket (using map_view palette)
         from mosaic.gui.map_view import _PARTISAN_RGBA
         self._partisan_bar_themes = []
         for rgba in _PARTISAN_RGBA:
@@ -114,7 +114,7 @@ class PanelsMixin:
                 )
                 with dpg.plot_axis(dpg.mvYAxis, label="D Vote Share (%)", tag="partisan_y"):
                     self._partisan_bar_series = []
-                    for i in range(12):
+                    for i in range(len(self._partisan_bar_themes)):
                         s = dpg.add_bar_series([], [], weight=0.85, show=True)
                         dpg.bind_item_theme(s, self._partisan_bar_themes[i])
                         self._partisan_bar_series.append(s)
@@ -145,7 +145,7 @@ class PanelsMixin:
                 )
                 with dpg.plot_axis(dpg.mvYAxis, label="P(D wins) (%)", tag="win_chance_y"):
                     self._win_chance_bar_series = []
-                    for i in range(12):
+                    for i in range(len(self._partisan_bar_themes)):
                         s = dpg.add_bar_series([], [], weight=0.85, show=True)
                         dpg.bind_item_theme(s, self._partisan_bar_themes[i])
                         self._win_chance_bar_series.append(s)
@@ -233,7 +233,9 @@ class PanelsMixin:
                 with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="pp_x")
-                    with dpg.plot_axis(dpg.mvYAxis, label="Polsby-Popper (100 = circle)", tag="pp_y"):
+                    with dpg.plot_axis(
+                            dpg.mvYAxis, label="Polsby-Popper (100 = circle)",
+                            tag="pp_y"):
                         dpg.add_line_series([], [], label="PP", tag="pp_series")
             self._tooltip(
                 "pp_plot_grp",
@@ -274,6 +276,185 @@ class PanelsMixin:
             )
         dpg.set_axis_limits("reock_y", 0.0, 100.0)
 
+    def _build_representation_panel(self):
+        with dpg.window(
+            label="Electoral Opportunity", tag="panel_representation",
+            show=False, width=500, height=280,
+            pos=[_LEFT_W + 80, 80],
+            on_close=lambda: dpg.set_value(self._panel_representation_item, False),
+        ):
+            self._rep_chart_mode = dpg.add_radio_button(
+                items=["Overall", "Rating", "Seats"], default_value="Overall",
+                horizontal=True,
+            )
+            self._tooltip(
+                self._rep_chart_mode,
+                "Overall: the combined penalty actually minimized in annealing "
+                "(all races, 0 = best). Rating: per-group 0-100 opportunity rating. "
+                "Seats: live forecast of expected opportunity districts per group.",
+            )
+            with dpg.group(tag="representation_plot_grp"):
+                with dpg.plot(height=-1, width=-1, no_menus=True):
+                    dpg.add_plot_legend()
+                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="representation_x")
+                    with dpg.plot_axis(dpg.mvYAxis,
+                                       label="Penalty (0 = best)",
+                                       tag="representation_y"):
+                        dpg.add_line_series([], [], label="Overall",
+                                            tag="representation_overall_series")
+                        dpg.add_line_series([], [], label="Black",
+                                            tag="representation_black_series")
+                        dpg.add_line_series([], [], label="Latino",
+                                            tag="representation_latino_series")
+                        dpg.add_line_series([], [], label="Asian",
+                                            tag="representation_asian_series")
+            # Match the line colors to the demographic ("D") map overlay so the
+            # chart and map agree: Black=blue, Latino=green, Asian=purple.
+            from mosaic.gui.map_view import _DEMOGRAPHIC_RGB
+            for grp, series in (("black",  "representation_black_series"),
+                                ("latino", "representation_latino_series"),
+                                ("asian",  "representation_asian_series")):
+                r, g, b = _DEMOGRAPHIC_RGB[grp]
+                with dpg.theme() as _line_theme:
+                    with dpg.theme_component(dpg.mvLineSeries):
+                        dpg.add_theme_color(dpg.mvPlotCol_Line, (r, g, b, 255),
+                                            category=dpg.mvThemeCat_Plots)
+                dpg.bind_item_theme(series, _line_theme)
+            self._tooltip(
+                "representation_plot_grp",
+                "Per-group opportunity vs proportional; higher is better. "
+                "Groups below one proportional district are omitted (sit off-axis).",
+            )
+            self.theme.track(
+                dpg.add_text(
+                    "Apply a score to use this panel.",
+                    tag="representation_inactive_lbl", show=False,
+                ),
+                "muted",
+            )
+        # Pad past 0-100 so a rating pinned to the proportional 100 (or to 0)
+        # sits inside the frame instead of clipped on the border.
+        dpg.set_axis_limits("representation_y", -4.0, 104.0)
+
+    def _build_minority_cohesion_panel(self):
+        with dpg.window(
+            label="Neighborhood Severance", tag="panel_minority_cohesion",
+            show=False, width=500, height=280,
+            pos=[_LEFT_W + 100, 100],
+            on_close=lambda: dpg.set_value(self._panel_minority_cohesion_item, False),
+        ):
+            self._cohesion_chart_mode = dpg.add_radio_button(
+                items=["Overall", "By group"], default_value="Overall",
+                horizontal=True,
+            )
+            self._tooltip(
+                self._cohesion_chart_mode,
+                "Overall: the combined penalty actually minimized in annealing "
+                "(0 = best). By group: per-group share of the minority neighborhood "
+                "kept intact (higher = better).",
+            )
+            with dpg.group(tag="minority_cohesion_plot_grp"):
+                with dpg.plot(height=-1, width=-1, no_menus=True):
+                    dpg.add_plot_legend()
+                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration",
+                                      tag="minority_cohesion_x")
+                    with dpg.plot_axis(dpg.mvYAxis,
+                                       label="Penalty (0 = best)",
+                                       tag="minority_cohesion_y"):
+                        dpg.add_line_series([], [], label="Overall",
+                                            tag="minority_cohesion_overall_series")
+                        dpg.add_line_series([], [], label="Black",
+                                            tag="minority_cohesion_black_series")
+                        dpg.add_line_series([], [], label="Latino",
+                                            tag="minority_cohesion_latino_series")
+                        dpg.add_line_series([], [], label="Asian",
+                                            tag="minority_cohesion_asian_series")
+            # Same palette as the Electoral Opportunity chart and the "D" overlay.
+            from mosaic.gui.map_view import _DEMOGRAPHIC_RGB
+            for grp, series in (("black",  "minority_cohesion_black_series"),
+                                ("latino", "minority_cohesion_latino_series"),
+                                ("asian",  "minority_cohesion_asian_series")):
+                r, g, b = _DEMOGRAPHIC_RGB[grp]
+                with dpg.theme() as _line_theme:
+                    with dpg.theme_component(dpg.mvLineSeries):
+                        dpg.add_theme_color(dpg.mvPlotCol_Line, (r, g, b, 255),
+                                            category=dpg.mvThemeCat_Plots)
+                dpg.bind_item_theme(series, _line_theme)
+            self._tooltip(
+                "minority_cohesion_plot_grp",
+                "Per-group share of the minority neighborhood kept intact; higher is "
+                "better. Groups with no adjacency sit off-axis.",
+            )
+            self.theme.track(
+                dpg.add_text(
+                    "Apply a score to use this panel.",
+                    tag="minority_cohesion_inactive_lbl", show=False,
+                ),
+                "muted",
+            )
+        dpg.set_axis_limits("minority_cohesion_y", -4.0, 104.0)
+
+    def _build_community_congruence_panel(self):
+        with dpg.window(
+            label="Community Dispersion", tag="panel_community_congruence",
+            show=False, width=500, height=280,
+            pos=[_LEFT_W + 120, 120],
+            on_close=lambda: dpg.set_value(
+                self._panel_community_congruence_item, False),
+        ):
+            self._congruence_chart_mode = dpg.add_radio_button(
+                items=["Overall", "By group"], default_value="Overall",
+                horizontal=True,
+            )
+            self._tooltip(
+                self._congruence_chart_mode,
+                "Overall: the combined penalty actually minimized in annealing "
+                "(0 = best). By group: per-group congruence, how well that "
+                "group's communities sit inside single districts (higher = "
+                "better). Calibration is provisional.",
+            )
+            with dpg.group(tag="community_congruence_plot_grp"):
+                with dpg.plot(height=-1, width=-1, no_menus=True):
+                    dpg.add_plot_legend()
+                    dpg.add_plot_axis(dpg.mvXAxis, label="Iteration",
+                                      tag="community_congruence_x")
+                    with dpg.plot_axis(dpg.mvYAxis,
+                                       label="Penalty (0 = best)",
+                                       tag="community_congruence_y"):
+                        dpg.add_line_series([], [], label="Overall",
+                                            tag="community_congruence_overall_series")
+                        dpg.add_line_series([], [], label="Black",
+                                            tag="community_congruence_black_series")
+                        dpg.add_line_series([], [], label="Latino",
+                                            tag="community_congruence_latino_series")
+                        dpg.add_line_series([], [], label="Asian",
+                                            tag="community_congruence_asian_series")
+            # Same palette as the other demographic charts and the "D" overlay.
+            from mosaic.gui.map_view import _DEMOGRAPHIC_RGB
+            for grp, series in (("black",  "community_congruence_black_series"),
+                                ("latino", "community_congruence_latino_series"),
+                                ("asian",  "community_congruence_asian_series")):
+                r, g, b = _DEMOGRAPHIC_RGB[grp]
+                with dpg.theme() as _line_theme:
+                    with dpg.theme_component(dpg.mvLineSeries):
+                        dpg.add_theme_color(dpg.mvPlotCol_Line, (r, g, b, 255),
+                                            category=dpg.mvThemeCat_Plots)
+                dpg.bind_item_theme(series, _line_theme)
+            self._tooltip(
+                "community_congruence_plot_grp",
+                "Per-group congruence: how well that group's communities sit "
+                "inside single districts, against how many districts their size "
+                "forces. Higher is better. Groups with no cores sit off-axis.",
+            )
+            self.theme.track(
+                dpg.add_text(
+                    "Apply a score to use this panel.",
+                    tag="community_congruence_inactive_lbl", show=False,
+                ),
+                "muted",
+            )
+        dpg.set_axis_limits("community_congruence_y", -4.0, 104.0)
+
     def _build_hc_panel(self):
         with dpg.window(
             label="Compactness", tag="panel_hc",
@@ -311,7 +492,10 @@ class PanelsMixin:
                 with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="hsplit_x")
-                    with dpg.plot_axis(dpg.mvYAxis, label="County Congruence (penalty, 0 = best)", tag="hsplit_y"):
+                    with dpg.plot_axis(
+                            dpg.mvYAxis,
+                            label="County Congruence (penalty, 0 = best)",
+                            tag="hsplit_y"):
                         dpg.add_line_series([], [], label="Cty Cong", tag="hsplit_series")
             self._tooltip(
                 "hsplit_plot_grp",
@@ -340,9 +524,13 @@ class PanelsMixin:
                 with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="hprop_x")
-                    with dpg.plot_axis(dpg.mvYAxis, label="Proportionality (100 = best)", tag="hprop_y"):
+                    with dpg.plot_axis(
+                            dpg.mvYAxis, label="Proportionality (100 = best)",
+                            tag="hprop_y"):
                         dpg.add_line_series([], [], label="Proportionality", tag="hprop_series")
-                        dpg.add_line_series([], [], label="Inversion Risk", tag="hprop_inversion_series")
+                        dpg.add_line_series(
+                            [], [], label="Inversion Risk",
+                            tag="hprop_inversion_series")
             self._tooltip(
                 "hprop_plot_grp",
                 "Proportionality rating (higher = closer to proportional), and "
@@ -368,7 +556,9 @@ class PanelsMixin:
                 with dpg.plot(height=-1, width=-1, no_menus=True):
                     dpg.add_plot_legend()
                     dpg.add_plot_axis(dpg.mvXAxis, label="Iteration", tag="hcmp_x")
-                    with dpg.plot_axis(dpg.mvYAxis, label="Competitiveness (100 = best)", tag="hcmp_y"):
+                    with dpg.plot_axis(
+                            dpg.mvYAxis, label="Competitiveness (100 = best)",
+                            tag="hcmp_y"):
                         dpg.add_line_series([], [], label="Competitiveness", tag="hcmp_series")
             self._tooltip(
                 "hcmp_plot_grp",
@@ -613,8 +803,12 @@ class PanelsMixin:
             )
 
     def _build_score_contrib_panel(self):
+        """Horizontal bar chart: metric names on the category (Y) axis, magnitude
+        on the value (X) axis. Horizontal because the names are long enough that a
+        vertical chart forced an abbreviation table.
+        """
         self._contrib_bar_themes = []
-        for _, _, rgba in _CONTRIB_BAR_METRICS:
+        for _, rgba in _CONTRIB_BAR_METRICS:
             with dpg.theme() as t:
                 with dpg.theme_component(dpg.mvBarSeries):
                     dpg.add_theme_color(
@@ -623,37 +817,37 @@ class PanelsMixin:
                     )
             self._contrib_bar_themes.append(t)
 
+        # Width is pinned (min_size[0] == max_size[0]): the category axis is sized
+        # for the metric names, and a fixed width keeps the intro text's wrap in
+        # step with it. Height stays draggable, since the bar count varies.
+        w = 332
         with dpg.window(
             label="Score Contributors", tag="panel_score_contrib",
-            show=False, width=480, height=300,
+            show=False, width=w, height=340,
+            min_size=[w, 200], max_size=[w, 10_000],
             pos=[_LEFT_W + 80, 80],
             on_close=lambda: dpg.set_value(self._panel_contrib_item, False),
         ):
             self.theme.text(
-                "Share of total score each metric contributes - the optimizer "
-                "minimizes the total, so taller bars are driving the annealing harder.",
+                "Share of the total score each metric contributes - the "
+                "optimizer minimizes the total, so longer bars are driving the "
+                "annealing harder.",
                 "muted",
-                wrap=460,
+                wrap=w - 20,
             )
             dpg.add_spacer(height=2)
             with dpg.plot(height=-1, width=-1, no_mouse_pos=True, no_menus=True):
-                dpg.add_plot_axis(
-                    dpg.mvXAxis, tag="contrib_x",
-                    no_gridlines=True,
-                )
-                dpg.set_axis_ticks(
-                    "contrib_x",
-                    tuple((lbl, float(i + 1))
-                          for i, (_, lbl, _) in enumerate(_CONTRIB_BAR_METRICS)),
-                )
-                dpg.set_axis_limits("contrib_x", 0.5, len(_CONTRIB_BAR_METRICS) + 0.5)
-                with dpg.plot_axis(dpg.mvYAxis, label="%", tag="contrib_y"):
+                # X is the value axis, Y the category axis (horizontal bars).
+                dpg.add_plot_axis(dpg.mvXAxis, tag="contrib_x", label="% of total")
+                with dpg.plot_axis(dpg.mvYAxis, tag="contrib_y",
+                                   no_gridlines=True):
                     self._contrib_bar_series = []
-                    for i, (name, _, _) in enumerate(_CONTRIB_BAR_METRICS):
+                    for i, (name, _) in enumerate(_CONTRIB_BAR_METRICS):
                         s = dpg.add_bar_series(
-                            [float(i + 1)], [0.0], weight=0.7,
+                            [0.0], [float(i + 1)], weight=0.7, horizontal=True,
                             label="##cb{}".format(i),
                         )
                         dpg.bind_item_theme(s, self._contrib_bar_themes[i])
                         self._contrib_bar_series.append(s)
-            dpg.set_axis_limits("contrib_y", 0.0, 100.0)
+            dpg.set_axis_limits("contrib_x", 0.0, 100.0)
+            dpg.set_axis_limits("contrib_y", 0.5, len(_CONTRIB_BAR_METRICS) + 0.5)

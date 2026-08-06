@@ -13,7 +13,8 @@ import pandas as pd
 
 log = logging.getLogger("mosaic")
 
-_POP_HINTS    = {"population", "pop", "total_pop", "totpop", "pop100", "p0010001", "p001001", "pop_total"}
+_POP_HINTS    = {"population", "pop", "total_pop", "totpop", "pop100",
+                 "p0010001", "p001001", "pop_total"}
 _ID_HINTS     = {"geoid20", "geoid", "vtdid", "vtd", "precinct_id", "id", "gid", "objectid"}
 _COUNTY_HINTS = {
     "cty", "county", "countyfp20", "countyfp", "county20",
@@ -22,9 +23,31 @@ _COUNTY_HINTS = {
 # Election (DEM, GOP) column pairs to auto-detect, tried in order. Each side is
 # a set of acceptable lowercased names; the first pair where BOTH sides resolve
 # to a present, numeric column wins. Add more pairs here to widen coverage.
+# ORDER = PREFERENCE. Bare dem/rep sit last: they are generic enough to want a
+# named baseline to win first, but they are what the shipped NC sample carries.
 _ELECTION_PAIRS: tuple[tuple[set[str], set[str]], ...] = (
     ({"baseline_d"}, {"baseline_r"}),
+    ({"dem", "dem_votes", "votes_dem"}, {"rep", "gop", "rep_votes", "votes_rep"}),
 )
+# Population-by-race column-name hints per group, to PRE-FILL the demographics
+# dropdowns (case-insensitive); the user confirms/edits in the dialog -- nothing
+# is scored on a column the user did not confirm. Partial matches are fine (total
+# + any subset). white is detected only for the map overlay (scores never use it)
+# and is not a user dropdown.
+#
+# ORDER = PREFERENCE: names are checked left-to-right, first present column wins.
+# CVAP is preferred (citizen basis is the more accurate electorate for the
+# opportunity scores), VAP is the fallback -- so a file carrying BOTH bases (like
+# *_Adv) auto-fills CVAP, while a VAP-only file still auto-fills VAP. To prefer
+# VAP instead, move the cvap_* names to the back of each tuple.
+_RACE_HINTS: dict[str, tuple[str, ...]] = {
+    "total":  ("cvap_total", "cvap", "vap_total", "vap", "total_vap", "totvap", "vap100"),
+    "white":  ("cvap_white", "vap_white", "white", "vap_wht", "nh_white", "wvap"),
+    "black":  ("cvap_black", "vap_black", "black", "vap_blk", "nh_black", "bvap"),
+    "latino": ("cvap_hisp", "cvap_hispanic", "cvap_latino", "vap_latino", "latino",
+               "hispanic", "vap_hisp", "vap_hispanic", "hvap", "hisp"),
+    "asian":  ("cvap_asian", "vap_asian", "asian", "vap_asn", "nh_asian", "avap"),
+}
 
 
 @dataclass
@@ -45,6 +68,11 @@ class ShapefileConfig:
     id_col: str
     county_col: Optional[str] = None
     elections: list[tuple[str, str]] = field(default_factory=list)  # [(dem_col, gop_col)]
+    # VAP-by-race columns the user confirmed: {group: col} for "total" plus any
+    # subset of "black"/"latino"/"asian", optionally "white". None or missing
+    # "total"/no scored race = the demographic scores are unavailable. "white" is
+    # selectable but never scored -- it feeds the map's demographic overlay.
+    demographics: Optional[dict] = None
 
 
 @dataclass
@@ -66,6 +94,7 @@ class ShapefileInspection:
     hint_id_col: Optional[str] = None
     hint_county_col: Optional[str] = None
     hint_election: Optional[tuple[str, str]] = None   # (dem_col, gop_col)
+    hint_race: Optional[dict] = None                  # {group: col} VAP-by-race, or None
 
 
 # Census GEOID column names — used only for the no-fiona heuristic fallback
@@ -225,6 +254,7 @@ def inspect_shapefile(path: str | Path) -> ShapefileInspection:
             hint_id_col=_hint(cols, _ID_HINTS),
             hint_county_col=_hint(cols, _COUNTY_HINTS),
             hint_election=_hint_election(cols, col_info),
+            hint_race=_detect_race(cols, col_info),
         )
     except Exception as exc:
         log.error(f"inspect_shapefile failed: {exc}")
@@ -268,3 +298,23 @@ def _hint_election(
             continue
         return (dem, gop)
     return None
+
+
+def _detect_race(
+    cols: list[str],
+    col_info: dict[str, ColumnInfo] | None = None,
+) -> Optional[dict]:
+    """Best-effort per-group VAP column match to pre-fill the demographics
+    dropdowns. Returns {group: original_col_name} for WHATEVER resolves to a
+    present (case-insensitive), numeric column -- partial is fine (e.g. total +
+    black only). None if nothing matched. The user confirms/edits in the dialog."""
+    lower = {c.lower(): c for c in cols}
+    resolved: dict[str, str] = {}
+    for group, names in _RACE_HINTS.items():
+        col = next((lower[n] for n in names if n in lower), None)
+        if col is None:
+            continue
+        if col_info and not col_info[col].is_numeric:
+            continue
+        resolved[group] = col
+    return resolved or None

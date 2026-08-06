@@ -1,13 +1,14 @@
 """Thread-safe shared state for algorithm ↔ GUI communication."""
 
 import threading
-import numpy as np
 from dataclasses import dataclass, field
-from typing import Optional
 from enum import Enum
+from typing import Optional
 
-from mosaic.scoring.score import ScoreConfig
+import numpy as np
+
 from mosaic.recom.annealing import AnnealingConfig
+from mosaic.scoring.score import ScoreConfig
 
 
 class AlgorithmStatus(Enum):
@@ -105,6 +106,36 @@ class SharedState:
     holistic_splitting_history: list = field(default_factory=list)
     holistic_proportionality_history: list = field(default_factory=list)
     holistic_competitiveness_history: list = field(default_factory=list)
+    representation_black_history: list = field(default_factory=list)
+    representation_latino_history: list = field(default_factory=list)
+    representation_asian_history: list = field(default_factory=list)
+    representation_black_seats_history: list = field(default_factory=list)
+    representation_latino_seats_history: list = field(default_factory=list)
+    representation_asian_seats_history: list = field(default_factory=list)
+    cohesion_black_history: list = field(default_factory=list)
+    cohesion_latino_history: list = field(default_factory=list)
+    cohesion_asian_history: list = field(default_factory=list)
+    congruence_black_history: list = field(default_factory=list)
+    congruence_latino_history: list = field(default_factory=list)
+    congruence_asian_history: list = field(default_factory=list)
+    # Aggregate penalties actually minimized in annealing (the "Overall" charts).
+    representation_overall_history: list = field(default_factory=list)
+    minority_cohesion_overall_history: list = field(default_factory=list)
+    community_congruence_overall_history: list = field(default_factory=list)
+    representation_counts: list = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    representation_ratings: list = field(default_factory=lambda: [-1.0, -1.0, -1.0])
+    # Run-constant opportunity targets ({group: {target, feasible, ceiling}}),
+    # published once at run start. Display only; never updated per iteration.
+    opportunity_targets: dict = field(default_factory=dict)
+    # Groups the shapefile actually supplied a column for, and any non-blocking
+    # complaints about that selection.
+    race_groups_provided: list = field(default_factory=list)
+    race_warnings: list = field(default_factory=list)
+    # {score_id: bool} -- whether each demographic score has anything to measure
+    # in this state. All three return their BEST value when they do not (no
+    # applicable group, no adjacency mass, no cores), so a missing entry must
+    # read as "not applicable" rather than as a top score. Set at run start.
+    race_score_applicable: dict = field(default_factory=dict)
     pop_deviation_history: list = field(default_factory=list)
     pop_dev_max_history: list = field(default_factory=list)
     pop_dev_mean_history: list = field(default_factory=list)
@@ -234,6 +265,25 @@ class SharedState:
             self.holistic_splitting_history = []
             self.holistic_proportionality_history = []
             self.holistic_competitiveness_history = []
+            self.representation_black_history = []
+            self.representation_latino_history = []
+            self.representation_asian_history = []
+            self.representation_black_seats_history = []
+            self.representation_latino_seats_history = []
+            self.representation_asian_seats_history = []
+            self.cohesion_black_history = []
+            self.cohesion_latino_history = []
+            self.cohesion_asian_history = []
+            self.congruence_black_history = []
+            self.congruence_latino_history = []
+            self.congruence_asian_history = []
+            self.representation_overall_history = []
+            self.minority_cohesion_overall_history = []
+            self.community_congruence_overall_history = []
+            self.representation_counts = [0.0, 0.0, 0.0]
+            self.representation_ratings = [-1.0, -1.0, -1.0]
+            self.opportunity_targets = {}
+            self.race_score_applicable = {}
             self.pop_deviation_history = []
             self.pop_dev_max_history = []
             self.pop_dev_mean_history = []

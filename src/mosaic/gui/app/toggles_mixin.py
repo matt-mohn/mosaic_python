@@ -42,6 +42,24 @@ class TogglesMixin:
                            "accent_green" if en else "secondary")
         dpg.configure_item("reock_controls", show=en)
 
+    def _on_representation_toggle(self):
+        en = dpg.get_value(self._representation_enabled)
+        self.theme.retoken(self._representation_lbl,
+                           "accent_green" if en else "secondary")
+        dpg.configure_item("representation_controls", show=en)
+
+    def _on_minority_cohesion_toggle(self):
+        en = dpg.get_value(self._minority_cohesion_enabled)
+        self.theme.retoken(self._minority_cohesion_lbl,
+                           "accent_green" if en else "secondary")
+        dpg.configure_item("minority_cohesion_controls", show=en)
+
+    def _on_community_congruence_toggle(self):
+        en = dpg.get_value(self._community_congruence_enabled)
+        self.theme.retoken(self._community_congruence_lbl,
+                           "accent_green" if en else "secondary")
+        dpg.configure_item("community_congruence_controls", show=en)
+
     def _on_alignment_toggle(self):
         en = dpg.get_value(self._alignment_enabled)
         self.theme.retoken(self._alignment_lbl,
@@ -67,11 +85,14 @@ class TogglesMixin:
         self.theme.retoken(self._hsplit_lbl,
                            "accent_green" if en else "disabled")
         dpg.configure_item("hsplit_controls", show=en)
-        # County-Edge Bias is paired with County Congruence: enabling the score
-        # turns the bias on too (user can still switch it off separately).
+        # County-Edge Bias pairs with this score: enabling the score turns the bias
+        # on and reveals its row, so the bias is never enabled while its own
+        # control is hidden. Independent from then on.
         if en:
             dpg.set_value(self._county_bias_enabled, True)
-            dpg.configure_item("county_bias_controls", show=True)
+            dpg.set_value(self._svis_countybias, True)
+            dpg.configure_item("score_row_countybias", show=True)
+            self._on_county_bias_toggle()
 
     def _on_hprop_toggle(self):
         en = dpg.get_value(self._hprop_enabled)
@@ -161,8 +182,10 @@ class TogglesMixin:
             toggle_cb()
 
     def _on_county_bias_toggle(self):
-        dpg.configure_item("county_bias_controls",
-                           show=dpg.get_value(self._county_bias_enabled))
+        en = dpg.get_value(self._county_bias_enabled)
+        self.theme.retoken(self._county_bias_lbl,
+                           "accent_green" if en else "disabled")
+        dpg.configure_item("county_bias_controls", show=en)
 
     def _hint(self, widget: int | str, key: str, delay: float = 0.6) -> None:
         """Attach a hover tooltip to ``widget`` using the named entry from ``_HINTS``.
@@ -222,6 +245,19 @@ class TogglesMixin:
 
     def _on_panel_reock_toggle(self):
         dpg.configure_item("panel_reock", show=dpg.get_value(self._panel_reock_item))
+
+    def _on_panel_representation_toggle(self):
+        dpg.configure_item("panel_representation",
+                           show=dpg.get_value(self._panel_representation_item))
+
+    def _on_panel_minority_cohesion_toggle(self):
+        dpg.configure_item("panel_minority_cohesion",
+                           show=dpg.get_value(self._panel_minority_cohesion_item))
+
+    def _on_panel_community_congruence_toggle(self):
+        dpg.configure_item(
+            "panel_community_congruence",
+            show=dpg.get_value(self._panel_community_congruence_item))
 
     def _on_panel_hc_toggle(self):
         dpg.configure_item("panel_hc", show=dpg.get_value(self._panel_hc_item))

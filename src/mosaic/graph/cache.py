@@ -4,8 +4,8 @@ import logging
 import pickle
 from pathlib import Path
 
-import networkx as nx
 import geopandas as gpd
+import networkx as nx
 
 from mosaic.io.shapefile import shapefile_fingerprint
 from mosaic.paths import cache_dir as _default_cache_dir

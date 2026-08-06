@@ -1,8 +1,9 @@
 """Scoring functions for redistricting plans."""
 
-import numpy as np
-import networkx as nx
 from dataclasses import dataclass
+
+import networkx as nx
+import numpy as np
 
 
 @dataclass

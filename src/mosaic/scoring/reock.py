@@ -23,8 +23,14 @@ annealing treats it identically to any other component.
 
 Cached arrays (per shapefile, computed once at load):
   - dir_ext_pts: (K, n, 2) extreme vertex coords per (direction, precinct)
-  - dir_ext_proj: (K, n) projection of that vertex onto its direction
+  - dir_ext_proj: (n, K) projection of that vertex onto its direction
   - areas: (n,) precinct areas
+
+dir_ext_proj is precinct-major because the hot loop's inner index is the
+direction: (n, K) reads all K of a precinct's projections from one or two cache
+lines, where (K, n) strides n floats per direction and takes K misses per
+precinct. dir_ext_pts keeps direction-major layout — it is read only in the
+short per-district loop, K*k times, not once per precinct.
 
 Per-iteration cost (numba-compiled): one fused pass over precincts builds a
 per-(direction, district) max-projection table; a short district loop computes
@@ -66,7 +72,7 @@ class ReockData:
     function exploits that for a single fused groupby-max pass.
     """
     dir_ext_pts: np.ndarray   # (K, n, 2)
-    dir_ext_proj: np.ndarray  # (K, n)
+    dir_ext_proj: np.ndarray  # (n, K) — precinct-major; see module docstring
     areas: np.ndarray         # (n,)
 
 
@@ -82,7 +88,7 @@ def precompute_reock_data(gdf: gpd.GeoDataFrame) -> Optional[ReockData]:
     try:
         n = len(gdf)
         ext_pts = np.zeros((K_DIRS, n, 2), dtype=np.float64)
-        ext_proj = np.zeros((K_DIRS, n), dtype=np.float64)
+        ext_proj = np.zeros((n, K_DIRS), dtype=np.float64)
         with warnings.catch_warnings():
             warnings.filterwarnings(
                 "ignore", message=".*geographic CRS.*", category=UserWarning,
@@ -100,7 +106,7 @@ def precompute_reock_data(gdf: gpd.GeoDataFrame) -> Optional[ReockData]:
             projs = coords @ DIRS.T              # (n_coords, K)
             best = np.argmax(projs, axis=0)      # (K,)
             ext_pts[:, i, :] = coords[best]
-            ext_proj[:, i] = projs[best, np.arange(K_DIRS)]
+            ext_proj[i, :] = projs[best, np.arange(K_DIRS)]
 
         log.info(f"Reock data precomputed: {n} precincts, K={K_DIRS}")
         return ReockData(
@@ -123,33 +129,35 @@ def _score_reock_numba(
     district) (max_projection, argmax_precinct) table, then a district loop
     computes pairwise diameters from K cached extreme points.
     """
-    k = dir_ext_pts.shape[0]
+    k = dir_ext_proj.shape[1]
     n = assignment.shape[0]
 
-    max_proj = np.full((k, n_districts), -1e30, dtype=np.float64)
-    max_idx = np.full((k, n_districts), -1, dtype=np.int64)
+    # District-major so the inner direction loop walks contiguous memory in both
+    # passes; the tables are k*n_districts, small enough to stay resident.
+    max_proj = np.full((n_districts, k), -1e30, dtype=np.float64)
+    max_idx = np.full((n_districts, k), -1, dtype=np.int64)
     district_areas = np.zeros(n_districts, dtype=np.float64)
 
     for i in range(n):
         d = assignment[i]
         district_areas[d] += areas[i]
         for ki in range(k):
-            v = dir_ext_proj[ki, i]
-            if v > max_proj[ki, d]:
-                max_proj[ki, d] = v
-                max_idx[ki, d] = i
+            v = dir_ext_proj[i, ki]
+            if v > max_proj[d, ki]:
+                max_proj[d, ki] = v
+                max_idx[d, ki] = i
 
     total = 0.0
     for d in range(n_districts):
         d_max_sq = 0.0
         for ki in range(k):
-            pi = max_idx[ki, d]
+            pi = max_idx[d, ki]
             if pi < 0:
                 continue
             xi = dir_ext_pts[ki, pi, 0]
             yi = dir_ext_pts[ki, pi, 1]
             for kj in range(ki + 1, k):
-                pj = max_idx[kj, d]
+                pj = max_idx[d, kj]
                 if pj < 0:
                     continue
                 dx = xi - dir_ext_pts[kj, pj, 0]
@@ -202,33 +210,33 @@ def _reock_per_district_numba(
     """Per-district Reock ratio in [0, 1] (same math as _score_reock_numba, but
     returns the per-district array instead of the (1 - mean) penalty). Used only
     for map shading, so it lives apart from the hot-loop scorer."""
-    k = dir_ext_pts.shape[0]
+    k = dir_ext_proj.shape[1]
     n = assignment.shape[0]
 
-    max_proj = np.full((k, n_districts), -1e30, dtype=np.float64)
-    max_idx = np.full((k, n_districts), -1, dtype=np.int64)
+    max_proj = np.full((n_districts, k), -1e30, dtype=np.float64)
+    max_idx = np.full((n_districts, k), -1, dtype=np.int64)
     district_areas = np.zeros(n_districts, dtype=np.float64)
 
     for i in range(n):
         d = assignment[i]
         district_areas[d] += areas[i]
         for ki in range(k):
-            v = dir_ext_proj[ki, i]
-            if v > max_proj[ki, d]:
-                max_proj[ki, d] = v
-                max_idx[ki, d] = i
+            v = dir_ext_proj[i, ki]
+            if v > max_proj[d, ki]:
+                max_proj[d, ki] = v
+                max_idx[d, ki] = i
 
     out = np.zeros(n_districts, dtype=np.float64)
     for d in range(n_districts):
         d_max_sq = 0.0
         for ki in range(k):
-            pi = max_idx[ki, d]
+            pi = max_idx[d, ki]
             if pi < 0:
                 continue
             xi = dir_ext_pts[ki, pi, 0]
             yi = dir_ext_pts[ki, pi, 1]
             for kj in range(ki + 1, k):
-                pj = max_idx[kj, d]
+                pj = max_idx[d, kj]
                 if pj < 0:
                     continue
                 dx = xi - dir_ext_pts[kj, pj, 0]

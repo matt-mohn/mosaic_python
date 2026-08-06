@@ -13,6 +13,60 @@ from ._common import (
     time,
 )
 
+_NAN = float("nan")
+
+
+def _na_gap(vals):
+    """Map the -1.0 "not applicable" sentinel to NaN for charting.
+
+    The per-group demographic display values are 0-100, with -1.0 meaning the
+    group is not applicable. ImPlot skips NaN, so an N/A group draws nothing
+    instead of a flat line below the axis floor.
+    """
+    return [_NAN if v < 0.0 else v for v in vals]
+
+
+_TARGET_LABELS = (("black", "Black"), ("latino", "Latino"), ("asian", "Asian"))
+
+
+def _race_panel_msg(app, score_id: str = "") -> str:
+    """Why a demographic panel is empty: no demographic columns, nothing for this score
+    to measure in this state, or the score simply switched off."""
+    if not getattr(app, "_has_race", False):
+        return "Load demographic data to use this panel."
+    if app.state.race_score_applicable.get(score_id, True) is False:
+        return "Not applicable: nothing for this score to measure in this state."
+    return "Apply a score to use this panel."
+
+
+def _opportunity_target_lines(targets: dict,
+                              provided=()) -> list[tuple[str, str]]:
+    """Per-group opportunity-district targets as (text, theme token) pairs.
+
+    The count is what the geography can deliver (the ceiling), not the group's
+    proportional share: a group can clear the drawability gate on one marginal
+    district and still support well under a full one. A group with no column is
+    zero-filled upstream, so it must be named as missing rather than reported as
+    too small.
+    """
+    out: list[tuple[str, str]] = []
+    for key, name in _TARGET_LABELS:
+        t = targets.get(key)
+        if not t:
+            continue
+        if provided and key not in provided:
+            out.append((f"{name}: no column loaded", "disabled_deep"))
+            continue
+        drawable = int(round(t.get("ceiling", 0.0)))
+        if int(t.get("target", 0)) < 1:
+            out.append((f"{name}: too few people for a district", "disabled_deep"))
+        elif not t.get("feasible", 0) or drawable < 1:
+            out.append((f"{name}: too dispersed", "disabled_deep"))
+        else:
+            out.append((f"{name}: {drawable} district"
+                        + ("s" if drawable != 1 else ""), "body"))
+    return out
+
 
 class UpdatesMixin:
     """Per-frame UI refresh: live plots, tables, and status labels."""
@@ -234,13 +288,14 @@ class UpdatesMixin:
             pp_data_ref  = self.runner.pp_data
             reock_data_ref = self.runner.reock_data
             pop_ref      = self.runner.populations
+            vap_ref      = self.runner.vap_data
             mv = self.map_view
             def _bg_load():
                 try:
                     mv.load(gdf_ref, county_array=county_array_ref,
                             dem_votes=dem_ref, gop_votes=gop_ref,
                             pp_data=pp_data_ref, reock_data=reock_data_ref,
-                            populations=pop_ref)
+                            populations=pop_ref, vap_data=vap_ref)
                     self._map_ready = True
                 except Exception as exc:
                     import sys as _sys
@@ -501,6 +556,25 @@ class UpdatesMixin:
             _mjr  = list(self.state.majority_rep_history[self._buf_maj_rep.read:])
             _hgd  = list(self.state.hinge_history[self._buf_hinge.read:])
             _ivd  = list(self.state.inversion_history[self._buf_inversion.read:])
+            _repb = list(self.state.representation_black_history[self._buf_rep_black.read:])
+            _repl = list(self.state.representation_latino_history[self._buf_rep_latino.read:])
+            _repa = list(self.state.representation_asian_history[self._buf_rep_asian.read:])
+            _repbs = list(
+                self.state.representation_black_seats_history[self._buf_rep_black_seats.read:])
+            _repls = list(
+                self.state.representation_latino_seats_history[self._buf_rep_latino_seats.read:])
+            _repas = list(
+                self.state.representation_asian_seats_history[self._buf_rep_asian_seats.read:])
+            _cohb = list(self.state.cohesion_black_history[self._buf_coh_black.read:])
+            _cohl = list(self.state.cohesion_latino_history[self._buf_coh_latino.read:])
+            _coha = list(self.state.cohesion_asian_history[self._buf_coh_asian.read:])
+            _repov = list(self.state.representation_overall_history[self._buf_rep_overall.read:])
+            _cohov = list(self.state.minority_cohesion_overall_history[self._buf_coh_overall.read:])
+            _congb = list(self.state.congruence_black_history[self._buf_cong_black.read:])
+            _congl = list(self.state.congruence_latino_history[self._buf_cong_latino.read:])
+            _conga = list(self.state.congruence_asian_history[self._buf_cong_asian.read:])
+            _congov = list(
+                self.state.community_congruence_overall_history[self._buf_cong_overall.read:])
 
         self._buf_score.add(_sd)
         self._buf_acc.add_pairs(_ad, scale=100.0)
@@ -522,6 +596,26 @@ class UpdatesMixin:
         self._buf_hsplit.add(_hsd)
         self._buf_hprop.add([100.0 - v for v in _hpd])
         self._buf_hcmp.add([100.0 - v for v in _hmd])
+        # Per-group display values are 0-100, with -1.0 meaning "not applicable"
+        # (below one proportional district, or no opportunity district drawable).
+        # Chart that as NaN, which ImPlot skips: plotted literally it drew a flat
+        # line just under the axis floor, and clipping it by starting the axis at 0
+        # would also clip a legitimate rating of 0.
+        self._buf_rep_black.add(_na_gap(_repb))    # already 0-100 ratings (per group)
+        self._buf_rep_latino.add(_na_gap(_repl))
+        self._buf_rep_asian.add(_na_gap(_repa))
+        self._buf_coh_black.add(_na_gap(_cohb))    # community-preservation % (per group)
+        self._buf_coh_latino.add(_na_gap(_cohl))
+        self._buf_coh_asian.add(_na_gap(_coha))
+        self._buf_rep_overall.add(_repov)   # aggregate representation penalty (0 = best)
+        self._buf_coh_overall.add(_cohov)   # aggregate cohesion penalty (0 = best)
+        self._buf_cong_black.add(_na_gap(_congb))   # per-group congruence %
+        self._buf_cong_latino.add(_na_gap(_congl))
+        self._buf_cong_asian.add(_na_gap(_conga))
+        self._buf_cong_overall.add(_congov)  # aggregate congruence penalty (0 = best)
+        self._buf_rep_black_seats.add(_repbs)   # expected opportunity districts (seats)
+        self._buf_rep_latino_seats.add(_repls)
+        self._buf_rep_asian_seats.add(_repas)
         self._buf_popdev.add(_pvd)
         self._buf_popdev_max.add(_pvd_max)
         self._buf_popdev_mean.add(_pvd_mean)
@@ -672,6 +766,142 @@ class UpdatesMixin:
             dpg.configure_item("reock_inactive_lbl", show=not reock_on)
             if reock_on:
                 _render(self._buf_reock, "reock_series", "reock_x", "reock_y")
+        if dpg.is_item_shown("panel_representation"):
+            repr_on = dpg.get_value(self._representation_enabled)
+            dpg.configure_item("representation_plot_grp",     show=repr_on)
+            dpg.configure_item("representation_inactive_lbl", show=not repr_on)
+            if not repr_on:
+                dpg.set_value("representation_inactive_lbl",
+                              _race_panel_msg(self, "representation"))
+            if repr_on:
+                mode = dpg.get_value(self._rep_chart_mode)   # Overall | Rating | Seats
+                overall = mode == "Overall"
+                seats = mode == "Seats"
+                dpg.configure_item("representation_overall_series", show=overall)
+                for _s in ("representation_black_series", "representation_latino_series",
+                           "representation_asian_series"):
+                    dpg.configure_item(_s, show=not overall)
+                if mode != getattr(self, "_rep_mode", None):
+                    self._rep_mode = mode
+                    if overall:
+                        dpg.configure_item("representation_y", label="Penalty (0 = best)")
+                        dpg.set_axis_limits("representation_y", -4.0, 104.0)
+                    elif seats:
+                        dpg.configure_item("representation_y",
+                                           label="Forecast seats (opportunity districts)")
+                    else:
+                        dpg.configure_item("representation_y",
+                                           label="Rating (100 = proportional)")
+                        # Pad past 0-100 so a line pinned to 100 or 0 stays
+                        # inside the frame instead of clipped on the border.
+                        dpg.set_axis_limits("representation_y", -4.0, 104.0)
+                if overall:
+                    # The combined penalty actually minimized in annealing.
+                    _render(self._buf_rep_overall, "representation_overall_series",
+                            "representation_x", "representation_y", fit_y=False)
+                else:
+                    bufs = ((self._buf_rep_black_seats, self._buf_rep_latino_seats,
+                             self._buf_rep_asian_seats) if seats else
+                            (self._buf_rep_black, self._buf_rep_latino, self._buf_rep_asian))
+                    _render(bufs[0], "representation_black_series",
+                            "representation_x", "representation_y", fit_y=False)
+                    _render(bufs[1], "representation_latino_series",
+                            "representation_x", "representation_y", fit_y=False)
+                    _render(bufs[2], "representation_asian_series",
+                            "representation_x", "representation_y", fit_y=False)
+                    if seats:
+                        # Variable y-axis: fit to the largest forecast across the
+                        # three groups in the current window, with a little
+                        # headroom.  Seats top out at the district count, so the
+                        # fixed 0-100 rating scale would bury the lines at the
+                        # bottom.
+                        hi = 0.0
+                        for _b in bufs:
+                            if _b.ys:
+                                hi = max(hi, max(_b.plot_data(limit)[1]))
+                        dpg.set_axis_limits("representation_y", 0.0, hi * 1.15 + 0.5)
+        if dpg.is_item_shown("popup_representation"):
+            # Targets are run-constant, so rebuild the text only when they change
+            # rather than every frame the popup happens to be open.
+            _tg = self.state.opportunity_targets
+            if _tg is not getattr(self, "_repr_targets_shown", None):
+                self._repr_targets_shown = _tg
+                _lines = _opportunity_target_lines(
+                    _tg, self.state.race_groups_provided)
+                for _item, _row in zip(self._repr_target_lbls,
+                                       _lines + [None] * len(self._repr_target_lbls)):
+                    dpg.configure_item(_item, show=_row is not None)
+                    if _row is not None:
+                        dpg.set_value(_item, _row[0])
+                        self.theme.retoken(_item, _row[1])
+                dpg.configure_item(self._repr_counts_lbl, show=not _lines)
+        if dpg.is_item_shown("panel_minority_cohesion"):
+            mc_on = dpg.get_value(self._minority_cohesion_enabled)
+            dpg.configure_item("minority_cohesion_plot_grp", show=mc_on)
+            dpg.configure_item("minority_cohesion_inactive_lbl", show=not mc_on)
+            if not mc_on:
+                dpg.set_value("minority_cohesion_inactive_lbl",
+                              _race_panel_msg(self, "minority_cohesion"))
+            if mc_on:
+                overall = dpg.get_value(self._cohesion_chart_mode) == "Overall"
+                dpg.configure_item("minority_cohesion_overall_series", show=overall)
+                for _s in ("minority_cohesion_black_series",
+                           "minority_cohesion_latino_series",
+                           "minority_cohesion_asian_series"):
+                    dpg.configure_item(_s, show=not overall)
+                if overall != getattr(self, "_coh_overall_mode", None):
+                    self._coh_overall_mode = overall
+                    dpg.configure_item(
+                        "minority_cohesion_y",
+                        label="Penalty (0 = best)" if overall else "Neighborhood intact (%)")
+                    dpg.set_axis_limits("minority_cohesion_y", -4.0, 104.0)
+                if overall:
+                    # The combined penalty actually minimized in annealing.
+                    _render(self._buf_coh_overall, "minority_cohesion_overall_series",
+                            "minority_cohesion_x", "minority_cohesion_y", fit_y=False)
+                else:
+                    _render(self._buf_coh_black,  "minority_cohesion_black_series",
+                            "minority_cohesion_x", "minority_cohesion_y", fit_y=False)
+                    _render(self._buf_coh_latino, "minority_cohesion_latino_series",
+                            "minority_cohesion_x", "minority_cohesion_y", fit_y=False)
+                    _render(self._buf_coh_asian,  "minority_cohesion_asian_series",
+                            "minority_cohesion_x", "minority_cohesion_y", fit_y=False)
+        if dpg.is_item_shown("panel_community_congruence"):
+            cc_on = dpg.get_value(self._community_congruence_enabled)
+            dpg.configure_item("community_congruence_plot_grp", show=cc_on)
+            dpg.configure_item("community_congruence_inactive_lbl", show=not cc_on)
+            if not cc_on:
+                dpg.set_value("community_congruence_inactive_lbl",
+                              _race_panel_msg(self, "community_congruence"))
+            if cc_on:
+                overall = dpg.get_value(self._congruence_chart_mode) == "Overall"
+                dpg.configure_item("community_congruence_overall_series", show=overall)
+                for _s in ("community_congruence_black_series",
+                           "community_congruence_latino_series",
+                           "community_congruence_asian_series"):
+                    dpg.configure_item(_s, show=not overall)
+                if overall != getattr(self, "_cong_overall_mode", None):
+                    self._cong_overall_mode = overall
+                    dpg.configure_item(
+                        "community_congruence_y",
+                        label="Penalty (0 = best)" if overall else "Congruence (%)")
+                    dpg.set_axis_limits("community_congruence_y", -4.0, 104.0)
+                if overall:
+                    # The combined penalty actually minimized in annealing.
+                    _render(self._buf_cong_overall,
+                            "community_congruence_overall_series",
+                            "community_congruence_x", "community_congruence_y",
+                            fit_y=False)
+                else:
+                    _render(self._buf_cong_black,  "community_congruence_black_series",
+                            "community_congruence_x", "community_congruence_y",
+                            fit_y=False)
+                    _render(self._buf_cong_latino, "community_congruence_latino_series",
+                            "community_congruence_x", "community_congruence_y",
+                            fit_y=False)
+                    _render(self._buf_cong_asian,  "community_congruence_asian_series",
+                            "community_congruence_x", "community_congruence_y",
+                            fit_y=False)
         if dpg.is_item_shown("panel_hc"):
             hc_on = dpg.get_value(self._hc_enabled)
             dpg.configure_item("hc_plot_grp",     show=hc_on)
@@ -729,25 +959,30 @@ class UpdatesMixin:
         if dpg.is_item_shown("panel_cut_edges"):
             _render(self._buf_cuts, "cuts_series", "cuts_x", "cuts_y")
 
-        # Score Contributors panel — live bar chart, only active metrics shown
+        # Score Contributors panel — live horizontal bar chart, active metrics only.
+        # score_breakdown holds raw weighted contributions; shares are derived here
+        # so they sum to 100 over exactly the bars on screen.
         if dpg.is_item_shown("panel_score_contrib"):
             with self.state._lock:
                 bd = dict(self.state.score_breakdown)
-            active = [(i, name, short)
-                      for i, (name, short, _) in enumerate(_CONTRIB_BAR_METRICS)
+            active = [(i, name) for i, (name, _) in enumerate(_CONTRIB_BAR_METRICS)
                       if bd.get(name, 0.0) > 0.0]
             if active:
+                total = sum(bd[name] for _, name in active)
+                scale = 100.0 / total if total > 0.0 else 0.0
+                n = len(active)
+                # Y ascends, so lay the first metric out at the top.
                 dpg.set_axis_ticks(
-                    "contrib_x",
-                    tuple((short, float(pos + 1))
-                          for pos, (_, _, short) in enumerate(active)),
+                    "contrib_y",
+                    tuple((name, float(n - pos))
+                          for pos, (_, name) in enumerate(active)),
                 )
-                dpg.set_axis_limits("contrib_x", 0.5, len(active) + 0.5)
-            active_idx = {i for i, _, _ in active}
-            for pos, (orig_i, name, _) in enumerate(active):
-                dpg.set_value(self._contrib_bar_series[orig_i],
-                              [[float(pos + 1)], [bd[name]]])
-                dpg.configure_item(self._contrib_bar_series[orig_i], show=True)
+                dpg.set_axis_limits("contrib_y", 0.5, n + 0.5)
+                for pos, (orig_i, name) in enumerate(active):
+                    dpg.set_value(self._contrib_bar_series[orig_i],
+                                  [[bd[name] * scale], [float(n - pos)]])
+                    dpg.configure_item(self._contrib_bar_series[orig_i], show=True)
+            active_idx = {i for i, _ in active}
             for i in range(len(_CONTRIB_BAR_METRICS)):
                 if i not in active_idx:
                     dpg.configure_item(self._contrib_bar_series[i], show=False)
@@ -770,8 +1005,8 @@ class UpdatesMixin:
                 sorted_shares = np.sort(_shares)
                 ranks = np.arange(1, len(sorted_shares) + 1, dtype=float)
                 bucket_idx = np.searchsorted(_PARTISAN_BREAKS, sorted_shares, side="right") - 1
-                bucket_idx = np.clip(bucket_idx, 0, 11)
-                for bi in range(12):
+                bucket_idx = np.clip(bucket_idx, 0, len(_PARTISAN_BREAKS) - 1)
+                for bi in range(len(_PARTISAN_BREAKS)):
                     mask = bucket_idx == bi
                     dpg.set_value(
                         self._partisan_bar_series[bi],
@@ -808,8 +1043,8 @@ class UpdatesMixin:
                 sorted_p = np.sort(_p_win)
                 wranks = np.arange(1, len(sorted_p) + 1, dtype=float)
                 wbucket = np.searchsorted(_PARTISAN_BREAKS, sorted_p, side="right") - 1
-                wbucket = np.clip(wbucket, 0, 11)
-                for bi in range(12):
+                wbucket = np.clip(wbucket, 0, len(_PARTISAN_BREAKS) - 1)
+                for bi in range(len(_PARTISAN_BREAKS)):
                     mask = wbucket == bi
                     dpg.set_value(
                         self._win_chance_bar_series[bi],
@@ -861,6 +1096,11 @@ class UpdatesMixin:
             self._buf_align_mean, self._buf_align_min,
             self._buf_maj_dem, self._buf_maj_rep, self._buf_hinge,
             self._buf_inversion,
+            self._buf_rep_black, self._buf_rep_latino, self._buf_rep_asian,
+            self._buf_rep_black_seats, self._buf_rep_latino_seats, self._buf_rep_asian_seats,
+            self._buf_coh_black, self._buf_coh_latino, self._buf_coh_asian,
+            self._buf_cong_black, self._buf_cong_latino, self._buf_cong_asian,
+            self._buf_rep_overall, self._buf_coh_overall, self._buf_cong_overall,
         ):
             buf.clear()
         empty = [[], []]
@@ -873,6 +1113,18 @@ class UpdatesMixin:
             "popdev_max_series", "popdev_mean_series", "cuts_series",
             "alignment_mean_series", "alignment_min_series",
             "maj_dem_series", "maj_rep_series", "hinge_series",
+            "representation_black_series",
+            "representation_latino_series",
+            "representation_asian_series",
+            "minority_cohesion_black_series",
+            "minority_cohesion_latino_series",
+            "minority_cohesion_asian_series",
+            "community_congruence_black_series",
+            "community_congruence_latino_series",
+            "community_congruence_asian_series",
+            "representation_overall_series",
+            "minority_cohesion_overall_series",
+            "community_congruence_overall_series",
         ):
             dpg.set_value(tag, empty)
         for ax in (
@@ -903,7 +1155,7 @@ class UpdatesMixin:
         for s in self._win_chance_bar_series:
             dpg.set_value(s, empty)
         for i, s in enumerate(self._contrib_bar_series):
-            dpg.set_value(s, [[float(i + 1)], [0.0]])
+            dpg.set_value(s, [[0.0], [float(i + 1)]])   # horizontal: value, slot
 
     # ── Shapefile info label ──────────────────────────────────────────────────
 
@@ -940,40 +1192,26 @@ class UpdatesMixin:
             dpg.set_value(self._panel_cs_item, False)
             dpg.configure_item("panel_county_splits", show=False)
 
-        # Partisan overlay map toggle
+        # Map fill availability. One call replaces the old per-checkbox
+        # enable/disable + clear-if-unavailable bookkeeping: the combo relabels
+        # its entries and drops the current selection if its data just went away.
+        # PP alone is enough to shade compactness -- the overlay blends in Reock
+        # when reock_data is present and falls back to PP-only when it isn't, so
+        # don't gate on Reock.
         has_elections = bool(self.runner.election_arrays)
         self._has_elections = has_elections
-        dpg.configure_item(self._partisan_overlay, enabled=has_elections)
-        dpg.configure_item(self._district_partisan, enabled=has_elections)
-        if not has_elections:
-            if dpg.get_value(self._partisan_overlay):
-                dpg.set_value(self._partisan_overlay, False)
-                if self.map_view:
-                    self.map_view.partisan_overlay = False
-            if dpg.get_value(self._district_partisan):
-                dpg.set_value(self._district_partisan, False)
-                if self.map_view:
-                    self.map_view.district_partisan_overlay = False
-        elif self._restore_partisan_on_load:
-            self._restore_partisan_on_load = False
-            # Elections loaded from Recent; controls are already enabled above.
-            # User enables overlays manually to avoid unintended toggle.
-
-        # Compactness and Pop. Deviation map views. PP alone is enough to shade;
-        # the overlay blends in Reock when reock_data is present and falls back
-        # to PP-only when it isn't (don't gate the overlay on Reock).
         has_compact = self.runner is not None and self.runner.pp_data is not None
         has_pops = self.runner is not None and self.runner.populations is not None
-        dpg.configure_item(self._compactness_view, enabled=has_compact)
-        dpg.configure_item(self._pop_dev_view,     enabled=has_pops)
-        if not has_compact and dpg.get_value(self._compactness_view):
-            dpg.set_value(self._compactness_view, False)
-            if self.map_view:
-                self.map_view.compactness_view = False
-        if not has_pops and dpg.get_value(self._pop_dev_view):
-            dpg.set_value(self._pop_dev_view, False)
-            if self.map_view:
-                self.map_view.pop_dev_view = False
+        has_race = self.runner is not None and self.runner.vap_data is not None
+        self._has_race = has_race   # also gates the comet's demographic metrics
+        self._sync_fill_availability(
+            elections=has_elections, race=has_race,
+            compact=has_compact, pops=has_pops,
+        )
+        if has_elections and self._restore_partisan_on_load:
+            self._restore_partisan_on_load = False
+            # Elections loaded from Recent; the user picks the fill manually to
+            # avoid an unintended overlay.
 
         # Enable/disable partisan metric controls based on election data
         _pt_token = "secondary" if has_elections else "disabled_deep"
@@ -1004,6 +1242,27 @@ class UpdatesMixin:
             ]:
                 dpg.set_value(chk, False)
                 dpg.configure_item(ctrl_tag, show=False)
+        # Enable/disable demographic metric controls based on VAP data. Mirrors the
+        # partisan block above: Representation ships visible by default (its group's
+        # flagship), so without demographics loaded its checkbox has to read as
+        # unavailable rather than as a live control that silently scores 0.
+        # A score with nothing to measure here returns its BEST value for every
+        # plan, so it reads as unavailable rather than as a live control.
+        _applic = self.state.race_score_applicable
+        for chk, lbl, ctrl_tag, sid in [
+            (self._representation_enabled, self._representation_lbl,
+             "representation_controls", "representation"),
+            (self._minority_cohesion_enabled, self._minority_cohesion_lbl,
+             "minority_cohesion_controls", "minority_cohesion"),
+            (self._community_congruence_enabled, self._community_congruence_lbl,
+             "community_congruence_controls", "community_congruence"),
+        ]:
+            usable = has_race and _applic.get(sid, True) is not False
+            dpg.configure_item(chk, enabled=usable)
+            self.theme.retoken(lbl, "secondary" if usable else "disabled_deep")
+            if not usable:
+                dpg.set_value(chk, False)
+                dpg.configure_item(ctrl_tag, show=False)
         # Enable/disable partisan panel menu items; close any open ones when unavailable
         for item_tag, panel_tag in [
             (self._panel_partisan_item,   "panel_partisanship"),
@@ -1020,6 +1279,16 @@ class UpdatesMixin:
         ]:
             dpg.configure_item(item_tag, enabled=has_elections)
             if not has_elections and dpg.is_item_shown(panel_tag):
+                dpg.set_value(item_tag, False)
+                dpg.configure_item(panel_tag, show=False)
+        # Same for the demographic panels, gated on race data instead.
+        for item_tag, panel_tag in [
+            (self._panel_representation_item,       "panel_representation"),
+            (self._panel_minority_cohesion_item,    "panel_minority_cohesion"),
+            (self._panel_community_congruence_item, "panel_community_congruence"),
+        ]:
+            dpg.configure_item(item_tag, enabled=has_race)
+            if not has_race and dpg.is_item_shown(panel_tag):
                 dpg.set_value(item_tag, False)
                 dpg.configure_item(panel_tag, show=False)
 

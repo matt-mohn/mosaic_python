@@ -1,16 +1,18 @@
 """Core ReCom step implementation using igraph for performance."""
 
-import numpy as np
-import igraph as ig
 from typing import Optional
 
+import igraph as ig
+import numpy as np
+
 from mosaic.recom.tree import (
+    _NUMBA_OK,
     FbcScratch,
     find_balanced_cut_fast,
     find_balanced_cut_ig,
     try_residual_balanced_cut,
-    _NUMBA_OK,
 )
+
 if _NUMBA_OK:
     from mosaic.recom.tree import _nb_cut_edges
 

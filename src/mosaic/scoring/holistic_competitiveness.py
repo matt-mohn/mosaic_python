@@ -24,7 +24,6 @@ from __future__ import annotations
 import numpy as np
 from scipy.special import ndtr
 
-
 _CLIP_BEST   = 0.75   # clipped form: cDf >= this saturates at 0 penalty
 # Unclipped: ride the clipped slope to penalty _DIVERGE_PEN, then a power ease-out
 # curving to a flat (slope-0) landing at cDf = 1. _UNCLIP_EXP is derived so the tail

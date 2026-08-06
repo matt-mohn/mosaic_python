@@ -132,6 +132,7 @@ class MenuMixin:
                 "id_col":     config.id_col,
                 "county_col": config.county_col,
                 "elections":  config.elections,
+                "demographics": config.demographics,
             },
         }
         self._recent_shapefiles = [
@@ -176,11 +177,13 @@ class MenuMixin:
         # for dem_col, gop_col in config.elections unpacking works correctly.
         raw_elections = cfg_d.get("elections", [])
         elections = [tuple(e) for e in raw_elections if len(e) == 2]
+        demographics = cfg_d.get("demographics") or None
         config = ShapefileConfig(
             pop_col=cfg_d.get("pop_col", ""),
             id_col=cfg_d.get("id_col", ""),
             county_col=cfg_d.get("county_col"),
             elections=elections,
+            demographics=demographics,
         )
         self._pending_recent_config = config
         self._restore_partisan_on_load = bool(elections)

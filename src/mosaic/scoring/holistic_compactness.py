@@ -25,7 +25,6 @@ to raw means before mapping.
 
 from __future__ import annotations
 
-
 _REOCK_MIN  = 0.25
 _REOCK_MAX  = 0.50
 _POLSBY_MIN = 0.10

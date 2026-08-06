@@ -9,6 +9,7 @@ an optional County column, and any number of DEM/GOP election pairs.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Callable, Optional
 
 import dearpygui.dearpygui as dpg
@@ -19,7 +20,22 @@ from mosaic.io.inspect import ShapefileConfig, ShapefileInspection
 log = logging.getLogger("mosaic")
 
 _W = 580
-_H = 760
+_H = 880
+
+# Demographics dropdowns: (internal group key, display label). "latino" is keyed
+# internally but shown as "Hispanic". "white" is selectable but never scored -- it
+# feeds the map's demographic overlay, where leaving it derived mislabels a
+# precinct's plurality (a 30%-white/15%-other precinct read as 45% white).
+_DEMO_FIELDS: tuple[tuple[str, str], ...] = (
+    ("total", "Total"),
+    ("white", "White"),
+    ("black", "Black"),
+    ("latino", "Hispanic"),
+    ("asian", "Asian"),
+)
+
+# Race groups, in display order, that make up the "Other" residual.
+_NAMED_RACES: tuple[str, ...] = ("white", "black", "latino", "asian")
 
 
 class ShapefileDialog:
@@ -49,6 +65,10 @@ class ShapefileDialog:
         self._id_info: int | str = ""
         self._county_combo: int | str = ""
         self._county_info: int | str = ""
+        # Demographics: group -> combo tag (labels Total/Black/Hispanic/Asian;
+        # "latino" is the internal key for the Hispanic dropdown).
+        self._demo_combos: dict[str, int | str] = {}
+        self._demo_info: int | str = ""
         self._confirm_err: int | str = ""
 
     # ── Construction ──────────────────────────────────────────────────────────
@@ -149,10 +169,39 @@ class ShapefileDialog:
 
             dpg.add_separator()
 
-            # ── Footer ───────────────────────────────────────────────────────
-            dpg.add_spacer(height=2)
-            self._confirm_err = self.theme.text("", "error")
+            # ── Demographics ─────────────────────────────────────────────────
+            self.theme.text("Demographics", "heading")
+            self.theme.text(
+                "  Required for the demographic scores.",
+                "disabled",
+            )
             dpg.add_spacer(height=4)
+            # Table so the dropdowns share one left edge regardless of label width.
+            with dpg.table(header_row=False, policy=dpg.mvTable_SizingFixedFit,
+                           no_host_extendX=True,
+                           borders_innerH=False, borders_outerH=False,
+                           borders_innerV=False, borders_outerV=False):
+                dpg.add_table_column(width_fixed=True, init_width_or_weight=80)
+                dpg.add_table_column(width_fixed=True, init_width_or_weight=248)
+                for group, label in _DEMO_FIELDS:
+                    with dpg.table_row():
+                        self.theme.text(label + ":", "secondary")
+                        self._demo_combos[group] = dpg.add_combo(
+                            items=["(none)"], default_value="(none)",
+                            width=240,
+                            callback=self._on_demo_change,
+                        )
+            # Wrapped: with White and Other the summary outgrows one line.
+            self._demo_info = self.theme.text("", "dialog_muted", indent=14,
+                                              wrap=_W - 44)
+
+            dpg.add_separator()
+
+            # ── Footer ───────────────────────────────────────────────────────
+            # The error row is hidden until it has text: shown-but-empty it still
+            # holds a full line, which is most of the gap above the buttons.
+            self._confirm_err = self.theme.text("", "error", show=False)
+            dpg.add_spacer(height=3)
             with dpg.group(horizontal=True):
                 dpg.add_button(
                     label="Confirm and Load",
@@ -165,6 +214,12 @@ class ShapefileDialog:
                     callback=self._on_cancel_click,
                     width=80,
                 )
+
+    def _set_confirm_err(self, msg: str = "") -> None:
+        """Set (or clear) the footer error, hiding the row when there is nothing
+        to say so it takes no vertical space."""
+        dpg.set_value(self._confirm_err, msg)
+        dpg.configure_item(self._confirm_err, show=bool(msg))
 
     # ── Populate ──────────────────────────────────────────────────────────────
 
@@ -257,7 +312,15 @@ class ShapefileDialog:
                 dpg.set_value(f"shp_elec_{i}_gop", gop_col)
                 self._on_election_change(None, None, i)
 
-        dpg.set_value(self._confirm_err, "")
+        # Demographics: populate each dropdown and smart-infer the default from
+        # the detected hints (partial is fine). Nothing is scored until confirmed.
+        hint_race = inspection.hint_race or {}
+        for group, _ in _DEMO_FIELDS:
+            dpg.configure_item(self._demo_combos[group], items=["(none)"] + cols)
+            dpg.set_value(self._demo_combos[group], hint_race.get(group, "(none)"))
+        self._on_demo_change(None, None)
+
+        self._set_confirm_err()
         dpg.configure_item("shp_dialog", show=True)
 
     # ── Column-change callbacks ───────────────────────────────────────────────
@@ -270,7 +333,9 @@ class ShapefileDialog:
         if info is None:
             return
         if not info.is_numeric:
-            dpg.set_value(self._pop_info, f"  Warning: '{col}' is not numeric (dtype: {info.dtype})")
+            dpg.set_value(
+                self._pop_info,
+                f"  Warning: '{col}' is not numeric (dtype: {info.dtype})")
             self.theme.retoken(self._pop_info, "warning")
         else:
             pop_total = info.col_sum or 0.0
@@ -398,6 +463,79 @@ class ShapefileDialog:
                           f"  DEM: {dem_sum:,}  |  GOP: {gop_sum:,}  |  "
                           f"Total: {total:,}")
 
+    # ── Demographics ──────────────────────────────────────────────────────────
+
+    def _demographics_selection(self) -> dict:
+        """Current {group: col} for the non-(none) demographic dropdowns."""
+        out: dict[str, str] = {}
+        for group, _ in _DEMO_FIELDS:
+            v = dpg.get_value(self._demo_combos[group])
+            if v and v != "(none)":
+                out[group] = v
+        return out
+
+    def _election_pairs(self) -> list[tuple[str, str]]:
+        """Complete (dem, gop) column pairs from the election rows."""
+        out: list[tuple[str, str]] = []
+        for i in self._election_active:
+            dem = dpg.get_value(f"shp_elec_{i}_dem")
+            gop = dpg.get_value(f"shp_elec_{i}_gop")
+            if dem and gop:
+                out.append((dem, gop))
+        return out
+
+    def _on_demo_change(self, sender, app_data) -> None:
+        sel = self._demographics_selection()
+        gdf = self._inspection.gdf if self._inspection else None
+        if "total" not in sel or gdf is None or sel["total"] not in gdf.columns:
+            dpg.set_value(
+                self._demo_info,
+                "  Pick a Total column + >=1 group to enable the demographic scores.",
+            )
+            self.theme.retoken(self._demo_info, "dialog_muted")
+            return
+        # Validate before summarising: a non-numeric pick has no meaningful sum
+        # (pandas concatenates strings, and float() of the result is inf).
+        from mosaic.io.validate import check_demographics
+        errs, warns = check_demographics(
+            self._inspection, sel, pop_col=dpg.get_value(self._pop_combo),
+            vote_cols=self._election_pairs())
+        if errs:
+            dpg.set_value(self._demo_info, "  " + errs[0])
+            self.theme.retoken(self._demo_info, "error")
+            return
+
+        # Sums come from the inspection, which only records them for numeric
+        # columns, rather than from a live gdf sum.
+        def _total(col: str) -> float:
+            info = self._inspection.column_info.get(col)
+            v = float(info.col_sum) if info and info.col_sum is not None else 0.0
+            return v if math.isfinite(v) else 0.0
+
+        tot = _total(sel["total"])
+        parts = [f"Total {int(tot):,}"]
+        named = 0.0
+        for group, label in _DEMO_FIELDS:
+            if group == "total" or group not in sel:
+                continue
+            if tot > 0:
+                v = _total(sel[group])
+                if group in _NAMED_RACES:
+                    named += v
+                parts.append(f"{label} {v / tot:.1%}")
+        if tot > 0 and named > 0.0:
+            # Residual: everyone in no named group (Native, multiracial, other).
+            # Floored at 0 because Hispanic is an ethnicity crossing racial lines,
+            # so the named columns overlap and can sum past the total.
+            parts.append(f"Other {max(tot - named, 0.0) / tot:.1%}")
+        summary = "  " + "  |  ".join(parts)
+        if warns:
+            dpg.set_value(self._demo_info, summary + "\n  " + "\n  ".join(warns))
+            self.theme.retoken(self._demo_info, "warning")
+        else:
+            dpg.set_value(self._demo_info, summary)
+            self.theme.retoken(self._demo_info, "ok")
+
     # ── Confirm / Cancel ──────────────────────────────────────────────────────
 
     def _collect_config(self) -> Optional[ShapefileConfig]:
@@ -406,18 +544,12 @@ class ShapefileDialog:
         county_val = dpg.get_value(self._county_combo)
         county_col = None if (not county_val or county_val == "(none)") else county_val
 
-        elections: list[tuple[str, str]] = []
-        for i in self._election_active:
-            dem = dpg.get_value(f"shp_elec_{i}_dem")
-            gop = dpg.get_value(f"shp_elec_{i}_gop")
-            if dem and gop:
-                elections.append((dem, gop))
-
         return ShapefileConfig(
             pop_col=pop_col,
             id_col=id_col,
             county_col=county_col,
-            elections=elections,
+            elections=self._election_pairs(),
+            demographics=(self._demographics_selection() or None),
         )
 
     def _on_confirm_click(self) -> None:
@@ -428,16 +560,26 @@ class ShapefileDialog:
         insp = self._inspection
 
         if not config.pop_col:
-            dpg.set_value(self._confirm_err, "Please select a Population column.")
+            self._set_confirm_err("Please select a Population column.")
             return
         if not config.id_col:
-            dpg.set_value(self._confirm_err, "Please select a Precinct ID column.")
+            self._set_confirm_err("Please select a Precinct ID column.")
             return
+        # Demographics: all-none is fine (scores just unavailable); a partial
+        # selection is not -- require Total + at least one race, or clear it.
+        if config.demographics:
+            from mosaic.io.validate import check_demographics
+            demo_err, _ = check_demographics(
+                insp, config.demographics, pop_col=config.pop_col,
+                vote_cols=config.elections)
+            if demo_err:
+                self._set_confirm_err(demo_err[0] + " Or clear all demographic fields.")
+                return
 
-        from mosaic.io.validate import check_geometry, check_columns
+        from mosaic.io.validate import check_columns, check_geometry
         geom_issues = check_geometry(insp)
         if geom_issues:
-            dpg.set_value(self._confirm_err, geom_issues[0])
+            self._set_confirm_err(geom_issues[0])
             return
         col_issues = check_columns(
             insp,
@@ -446,7 +588,7 @@ class ShapefileDialog:
             county_col=config.county_col,
         )
         if col_issues:
-            dpg.set_value(self._confirm_err, col_issues[0])
+            self._set_confirm_err(col_issues[0])
             return
 
         dpg.configure_item("shp_dialog", show=False)

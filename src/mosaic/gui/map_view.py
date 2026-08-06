@@ -29,11 +29,10 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+import dearpygui.dearpygui as dpg
 import geopandas as gpd
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-
-import dearpygui.dearpygui as dpg
 
 log = logging.getLogger("mosaic")
 
@@ -60,25 +59,84 @@ DISTRICT_COLORS: list[tuple[int, int, int]] = [
     (int(h[1:3], 16), int(h[3:5], 16), int(h[5:7], 16)) for h in _HEX
 ]
 
-# Classic Mosaic partisan colour scale (PARTISAN_COLORS / PARTISAN_BREAKS from graphics.R)
+# Partisan colour scale on Dem two-party share. Both ends sit 2.0:1 against the
+# black district border (relative luminance 0.05); steps are even in L* inward.
+# Regenerate: dev/gen_spectrum.py
 _PARTISAN_BREAKS = np.array(
-    [0.0, 0.1, 0.2, 0.3, 0.4, 0.45, 0.5, 0.55, 0.6, 0.7, 0.8, 0.9],
+    [0.00, 0.10, 0.20, 0.30, 0.35, 0.40, 0.45,
+     0.50, 0.55, 0.60, 0.65, 0.70, 0.80, 0.90],
     dtype=np.float64,
 )
 _PARTISAN_RGBA = np.array([
-    [168,   0,   0, 255],  # #A80000  deep red
-    [194,  27,  24, 255],  # #C21B18  dark red
-    [215,  47,  48, 255],  # #D72F30  red
-    [215,  93,  93, 255],  # #D75D5D  medium red
-    [226, 127, 127, 255],  # #E27F7F  light red
-    [255, 178, 178, 255],  # #FFB2B2  very light red/pink
-    [211, 217, 255, 255],  # #D3D9FF  very light blue/lavender
-    [121, 150, 226, 255],  # #7996E2  light blue
-    [102, 116, 222, 255],  # #6674DE  medium blue
-    [ 88,  76, 222, 255],  # #584CDE  blue
-    [ 57,  51, 229, 255],  # #3933E5  dark blue
-    [ 37,  33, 152, 255],  # #252198  deep blue/navy
+    [132,   0,  36, 255],  # #840024  wine
+    [174,   8,  42, 255],  # #AE082A  deep red
+    [218,  22,  41, 255],  # #DA1629  red
+    [227,  91,  76, 255],  # #E35B4C  medium red
+    [234, 133, 122, 255],  # #EA857A  light red
+    [243, 170, 162, 255],  # #F3AAA2  pale red
+    [252, 204, 200, 255],  # #FCCCC8  very pale red
+    [204, 214, 253, 255],  # #CCD6FD  very pale blue
+    [166, 187, 246, 255],  # #A6BBF6  pale blue
+    [127, 159, 241, 255],  # #7F9FF1  light blue
+    [ 82, 131, 240, 255],  # #5283F0  medium blue
+    [ 59,  96, 241, 255],  # #3B60F1  blue
+    [ 52,  48, 244, 255],  # #3430F4  deep blue
+    [ 49,   0, 204, 255],  # #3100CC  blue-violet
 ], dtype=np.uint8)
+
+# Demographic chart palette, group order ("white","black","latino","asian"). Hues
+# sit off the partisan red/blue axis so a demographic map cannot be mistaken for a
+# partisan one. Shared with the demographic score charts
+# (panels_mixin) so the three never drift; each is its ramp sampled at 55% share.
+_DEMOGRAPHIC_GROUPS = ("white", "black", "latino", "asian")
+_DEMOGRAPHIC_RGB = {
+    "white":  (183, 88,  0  ),   # orange
+    "black":  (16,  126, 146),   # cyan
+    "latino": (11,  133, 37 ),   # green
+    "asian":  (193, 11,  225),   # magenta
+}
+
+# Demographic-overlay ramp, indexed by the dominant group's share in whole
+# percent from 35 to 100. Below 35% a district is flat grey; crossing 50% snaps
+# chroma from muted to full; 70-100% is compressed; the 100% end sits 2.0:1
+# against the black district border. Regenerate: dev/gen_race_v3.py
+_DEMO_GRAY = np.array([210, 210, 210], dtype=np.uint8)
+_DEMO_RAMP_FLOOR = 0.35
+_DEMO_RAMP_HEX = {
+    "white":
+        "D2D2D2 D4CBC7 D4C6BD D3C0B4 D2BAAB D2B4A3 D0AF9B CFA992 CEA38B CB9E82 CA987A "
+        "C9987A CA9779 C99778 C99778 C36007 C05F0C BF5C00 BB5C06 B85B0B B75800 B35704 "
+        "B0560B AE5400 AB5305 A8520B A65001 A34F06 A14D00 9E4C02 9A4B06 994900 964803 "
+        "924706 914500 8D4403 8D4301 8C4200 894204 894101 884000 854004 853F01 843E00 "
+        "823E04 813D01 803C00 7F3B00 7D3B02 7C3A00 7B3900 793902 783800 783700 753702 "
+        "753600 743500 723502 713400 703300 6E3302 6D3200 6D3100 6C3000 6A3001 692F00 ",
+    "black":
+        "D2D2D2 C5CFD1 BACBD0 AFC8CE A5C4CB 9CC0CA 92BDC7 87B9C5 7DB5C2 73B1C0 69ADBD "
+        "68ADBD 67ACBC 66ACBC 66ACBC 06889E 0D869B 00849A 048297 0B8095 107E92 037C90 "
+        "0A7A8E 0F788B 03768A 097487 007386 067183 0B6F81 016D7F 066B7D 0A697A 016778 "
+        "066576 006375 046272 006171 086070 045F6F 005E6E 075D6C 045C6B 005B6A 075A69 "
+        "035968 005867 005767 045665 025665 005564 055462 025361 005260 04515F 01505E "
+        "004F5D 044E5B 024D5B 004D5A 004C59 024B58 004A57 004956 024854 004753 004653 ",
+    "latino":
+        "D2D2D2 C8CFC8 C0CBC0 B8C8B8 B0C4B0 A9C0A8 A1BDA1 9AB99A 93B593 8BB18B 84AD84 "
+        "84AD84 83AD84 82AC83 82AC82 009025 088E26 0F8B28 008A23 078824 0B8525 008421 "
+        "068122 0B7F23 017E1F 057B20 0B7921 01771E 05751E 00741B 01711C 066F1D 006E1A "
+        "036B1A 07691B 016818 07661A 056519 016518 006416 056319 026217 006115 056018 "
+        "025F16 005E14 055D17 025C15 005B13 055A16 025914 005812 055715 025613 005512 "
+        "055414 025312 005211 005210 025012 015011 004F0F 034E11 014D10 004C0E 034B10 ",
+    "asian":
+        "D2D2D2 D1CBD2 CFC5D1 CDBFD0 CBB9CE C8B4CD C5AECA C2A8C8 C0A2C6 BD9DC4 BA97C1 "
+        "BA97C2 B996C2 B996C1 B995C1 CE16F0 CD03F0 C90EEB C614E6 C501E6 C10BE1 BD12DC "
+        "BC01DC B80BD7 B413D2 B303D2 AF0CCD AC12C8 AB04C7 A70CC2 A600C2 A205BD 9E0CB9 "
+        "9D00B8 9908B3 960DAF 9508AE 9403AE 920DAA 9108A9 9003A9 8D0DA5 8D08A4 8C03A4 "
+        "8B00A3 8809A0 88049F 87009E 84099B 84059A 83009A 800996 7F0596 7F0095 7C0991 "
+        "7C0591 7B0190 7A008F 77068C 77018B 76008A 730588 730287 720086 6F0583 6F0282 ",
+}
+_DEMO_RAMP = np.array(
+    [[[int(h[i:i + 2], 16) for i in (0, 2, 4)]
+      for h in _DEMO_RAMP_HEX[g].split()] for g in _DEMOGRAPHIC_GROUPS],
+    dtype=np.uint8,
+)   # (4 groups, 66 share steps, 3)
 
 _BG_COLOR           = np.array([18,  18,  18,  255], dtype=np.uint8)
 _BLANK_COLOR        = np.array([55,  55,  55,  220], dtype=np.uint8)
@@ -120,6 +178,22 @@ def _interp_palette(stops: np.ndarray, rgb: np.ndarray, t: np.ndarray) -> np.nda
     return np.stack([r, g, b], axis=-1).clip(0, 255).astype(np.uint8)
 
 
+def _demo_ramp_rgb(shares: np.ndarray) -> np.ndarray:
+    """Map (N, 4) group shares to (N, 3) RGB through the demographic ramp.
+
+    Each row takes its largest group's ramp indexed by that group's share in
+    whole percent; rows under the floor come back flat grey. Shared by the
+    precinct and district overlays so the two cannot drift.
+    """
+    dom = shares.argmax(axis=1)
+    s_dom = shares.max(axis=1)
+    # The epsilon keeps a share of exactly 0.50 off the muted side of the break.
+    idx = np.clip(np.floor(s_dom * 100.0 + 1e-9).astype(np.int64) - 35,
+                  0, _DEMO_RAMP.shape[1] - 1)
+    rgb = _DEMO_RAMP[dom, idx]
+    return np.where((s_dom < _DEMO_RAMP_FLOOR)[:, None], _DEMO_GRAY, rgb)
+
+
 def stable_color_mapping(
     current: np.ndarray,
     initial: np.ndarray,
@@ -132,6 +206,11 @@ def stable_color_mapping(
 
     Returns per-precinct array of colour indices in [0, k).
     """
+    # k < 2 has no colours to disambiguate, and the confidence step below reads
+    # s[:, 1] -- the runner-up overlap -- which does not exist on a (1, 1) array.
+    # A single-district plan reached this via auto-renumber on run completion.
+    if k < 2:
+        return np.zeros(len(current), dtype=np.int32)
     overlap = np.zeros((k, k), dtype=np.int32)
     for d in range(k):
         mask = current == d
@@ -177,6 +256,7 @@ class MapView:
         self._county_array: Optional[np.ndarray] = None
         self._dem_votes: Optional[np.ndarray] = None
         self._gop_votes: Optional[np.ndarray] = None
+        self._vap: Optional[dict] = None
         self._pp_data = None
         self._reock_data = None
         self._populations: Optional[np.ndarray] = None
@@ -190,12 +270,18 @@ class MapView:
         # Overlay mode flags (set by GUI callbacks)
         self.county_overlay: bool = False
         self.partisan_overlay: bool = False          # colour each precinct by its own partisan lean
-        self.district_partisan_overlay: bool = False  # colour each district by its aggregate partisan lean
+        # colour by racial composition, per district and per precinct
+        self.demographic_overlay: bool = False
+        self.precinct_demographic_overlay: bool = False
+        # colour each district by its aggregate partisan lean
+        self.district_partisan_overlay: bool = False
         self.splits_view: bool = False
-        self.compactness_view: bool = False          # colour each district by combined PP+Reock compactness
+        # colour each district by combined PP+Reock compactness
+        self.compactness_view: bool = False
         self.pop_dev_view: bool = False              # colour each district by population deviation
         self.show_labels: bool = False               # show district number labels
-        self.fast_labels: bool = False               # True: cheap centroid; False: pole-of-inaccessibility
+        # True: cheap centroid; False: pole-of-inaccessibility
+        self.fast_labels: bool = False
         self.precinct_overlay: bool = False          # faint white precinct boundaries
         self.state_outline: bool = False             # black outline around the state's geometry
         # Multiplier for state/county/district borders and label font size.
@@ -214,6 +300,7 @@ class MapView:
         pp_data=None,
         reock_data=None,
         populations: Optional[np.ndarray] = None,
+        vap_data: Optional[dict] = None,
     ) -> None:
         """
         Project geometries and rasterise each precinct into pixel_map.
@@ -225,6 +312,7 @@ class MapView:
         self._pp_data = pp_data
         self._reock_data = reock_data
         self._populations = populations
+        self._vap = vap_data
         W, H = self._w, self._h
         bounds = gdf.total_bounds
         gw = max(bounds[2] - bounds[0], 1e-9)
@@ -286,7 +374,7 @@ class MapView:
         return lut[safe]
 
     def _build_partisan_lut(self) -> np.ndarray:
-        """Per-precinct RGBA LUT using Classic Mosaic's 12-step partisan palette."""
+        """Per-precinct RGBA LUT using the partisan palette."""
         n = self._n_precincts
         dem = self._dem_votes.astype(np.float64)
         gop = self._gop_votes.astype(np.float64)
@@ -318,6 +406,46 @@ class MapView:
         idx_d = np.clip(idx_d, 0, len(_PARTISAN_RGBA) - 1)
         lut = np.zeros((n + 1, 4), dtype=np.uint8)
         lut[:n] = _PARTISAN_RGBA[idx_d[assignment]]
+        lut[n] = self._bg_color
+        return lut
+
+    def _build_demographic_lut(self, assignment: np.ndarray, n_districts: int) -> np.ndarray:
+        """Per-precinct RGBA coloured by each DISTRICT's racial composition: the
+        district takes its largest group's ramp, indexed by that group's share --
+        grey below 35%, muted up to 50%, full chroma above. orange=White,
+        cyan=Black, green=Hispanic, magenta=Asian.
+
+        Future variant to keep in mind: colour by each PRECINCT's own composition
+        (aggregate per precinct instead of by district) -- likely a separate
+        toggle later."""
+        n = self._n_precincts
+        vap = self._vap
+        tot_d = np.bincount(assignment, weights=np.asarray(vap["total"], dtype=np.float64),
+                            minlength=n_districts)
+        denom_d = np.where(tot_d > 0, tot_d, 1.0)
+        shares_d = np.stack([
+            np.bincount(assignment, weights=np.asarray(vap[g], dtype=np.float64),
+                        minlength=n_districts) / denom_d
+            for g in _DEMOGRAPHIC_GROUPS], axis=1)
+        rgb_d = _demo_ramp_rgb(shares_d)
+        lut = np.zeros((n + 1, 4), dtype=np.uint8)
+        lut[:n, :3] = rgb_d[assignment]
+        lut[:n, 3] = 255
+        lut[n] = self._bg_color
+        return lut
+
+    def _build_precinct_demographic_lut(self) -> np.ndarray:
+        """Per-precinct RGBA from each PRECINCT's own racial composition, on the
+        same ramp the district overlay uses."""
+        n = self._n_precincts
+        vap = self._vap
+        tot = np.asarray(vap["total"], dtype=np.float64)
+        denom = np.where(tot > 0, tot, 1.0)
+        shares = np.stack([np.asarray(vap[g], dtype=np.float64) / denom
+                           for g in _DEMOGRAPHIC_GROUPS], axis=1)
+        lut = np.zeros((n + 1, 4), dtype=np.uint8)
+        lut[:n, :3] = _demo_ramp_rgb(shares)
+        lut[:n, 3] = 255
         lut[n] = self._bg_color
         return lut
 
@@ -418,6 +546,7 @@ class MapView:
         self._county_array = None
         self._dem_votes = None
         self._gop_votes = None
+        self._vap = None
         self._pp_data = None
         self._reock_data = None
         self._populations = None
@@ -475,6 +604,10 @@ class MapView:
             lut = self._build_compactness_lut(assignment, n_districts)
         elif self.pop_dev_view and self._populations is not None:
             lut = self._build_pop_dev_lut(assignment, n_districts)
+        elif self.precinct_demographic_overlay and self._vap is not None:
+            lut = self._build_precinct_demographic_lut()
+        elif self.demographic_overlay and self._vap is not None:
+            lut = self._build_demographic_lut(assignment, n_districts)
         else:
             if initial is not None and len(initial) == len(assignment):
                 ci = stable_color_mapping(assignment, initial, n_districts)

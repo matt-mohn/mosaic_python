@@ -1,10 +1,11 @@
 """Initial partition generation via sequential balanced bisection."""
 
 import logging
-import numpy as np
-import networkx as nx
-import igraph as ig
 from typing import Callable
+
+import igraph as ig
+import networkx as nx
+import numpy as np
 
 from mosaic.recom.tree import find_balanced_cut_ig
 

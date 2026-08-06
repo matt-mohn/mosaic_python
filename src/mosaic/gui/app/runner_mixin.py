@@ -34,9 +34,12 @@ class RunnerMixin:
             self.state.score_history           = self.state.score_history[:n_score]
             self.state.temperature_history     = self.state.temperature_history[:n_temp]
             self.state.acceptance_rate_history = self.state.acceptance_rate_history[:n_acc]
-            self.state.county_splits_score_history    = self.state.county_splits_score_history[:n_score]
-            self.state.county_excess_splits_history   = self.state.county_excess_splits_history[:n_score]
-            self.state.county_unified_districts_history = self.state.county_unified_districts_history[:n_score]
+            self.state.county_splits_score_history = (
+                self.state.county_splits_score_history[:n_score])
+            self.state.county_excess_splits_history = (
+                self.state.county_excess_splits_history[:n_score])
+            self.state.county_unified_districts_history = (
+                self.state.county_unified_districts_history[:n_score])
             self.state.mm_history               = self.state.mm_history[:n_score]
             self.state.eg_history               = self.state.eg_history[:n_score]
             self.state.partisan_bias_history    = self.state.partisan_bias_history[:n_score]
@@ -44,10 +47,13 @@ class RunnerMixin:
             self.state.dem_seats_history        = self.state.dem_seats_history[:n_score]
             self.state.pp_history               = self.state.pp_history[:n_score]
             self.state.reock_history            = self.state.reock_history[:n_score]
-            self.state.holistic_compactness_history = self.state.holistic_compactness_history[:n_score]
+            self.state.holistic_compactness_history = (
+                self.state.holistic_compactness_history[:n_score])
             self.state.holistic_splitting_history = self.state.holistic_splitting_history[:n_score]
-            self.state.holistic_proportionality_history = self.state.holistic_proportionality_history[:n_score]
-            self.state.holistic_competitiveness_history = self.state.holistic_competitiveness_history[:n_score]
+            self.state.holistic_proportionality_history = (
+                self.state.holistic_proportionality_history[:n_score])
+            self.state.holistic_competitiveness_history = (
+                self.state.holistic_competitiveness_history[:n_score])
             self.state.pop_deviation_history = self.state.pop_deviation_history[:n_score]
             self.state.pop_dev_max_history   = self.state.pop_dev_max_history[:n_score]
             self.state.pop_dev_mean_history  = self.state.pop_dev_mean_history[:n_score]
@@ -60,6 +66,30 @@ class RunnerMixin:
             self.state.majority_rep_history     = self.state.majority_rep_history[:n_score]
             self.state.hinge_history            = self.state.hinge_history[:n_score]
             self.state.inversion_history        = self.state.inversion_history[:n_score]
+            self.state.representation_black_history = (
+                self.state.representation_black_history[:n_score])
+            self.state.representation_latino_history = (
+                self.state.representation_latino_history[:n_score])
+            self.state.representation_asian_history = (
+                self.state.representation_asian_history[:n_score])
+            self.state.representation_black_seats_history = (
+                self.state.representation_black_seats_history[:n_score])
+            self.state.representation_latino_seats_history = (
+                self.state.representation_latino_seats_history[:n_score])
+            self.state.representation_asian_seats_history = (
+                self.state.representation_asian_seats_history[:n_score])
+            self.state.cohesion_black_history  = self.state.cohesion_black_history[:n_score]
+            self.state.cohesion_latino_history = self.state.cohesion_latino_history[:n_score]
+            self.state.cohesion_asian_history  = self.state.cohesion_asian_history[:n_score]
+            self.state.representation_overall_history = (
+                self.state.representation_overall_history[:n_score])
+            self.state.minority_cohesion_overall_history = (
+                self.state.minority_cohesion_overall_history[:n_score])
+            self.state.congruence_black_history  = self.state.congruence_black_history[:n_score]
+            self.state.congruence_latino_history = self.state.congruence_latino_history[:n_score]
+            self.state.congruence_asian_history  = self.state.congruence_asian_history[:n_score]
+            self.state.community_congruence_overall_history = (
+                self.state.community_congruence_overall_history[:n_score])
 
         # Tell the worker to stop, then wait for it to exit before we touch
         # state -- a worker parked in its pause-wait loop can otherwise wake
@@ -92,6 +122,11 @@ class RunnerMixin:
             self._buf_align_mean, self._buf_align_min,
             self._buf_maj_dem, self._buf_maj_rep, self._buf_hinge,
             self._buf_inversion,
+            self._buf_rep_black, self._buf_rep_latino, self._buf_rep_asian,
+            self._buf_rep_black_seats, self._buf_rep_latino_seats, self._buf_rep_asian_seats,
+            self._buf_coh_black, self._buf_coh_latino, self._buf_coh_asian,
+            self._buf_cong_black, self._buf_cong_latino, self._buf_cong_asian,
+            self._buf_rep_overall, self._buf_coh_overall, self._buf_cong_overall,
         ):
             buf.trim_to(best_iter, n_score)
         self._buf_temp.trim_to(best_iter, n_temp)
@@ -183,6 +218,12 @@ class RunnerMixin:
                    if dpg.get_value(self._hprop_enabled) else 0.0)
         w_hcmp  = (dpg.get_value(self._w_holistic_competitiveness)
                    if dpg.get_value(self._hcmp_enabled) else 0.0)
+        w_repr = (dpg.get_value(self._w_representation)
+                  if dpg.get_value(self._representation_enabled) else 0.0)
+        w_mincoh = (dpg.get_value(self._w_minority_cohesion)
+                    if dpg.get_value(self._minority_cohesion_enabled) else 0.0)
+        w_cmtycong = (dpg.get_value(self._w_community_congruence)
+                      if dpg.get_value(self._community_congruence_enabled) else 0.0)
         w_pd   = (dpg.get_value(self._w_pop_deviation)
                   if dpg.get_value(self._popdev_enabled) else 0.0)
         # Alignment only counts when enabled AND a reference plan is loaded.
@@ -245,6 +286,15 @@ class RunnerMixin:
                           if dpg.get_value(self._hinge_enabled) else 0.0),
             hinge_threshold=max(1, min(dpg.get_value(self._hinge_threshold), n_dist_run)),
             hinge_dem=dpg.get_value(self._hinge_dem_chk),
+            weight_representation=w_repr,
+            representation_unclipped=dpg.get_value(self._representation_unclipped),
+            opportunity_midpoint=dpg.get_value(self._opportunity_midpoint),
+            opportunity_steepness=dpg.get_value(self._opportunity_steepness),
+            opportunity_solid=dpg.get_value(self._opportunity_solid),
+            opportunity_smart_targets=dpg.get_value(
+                self._opportunity_smart_targets),
+            weight_minority_cohesion=w_mincoh,
+            weight_community_congruence=w_cmtycong,
         )
 
         guided = dpg.get_value(self._cool_mode) == "Guided (recommended)"
@@ -314,6 +364,22 @@ class RunnerMixin:
             self.state.holistic_splitting_history = []
             self.state.holistic_proportionality_history = []
             self.state.holistic_competitiveness_history = []
+            self.state.representation_black_history = []
+            self.state.representation_latino_history = []
+            self.state.representation_asian_history = []
+            self.state.representation_black_seats_history = []
+            self.state.representation_latino_seats_history = []
+            self.state.representation_asian_seats_history = []
+            self.state.cohesion_black_history = []
+            self.state.cohesion_latino_history = []
+            self.state.cohesion_asian_history = []
+            self.state.congruence_black_history = []
+            self.state.congruence_latino_history = []
+            self.state.congruence_asian_history = []
+            self.state.representation_counts = [0.0, 0.0, 0.0]
+            self.state.representation_ratings = [-1.0, -1.0, -1.0]
+            self.state.opportunity_targets = {}
+            self.state.race_score_applicable = {}
             self.state.inversion_history = []
             self.state.pop_deviation_history = []
             self.state.pop_dev_max_history = []

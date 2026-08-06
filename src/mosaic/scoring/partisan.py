@@ -24,10 +24,10 @@ EG is vote-weighted: (total_wasted_dem - total_wasted_rep) / total_votes.
 from __future__ import annotations
 
 import numpy as np
-from scipy.special import ndtr, ndtri
 
 # Numba JIT for the Poisson Binomial DP inner loop.
 from numba import njit
+from scipy.special import ndtr, ndtri
 
 
 @njit(cache=True)
@@ -428,9 +428,11 @@ def score_partisan_gini(
     Returns (area, penalty in [0, 100]).
     """
     v0 = _statewide_dem_share(shares, total_d)
+    # _GINI_GRID is symmetric about 0.5, so the reflection 1 - S(1 - v) is exactly
+    # the forward curve reversed: S(1 - GRID[j]) = S(GRID[n-1-j]). One seat-curve
+    # sweep suffices; diff[j] = |S[j] - (1 - S[n-1-j])| = |S[j] + S[n-1-j] - 1|.
     s = _seat_curve(shares, sigma_comb, _GINI_GRID - v0)
-    s_refl = 1.0 - _seat_curve(shares, sigma_comb, (1.0 - _GINI_GRID) - v0)
-    diff = np.abs(s - s_refl)
+    diff = np.abs(s + s[::-1] - 1.0)
     area = float(np.sum((diff[:-1] + diff[1:]) * np.diff(_GINI_GRID)) / 2.0)
     d = min(1.0, area / _GINI_BOUND)
     return area, d * 100.0

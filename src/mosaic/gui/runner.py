@@ -7,38 +7,60 @@ from collections import deque
 from typing import Optional
 
 import geopandas as gpd
+import igraph as ig
 import networkx as nx
 import numpy as np
+
+from mosaic.graph import (
+    build_adjacency_graph,
+    get_cache_path,
+    load_cached_graph,
+    nx_to_igraph,
+    save_cached_graph,
+)
+from mosaic.gui.state import AlgorithmStatus, SharedState
+from mosaic.io.inspect import ShapefileConfig, ShapefileInspection, inspect_shapefile
+from mosaic.recom import create_initial_partition
+from mosaic.recom.annealing import (
+    accept_proposal,
+    cool_temperature,
+    init_annealing,
+    relaunch_temperature,
+)
+from mosaic.recom.flip import flip_rate_curve, flip_step_ig
+from mosaic.recom.recombination import GraphContext, recom_step_ig, recom_step_ig_n3
+from mosaic.scoring import score_plan
+from mosaic.scoring.alignment import AlignmentData
+from mosaic.scoring.cache import (
+    get_pp_cache_path,
+    load_cached_pp_data,
+    save_cached_pp_data,
+)
+from mosaic.scoring.community_congruence import (
+    CommunityCongruenceData,
+    precompute_community_congruence_data,
+)
+from mosaic.scoring.minority_cohesion import (
+    MinorityCohesionData,
+    precompute_minority_cohesion_data,
+)
+from mosaic.scoring.opportunity import (
+    opportunity_targets,
+    precompute_opportunity_coords,
+    warm_opportunity_geo,
+)
+from mosaic.scoring.precompute import (
+    PPData,
+    precompute_county_data,
+    precompute_pp_data,
+)
+from mosaic.scoring.reock import ReockData, precompute_reock_data
 
 logging.getLogger("mosaic").addHandler(logging.NullHandler())
 log = logging.getLogger("mosaic")
 
-import igraph as ig
-
-from mosaic.gui.state import SharedState, AlgorithmStatus
-from mosaic.io.inspect import inspect_shapefile, ShapefileConfig, ShapefileInspection
-from mosaic.graph import (
-    build_adjacency_graph, load_cached_graph, save_cached_graph,
-    get_cache_path, nx_to_igraph,
-)
-from mosaic.recom import create_initial_partition
-from mosaic.recom.recombination import recom_step_ig, recom_step_ig_n3, GraphContext
-from mosaic.recom.flip import flip_step_ig, flip_rate_curve
-
 # Defaults match engine.py / MosaicPy's GUI; not exposed as sliders today.
 _FLIP_STEEPNESS = 9.5
-from mosaic.recom.annealing import (
-    init_annealing, accept_proposal, cool_temperature, relaunch_temperature,
-)
-from mosaic.scoring import score_plan
-from mosaic.scoring.precompute import (
-    PPData, precompute_pp_data, precompute_county_data,
-)
-from mosaic.scoring.reock import ReockData, precompute_reock_data
-from mosaic.scoring.alignment import AlignmentData
-from mosaic.scoring.cache import (
-    get_pp_cache_path, load_cached_pp_data, save_cached_pp_data,
-)
 
 # Rolling window size for acceptance rate chart
 _ACCEPTANCE_WINDOW = 200
@@ -49,6 +71,14 @@ _ACCEPTANCE_WINDOW = 200
 # preset never gets loosened (effective_floor = min(floor, start)).
 _RATCHET_FLOOR = 0.0025        # 0.25%
 _RATCHET_RAMP_START = 0.33     # ramp begins at the 33% mark
+
+
+def _gated(weight: float, value: float) -> float:
+    """Display value for a weight-gated score: the value when weighted, else NaN.
+    score_plan skips these metrics' computation when unweighted, so their raw
+    field is a meaningless 0; NaN makes the panel show a gap instead of a false
+    zero (ImPlot skips NaN points)."""
+    return value if weight else float("nan")
 
 
 def ratchet_ceiling(progress: float, start_tol: float, floor: float) -> float:
@@ -84,14 +114,19 @@ def ratchet_step(
 
 
 def _build_score_breakdown(ps, cfg) -> dict:
-    """Return {metric_name: pct_of_total} for non-zero contributors, sorted by name."""
-    total = ps.total
-    if total <= 0:
+    """Return {metric_name: weighted contribution to the total} for non-zero
+    contributors, in _CONTRIB_BAR_METRICS order.
+
+    Raw weighted values, not percentages. Every component is a 0-floored penalty,
+    so these sum to ps.total and the shares the Score Contributors panel derives
+    from them sum to exactly 100 over the bars it draws.
+    """
+    if ps.total <= 0:
         return {}
     result = {}
     def _add(name: str, contrib: float) -> None:
         if contrib > 0:
-            result[name] = contrib / total * 100.0
+            result[name] = contrib
     _add("Cut Edges",      cfg.weight_cut_edges * ps.cut_edges)
     _add("Excess Splits",    cfg.weight_county_excess  * ps.county_excess_score)
     _add("Single-County Districts", cfg.weight_county_unified * ps.county_unified_score)
@@ -134,7 +169,14 @@ def _build_score_breakdown(ps, cfg) -> dict:
         _add("R Majority", cfg.weight_majority_chance_rep *
              (1.0 - ps.majority_chance_rep) ** 1.5 * 100)
     if cfg.weight_hinge:
-        _add("Hinge", cfg.weight_hinge * (1.0 - ps.hinge_chance) ** 1.5 * 100)
+        _add("Partisan Hinge", cfg.weight_hinge * (1.0 - ps.hinge_chance) ** 1.5 * 100)
+    if cfg.weight_representation:
+        _add("Electoral Opportunity", cfg.weight_representation * ps.representation)
+    if cfg.weight_minority_cohesion:
+        _add("Neighborhood Severance", cfg.weight_minority_cohesion * ps.minority_cohesion)
+    if cfg.weight_community_congruence:
+        _add("Community Dispersion",
+             cfg.weight_community_congruence * ps.community_congruence)
     return result
 
 
@@ -152,14 +194,31 @@ class AlgorithmRunner:
         self.county_pops: Optional[np.ndarray] = None
         self.pp_data: Optional[PPData] = None
         self.reock_data: Optional[ReockData] = None
+        self.opportunity_coords = None
         self.alignment_data: Optional[AlignmentData] = None
         self.election_arrays: list[tuple[np.ndarray, np.ndarray]] = []
+        self.vap_data: Optional[dict] = None
+        self.minority_cohesion_data: Optional[MinorityCohesionData] = None
+        self.community_congruence_data: Optional[CommunityCongruenceData] = None
         self.id_col_name: str = "precinct_id"
 
         # Holds the ShapefileInspection until the user confirms in the dialog
         self._pending_inspection: Optional[ShapefileInspection] = None
 
     # ── Phase 1: Inspect ─────────────────────────────────────────────────────
+
+    def _set_race_applicable(self, score_id: str, ok: bool) -> None:
+        """Record whether a demographic score has anything to measure here.
+
+        Each returns its best value when it does not, so the GUI has to read this
+        rather than the score itself to tell "nothing applicable" from "perfect".
+        """
+        flags = dict(self.state.race_score_applicable)
+        flags[score_id] = ok
+        self.state.race_score_applicable = flags
+        if not ok:
+            log.warning(f"{score_id}: nothing to measure in this state; "
+                        f"the score is reported as not applicable")
 
     def start_inspection(self, path: str) -> None:
         """
@@ -177,6 +236,7 @@ class AlgorithmRunner:
             # Without this catch the thread dies silently and the GUI sits on
             # "Reading shapefile..." forever.
             import sys as _sys
+
             from mosaic.crash import write_crash_log
             crash_path = write_crash_log(
                 exc, context={"phase": "start_inspection", "shapefile": path}
@@ -195,7 +255,7 @@ class AlgorithmRunner:
                     f"{type(exc).__name__}: {exc}\n"
                     f"Log: {crash_path}"
                 ),
-                status_message=f"Read failed: {type(exc).__name__} — see crash log",
+                status_message=f"Read failed: {type(exc).__name__} - see crash log",
             )
             return
         self._pending_inspection = insp
@@ -204,14 +264,14 @@ class AlgorithmRunner:
             self.state.update(
                 status=AlgorithmStatus.ERROR,
                 error_message=f"Could not read shapefile: {insp.load_error}",
-                status_message="Read failed — see error panel",
+                status_message="Read failed - see error panel",
             )
         else:
             log.info(f"Inspected {path}: {insp.n_precincts} precincts, "
                      f"{len(insp.columns)} columns")
             self.state.update(
                 status=AlgorithmStatus.IDLE,
-                status_message=f"Inspected — {insp.n_precincts:,} precincts found",
+                status_message=f"Inspected - {insp.n_precincts:,} precincts found",
                 shp_inspect_ready=True,
             )
 
@@ -235,7 +295,8 @@ class AlgorithmRunner:
             pop_series = gdf[config.pop_col]
             if pop_series.isna().any():
                 n_null = int(pop_series.isna().sum())
-                log.warning(f"Population column '{config.pop_col}' has {n_null} null value(s) — converted to 0")
+                log.warning(f"Population column '{config.pop_col}' has "
+                            f"{n_null} null value(s) - converted to 0")
                 pop_series = pop_series.fillna(0)
             self.populations = pop_series.values.astype(np.int64)
 
@@ -264,21 +325,70 @@ class AlgorithmRunner:
                     for col_name, s in ((dem_col, dem_s), (gop_col, gop_s)):
                         if s.isna().any():
                             n_null = int(s.isna().sum())
-                            log.warning(f"Election column '{col_name}' has {n_null} null value(s) — converted to 0")
+                            log.warning(
+                                f"Election column '{col_name}' has "
+                                f"{n_null} null value(s) - converted to 0")
                     dem_s = dem_s.fillna(0)
                     gop_s = gop_s.fillna(0)
                     dem = dem_s.values.astype(np.int64)
                     gop = gop_s.values.astype(np.int64)
                     self.election_arrays.append((dem, gop))
-                    log.info(f"Election: {dem_col}/{gop_col} — "
+                    log.info(f"Election: {dem_col}/{gop_col} - "
                              f"D:{dem.sum():,}  R:{gop.sum():,}")
+
+            # Race VAP arrays for the demographic scores, built from the user's
+            # confirmed selection (config.demographics = {group: col}). Needs
+            # "total" + >=1 group, else the scores stay unavailable. Unselected
+            # groups are zero-filled -- they auto-resolve to N/A in the scores.
+            # TODO(v2): prune absent groups instead of zero-filling. "white" is
+            # map-overlay only and never scored: the user's confirmed column if
+            # given, else a detected one, else the remainder (total - races).
+            from mosaic.io.validate import check_demographics
+            self.vap_data = None
+            self.state.race_groups_provided = []
+            self.state.race_warnings = []
+            demo = getattr(config, "demographics", None) or {}
+            races = [g for g in ("black", "latino", "asian") if demo.get(g) in gdf.columns]
+            if demo.get("total") in gdf.columns and races:
+                def _col(c):
+                    s = gdf[c]
+                    if s.isna().any():
+                        log.warning(f"VAP column '{c}' has {int(s.isna().sum())} "
+                                    f"null value(s) - converted to 0")
+                    return s.fillna(0).values.astype(np.int64)
+                total = _col(demo["total"])
+                vd = {"total": total}
+                for g in ("black", "latino", "asian"):
+                    vd[g] = _col(demo[g]) if demo.get(g) in gdf.columns else np.zeros_like(total)
+                white_col = (demo.get("white")
+                             or (getattr(inspection, "hint_race", None) or {}).get("white"))
+                vd["white"] = (_col(white_col) if white_col in gdf.columns
+                               else np.maximum(total - vd["black"] - vd["latino"] - vd["asian"], 0))
+                self.vap_data = vd
+                # Which groups the user actually gave a column. An unselected
+                # group is zero-filled, so without this the score cannot tell
+                # "no data" from "too few people here".
+                self.state.race_groups_provided = list(races)
+                log.info(f"Demographics: total={demo['total']} races={'/'.join(races)} - "
+                         f"total VAP {int(total.sum()):,}")
+                _, _demo_warn = check_demographics(
+                    inspection, demo, pop_col=config.pop_col,
+                    vote_cols=config.elections)
+                for _w in _demo_warn:
+                    log.warning(f"Demographics: {_w}")
+                self.state.race_warnings = list(_demo_warn)
 
             n = len(gdf)
             log.info(f"Loaded {n} precincts, total pop: {self.populations.sum():,}")
+            # Opening from Recent skips the column dialog, so the demographics
+            # complaints have nowhere else to surface.
+            _msg = f"Loaded {n:,} precincts"
+            if self.state.race_warnings:
+                _msg += f" - {self.state.race_warnings[0]}"
             self.state.update(
                 num_precincts=n,
                 total_population=int(self.populations.sum()),
-                status_message=f"Loaded {n:,} precincts",
+                status_message=_msg,
             )
 
             # Load or build adjacency graph
@@ -321,6 +431,10 @@ class AlgorithmRunner:
             self.graph_ig = nx_to_igraph(self.graph)
             self.graph_ctx = GraphContext(self.graph_ig)
 
+            # Neighborhood Severance weights are built at RUN start, not here:
+            # the unavoidable-split allowance needs ideal_pop and district count,
+            # which are only known once the user starts a run.
+
             # Geometry data for Polsby-Popper: try cache first, recompute on miss.
             pp_cache_path = get_pp_cache_path(inspection.path)
             self.pp_data = load_cached_pp_data(
@@ -341,6 +455,7 @@ class AlgorithmRunner:
 
             # Reock directional-extrema precompute (not cached — fast enough to recompute)
             self.reock_data = precompute_reock_data(gdf)
+            self.opportunity_coords = precompute_opportunity_coords(gdf)
 
             n_edges = self.graph.number_of_edges()
             log.info(f"Load complete: {n} precincts, {n_edges} edges")
@@ -353,6 +468,7 @@ class AlgorithmRunner:
 
         except Exception as e:
             import sys as _sys
+
             from mosaic.crash import write_crash_log
             shp = str(getattr(inspection, "path", "?"))
             crash_path = write_crash_log(
@@ -444,6 +560,82 @@ class AlgorithmRunner:
             else None
         )
 
+        # Neighborhood Severance: per-edge minority adjacency, precomputed per run.
+        self.minority_cohesion_data = precompute_minority_cohesion_data(
+            self.vap_data, ctx.edge_u, ctx.edge_v, ctx.real_edge_mask,
+        )
+        # Empty pool_weight means no group has any adjacency mass, and the score
+        # then returns 0 (its best value) for every plan.
+        self._set_race_applicable(
+            "minority_cohesion",
+            bool(self.minority_cohesion_data
+                 and self.minority_cohesion_data.pool_weight),
+        )
+        if self.minority_cohesion_data is not None:
+            _mc = self.minority_cohesion_data
+            log.info(
+                "Neighborhood Severance: total adjacency "
+                + ", ".join(
+                    f"{g}={_mc.total_adj.get(g, 0.0):.1f}"
+                    for g in ("black", "latino", "asian")
+                )
+                + f"; N={_mc.n_precincts}"
+            )
+
+        # Community Dispersion: layered per-group minority cores, precomputed once
+        # per run. Cores are k-independent (m is derived at score time), so this
+        # survives a change in district count.
+        self.community_congruence_data = precompute_community_congruence_data(
+            self.vap_data, self.populations,
+            ctx.edge_u, ctx.edge_v, ctx.real_edge_mask,
+        )
+        # No core above _MIN_CORE_POP means nothing to keep together, and the
+        # score then returns 0 (its best value) for every plan.
+        self._set_race_applicable(
+            "community_congruence",
+            bool(self.community_congruence_data
+                 and self.community_congruence_data.n_cores),
+        )
+        if self.community_congruence_data is not None:
+            _cc = self.community_congruence_data
+            log.info(
+                f"Community Dispersion: {_cc.n_cores} cores ("
+                + ", ".join(f"T={T:.0%}:{n}"
+                            for T, n in sorted(_cc.n_cores_by_layer.items(),
+                                               reverse=True))
+                + ")"
+            )
+
+        # Electoral Opportunity geography (smart targets): a local-pool sweep over
+        # the whole state. Memoised, but it would otherwise run inside the first
+        # scored proposal and look like a stall, so warm it here where the status
+        # line can name it. Seconds on a large state; nothing per-iteration.
+        if self.vap_data is not None and score_config.weight_representation:
+            _smart = bool(score_config.opportunity_smart_targets
+                          and self.opportunity_coords is not None)
+            _geo_kw = dict(
+                midpoint=score_config.opportunity_midpoint,
+                steepness=score_config.opportunity_steepness,
+                solid=score_config.opportunity_solid,
+                coords=self.opportunity_coords if _smart else None,
+                smart_targets=_smart,
+            )
+            if _smart:
+                self.state.update(status_message="Computing smart targets...")
+            _t0 = time.perf_counter()
+            warm_opportunity_geo(self.vap_data, num_districts, **_geo_kw)
+            if _smart:
+                log.info("Smart targets computed in "
+                         f"{time.perf_counter() - _t0:.1f}s")
+            # Run-constant; the settings popup reads this instead of tracking
+            # per-iteration ratings.
+            _targets = opportunity_targets(self.vap_data, num_districts, **_geo_kw)
+            self.state.opportunity_targets = _targets
+            self._set_race_applicable(
+                "representation",
+                any(t["target"] >= 1 and t["feasible"] for t in _targets.values()),
+            )
+
         _skw = dict(
             county_ids=self.county_array,
             county_data=county_data,
@@ -457,6 +649,10 @@ class AlgorithmRunner:
             dem_votes=self.election_arrays[0][0] if self.election_arrays else None,
             gop_votes=self.election_arrays[0][1] if self.election_arrays else None,
             real_edge_mask=ctx.real_edge_mask,
+            vap_data=self.vap_data,
+            minority_cohesion_data=self.minority_cohesion_data,
+            community_congruence_data=self.community_congruence_data,
+            opportunity_coords=self.opportunity_coords,
         )
 
         # ── Tolerance Ratchet setup ──────────────────────────────────────────
@@ -542,6 +738,10 @@ class AlgorithmRunner:
             self.state.update(initial_assignment=assignment.copy())
 
             # ── Initial score ────────────────────────────────────────────────
+            # Neighborhood Severance is a pure function of the map (an enrichment ratio
+            # against the plan's own cut fraction), so there is no per-run anchor
+            # to set here -- the same map always scores the same, including a
+            # relight reseeded from the last map.
             cut_edge_indices = ctx.compute_cut_edges(assignment)
             current_ps = score_plan(cut_edge_indices, score_config,
                                     assignment=assignment, **_skw)
@@ -555,24 +755,56 @@ class AlgorithmRunner:
                 self.state.mm_history.append(current_ps.mean_median)
                 self.state.eg_history.append(current_ps.efficiency_gap)
                 self.state.partisan_bias_history.append(current_ps.partisan_bias)
-                self.state.partisan_gini_history.append(current_ps.partisan_gini)
+                self.state.partisan_gini_history.append(
+                    _gated(score_config.weight_partisan_gini, current_ps.partisan_gini))
                 self.state.dem_seats_history.append(current_ps.dem_seats)
                 self.state.pp_history.append(1.0 - current_ps.polsby_popper / 100.0)
                 self.state.reock_history.append(1.0 - current_ps.reock / 100.0)
                 self.state.holistic_compactness_history.append(current_ps.holistic_compactness)
                 self.state.holistic_splitting_history.append(current_ps.holistic_splitting)
-                self.state.holistic_proportionality_history.append(current_ps.holistic_proportionality)
-                self.state.holistic_competitiveness_history.append(current_ps.holistic_competitiveness)
+                self.state.holistic_proportionality_history.append(
+                    _gated(score_config.weight_holistic_proportionality,
+                           current_ps.holistic_proportionality))
+                self.state.holistic_competitiveness_history.append(
+                    _gated(score_config.weight_holistic_competitiveness,
+                           current_ps.holistic_competitiveness))
                 self.state.pop_deviation_history.append(current_ps.pop_deviation)
                 self.state.pop_dev_max_history.append(current_ps.pop_dev_max)
                 self.state.pop_dev_mean_history.append(current_ps.pop_dev_mean)
                 self.state.alignment_mean_ret_history.append(current_ps.alignment_mean_ret)
                 self.state.alignment_min_ret_history.append(current_ps.alignment_min_ret)
+                self.state.representation_black_history.append(current_ps.representation_black)
+                self.state.representation_latino_history.append(current_ps.representation_latino)
+                self.state.representation_asian_history.append(current_ps.representation_asian)
+                self.state.representation_black_seats_history.append(current_ps.opportunity_black)
+                self.state.representation_latino_seats_history.append(current_ps.opportunity_latino)
+                self.state.representation_asian_seats_history.append(current_ps.opportunity_asian)
+                self.state.cohesion_black_history.append(current_ps.cohesion_black)
+                self.state.cohesion_latino_history.append(current_ps.cohesion_latino)
+                self.state.cohesion_asian_history.append(current_ps.cohesion_asian)
+                self.state.congruence_black_history.append(current_ps.congruence_black)
+                self.state.congruence_latino_history.append(current_ps.congruence_latino)
+                self.state.congruence_asian_history.append(current_ps.congruence_asian)
+                self.state.representation_overall_history.append(current_ps.representation)
+                self.state.minority_cohesion_overall_history.append(current_ps.minority_cohesion)
+                self.state.community_congruence_overall_history.append(
+                    current_ps.community_congruence)
+                self.state.representation_counts = [
+                    current_ps.opportunity_black, current_ps.opportunity_latino,
+                    current_ps.opportunity_asian]
+                self.state.representation_ratings = [
+                    current_ps.representation_black, current_ps.representation_latino,
+                    current_ps.representation_asian]
                 self.state.cut_edges_history.append(current_ps.cut_edges)
-                self.state.majority_dem_history.append(current_ps.majority_chance_dem)
-                self.state.majority_rep_history.append(current_ps.majority_chance_rep)
-                self.state.hinge_history.append(current_ps.hinge_chance)
-                self.state.inversion_history.append(current_ps.inversion_chance)
+                self.state.majority_dem_history.append(
+                    _gated(score_config.weight_majority_chance_dem, current_ps.majority_chance_dem))
+                self.state.majority_rep_history.append(
+                    _gated(score_config.weight_majority_chance_rep, current_ps.majority_chance_rep))
+                self.state.hinge_history.append(
+                    _gated(score_config.weight_hinge, current_ps.hinge_chance))
+                self.state.inversion_history.append(
+                    _gated(score_config.weight_holistic_proportionality,
+                           current_ps.inversion_chance))
 
             self.state.update(
                 status=AlgorithmStatus.RUNNING,
@@ -748,24 +980,58 @@ class AlgorithmRunner:
                     self.state.mm_history.append(current_ps.mean_median)
                     self.state.eg_history.append(current_ps.efficiency_gap)
                     self.state.partisan_bias_history.append(current_ps.partisan_bias)
-                    self.state.partisan_gini_history.append(current_ps.partisan_gini)
+                    self.state.partisan_gini_history.append(
+                        _gated(score_config.weight_partisan_gini, current_ps.partisan_gini))
                     self.state.dem_seats_history.append(current_ps.dem_seats)
                     self.state.pp_history.append(1.0 - current_ps.polsby_popper / 100.0)
                     self.state.reock_history.append(1.0 - current_ps.reock / 100.0)
                     self.state.holistic_compactness_history.append(current_ps.holistic_compactness)
                     self.state.holistic_splitting_history.append(current_ps.holistic_splitting)
-                    self.state.holistic_proportionality_history.append(current_ps.holistic_proportionality)
-                    self.state.holistic_competitiveness_history.append(current_ps.holistic_competitiveness)
+                    self.state.holistic_proportionality_history.append(
+                        _gated(score_config.weight_holistic_proportionality,
+                               current_ps.holistic_proportionality))
+                    self.state.holistic_competitiveness_history.append(
+                        _gated(score_config.weight_holistic_competitiveness,
+                               current_ps.holistic_competitiveness))
                     self.state.pop_deviation_history.append(current_ps.pop_deviation)
                     self.state.pop_dev_max_history.append(current_ps.pop_dev_max)
                     self.state.pop_dev_mean_history.append(current_ps.pop_dev_mean)
                     self.state.alignment_mean_ret_history.append(current_ps.alignment_mean_ret)
                     self.state.alignment_min_ret_history.append(current_ps.alignment_min_ret)
+                    self.state.representation_black_history.append(current_ps.representation_black)
+                    self.state.representation_latino_history.append(current_ps.representation_latino)
+                    self.state.representation_asian_history.append(current_ps.representation_asian)
+                    self.state.representation_black_seats_history.append(current_ps.opportunity_black)
+                    self.state.representation_latino_seats_history.append(current_ps.opportunity_latino)
+                    self.state.representation_asian_seats_history.append(current_ps.opportunity_asian)
+                    self.state.cohesion_black_history.append(current_ps.cohesion_black)
+                    self.state.cohesion_latino_history.append(current_ps.cohesion_latino)
+                    self.state.cohesion_asian_history.append(current_ps.cohesion_asian)
+                    self.state.congruence_black_history.append(current_ps.congruence_black)
+                    self.state.congruence_latino_history.append(current_ps.congruence_latino)
+                    self.state.congruence_asian_history.append(current_ps.congruence_asian)
+                    self.state.representation_overall_history.append(current_ps.representation)
+                    self.state.minority_cohesion_overall_history.append(current_ps.minority_cohesion)
+                    self.state.community_congruence_overall_history.append(
+                        current_ps.community_congruence)
+                    self.state.representation_counts = [
+                        current_ps.opportunity_black, current_ps.opportunity_latino,
+                        current_ps.opportunity_asian]
+                    self.state.representation_ratings = [
+                        current_ps.representation_black, current_ps.representation_latino,
+                        current_ps.representation_asian]
                     self.state.cut_edges_history.append(current_ps.cut_edges)
-                    self.state.majority_dem_history.append(current_ps.majority_chance_dem)
-                    self.state.majority_rep_history.append(current_ps.majority_chance_rep)
-                    self.state.hinge_history.append(current_ps.hinge_chance)
-                    self.state.inversion_history.append(current_ps.inversion_chance)
+                    self.state.majority_dem_history.append(
+                        _gated(score_config.weight_majority_chance_dem,
+                               current_ps.majority_chance_dem))
+                    self.state.majority_rep_history.append(
+                        _gated(score_config.weight_majority_chance_rep,
+                               current_ps.majority_chance_rep))
+                    self.state.hinge_history.append(
+                        _gated(score_config.weight_hinge, current_ps.hinge_chance))
+                    self.state.inversion_history.append(
+                        _gated(score_config.weight_holistic_proportionality,
+                               current_ps.inversion_chance))
                     n_score = len(self.state.score_history)
                     if ann is not None:
                         self.state.temperature_history.append(ann.temperature)

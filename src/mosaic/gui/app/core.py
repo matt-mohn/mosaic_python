@@ -75,7 +75,8 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         self._recent_shapefiles: list = []   # [{"path": str, "config": dict}]
         self._file_save_asgn_item = 0        # File > Save Assignments menu item
         self._file_save_metrics_item = 0     # File > Save District Info menu item
-        self._saved_plan = None              # last-saved assignment; drives the unsaved-changes guard
+        # last-saved assignment; drives the unsaved-changes guard
+        self._saved_plan = None
         # When set, the next inspection-complete event skips the column picker
         # and uses this config directly (one-click recent-file open).
         self._pending_recent_config: Optional[ShapefileConfig] = None
@@ -142,6 +143,21 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         self._buf_hsplit    = _SeriesBuffer()
         self._buf_hprop     = _SeriesBuffer()
         self._buf_hcmp      = _SeriesBuffer()
+        self._buf_rep_black  = _SeriesBuffer()
+        self._buf_rep_latino = _SeriesBuffer()
+        self._buf_rep_asian  = _SeriesBuffer()
+        self._buf_rep_black_seats  = _SeriesBuffer()
+        self._buf_rep_latino_seats = _SeriesBuffer()
+        self._buf_rep_asian_seats  = _SeriesBuffer()
+        self._buf_coh_black  = _SeriesBuffer()
+        self._buf_coh_latino = _SeriesBuffer()
+        self._buf_coh_asian  = _SeriesBuffer()
+        self._buf_cong_black  = _SeriesBuffer()
+        self._buf_cong_latino = _SeriesBuffer()
+        self._buf_cong_asian  = _SeriesBuffer()
+        self._buf_rep_overall = _SeriesBuffer()   # aggregate representation penalty
+        self._buf_coh_overall = _SeriesBuffer()   # aggregate cohesion penalty
+        self._buf_cong_overall = _SeriesBuffer()  # aggregate congruence penalty
         self._buf_popdev     = _SeriesBuffer()
         self._buf_popdev_max = _SeriesBuffer()
         self._buf_popdev_mean = _SeriesBuffer()
@@ -261,14 +277,9 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
 
     def run(self):
         dpg.show_viewport()
-        dpg.set_viewport_resize_callback(self._align_photo_icons)
-        _aligned = False
         while dpg.is_dearpygui_running():
             self._update_ui()
             dpg.render_dearpygui_frame()
-            if not _aligned and dpg.get_frame_count() >= 2:
-                self._align_photo_icons()
-                _aligned = True
         dpg.destroy_context()
 
     # ── Frame update ──────────────────────────────────────────────────────────

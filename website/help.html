@@ -225,14 +225,15 @@
         <h3>County-Edge Bias</h3>
         <dl>
           <dt><strong>County-Edge Bias</strong> (enable + Multiplier slider)</dt>
-          <dd>Makes ReCom less likely to <em>propose</em> cut edges that cross county lines when generating new district boundaries. Higher multiplier = stronger preference for cuts along county borders. It lives with the <strong>County Congruence</strong> score in the GUI and turns on with it. Distinct from any splitting score: the splitting scores penalize splits in the score function (post hoc), while County-Edge Bias steers the proposal distribution (per step). The two work well together — the bias keeps splits rare in proposals; the splitting score cleans up the ones that do happen.</dd>
+          <dd>Makes ReCom less likely to <em>propose</em> cut edges that cross county lines when generating new district boundaries. Higher multiplier = stronger preference for cuts along county borders. Distinct from any splitting score: the splitting scores penalize splits in the score function (post hoc), while County-Edge Bias steers the proposal distribution (per step). The two work well together — the bias keeps splits rare in proposals; the splitting score cleans up the ones that do happen.</dd>
+          <dd>It has its own row in the score panel (listed under <strong>Scores &rarr; County-Edge Bias</strong>) and no weight slider, because it is not part of the objective — it shapes which moves get proposed. Enabling <strong>County Congruence</strong> switches the bias on as a convenience and reveals its row, but the two are independent from then on: you can run the bias with the score off, or the score with the bias off. Hiding its row from the Scores menu switches it off, so a bias you cannot see is never still steering the chain.</dd>
         </dl>
 
         <h3>Scoring weights</h3>
-        <p>Each enabled metric is multiplied by its weight and summed into <code>PlanScore.total</code>, which the optimizer minimizes. Weight 0 disables the metric; the computation is skipped, reducing per-iteration cost. Per-metric contribution formulas are in the <a href="#metrics">Metrics glossary</a>.</p>
+        <p>Each enabled metric is multiplied by its weight and summed into <code>PlanScore.total</code>, which the optimizer minimizes. Weight 0 removes the metric from the score total. The expensive metrics (Partisan Gini, Proportionality, Competitiveness, Chance of Majority, Hinge) are then skipped entirely; the cheap ones are still computed so their panels stay live. Per-metric contribution formulas are in the <a href="#metrics">Metrics glossary</a>.</p>
 
         <h3>Partisan calibration</h3>
-        <p>Set in the Partisanship popup. Applied when any of Efficiency Gap (Robust), Expected Dem Seats, Competitiveness, Chance of Majority, or Hinge is enabled.</p>
+        <p>Set in the Partisanship popup. Applied when any of Efficiency Gap (Robust), Expected Dem Seats, Partisan Bias, Partisan Gini, Proportionality, Competitiveness, Chance of Majority, or Hinge is enabled.</p>
         <dl>
           <dt><strong><code>election_win_prob_at_55</code></strong> — default 0.9</dt>
           <dd>Calibration anchor: P(D wins | D share = 0.55). Inverted to <code>σ_district = 0.05 / Φ⁻¹(p)</code>. Higher values yield sharper per-district win probabilities.</dd>
@@ -284,16 +285,17 @@
         <h2 class="text-2xl font-bold tracking-tight">Metrics glossary</h2>
         <p>Each metric appears on a score row in the GUI. Entries below give a definition followed by a meta card listing the unit, optimization direction, contribution to <code>PlanScore.total</code>, and any tunable parameters with their GUI location. Metrics are internally rescaled to comparable magnitudes; weights and formulas appear in the meta card.</p>
 
-        <p>Five metrics (Efficiency Gap in Robust mode, Expected Dem Seats, Competitiveness, Chance of Majority, Hinge) model each district's Dem share as a Gaussian variable. Two parameters set the spread and are shared across these metrics: <code>election_win_prob_at_55</code> (anchors per-district noise via <code>σ_district = 0.05 / Φ⁻¹(p)</code>) and <code>election_swing_sigma</code> (standard deviation of a shared partisan-environment draw). They combine as <code>σ_combined = √(σ_swing² + σ_district²)</code>. Both are set in the Partisanship popup; see <a href="#run-config">Run Config &gt; Partisan calibration</a> for details.</p>
+        <p>Eight metrics (Efficiency Gap in Robust mode, Expected Dem Seats, Partisan Bias, Partisan Gini, Proportionality, Competitiveness, Chance of Majority, Hinge) model each district's Dem share as a Gaussian variable. Two parameters set the spread and are shared across these metrics: <code>election_win_prob_at_55</code> (anchors per-district noise via <code>σ_district = 0.05 / Φ⁻¹(p)</code>) and <code>election_swing_sigma</code> (standard deviation of a shared partisan-environment draw). They combine as <code>σ_combined = √(σ_swing² + σ_district²)</code>. Both are set in the Partisanship popup; see <a href="#run-config">Run Config &gt; Partisan calibration</a> for details.</p>
 
         <dl>
           <dt><strong>Cut Edges</strong></dt>
           <dd>
-            <p>Number of precinct-pair adjacencies whose endpoints are in different districts.</p>
+            <p>Number of precinct-pair adjacencies whose endpoints are in different districts. Virtual edges added to reconnect islands are excluded, so on a state with bridged islands this is lower than the raw graph cut.</p>
             <table class="meta">
               <tr><th>Unit</th><td>integer count</td></tr>
               <tr><th>Direction</th><td>lower is better</td></tr>
               <tr><th>Contribution</th><td><code>cut_edges</code> (no internal rescale)</td></tr>
+                          <tr><th>Tunables</th><td>Weight only (<code>weight_cut_edges</code>, the one weight with a non-zero dataclass default of 1.0; the GUI row is off by default).</td></tr>
             </table>
           </dd>
 
@@ -303,8 +305,8 @@
             <table class="meta">
               <tr><th>Unit</th><td>weighted score</td></tr>
               <tr><th>Direction</th><td>lower is better</td></tr>
-              <tr><th>Contribution</th><td><code>10 × (excess_splits + (max_single_county − single_county_districts))</code></td></tr>
-              <tr><th>Tunables</th><td>none directly. <code>max_clean</code> depends on the run-config Population Tolerance (Population popup &rarr; Population Tolerance).</td></tr>
+              <tr><th>Contribution</th><td>two separately weighted terms, <code>10 × w_excess × excess_splits</code> and <code>10 × w_unified × (max_clean − single_county_districts)</code></td></tr>
+              <tr><th>Tunables</th><td><span class="gui">Score panel → Classic Splitting row → Excess weight / Single-county weight</span> (<code>weight_county_excess</code> / <code>weight_county_unified</code>, both default 1). Their ratio changes the metric's shape, not just its size. <code>max_clean</code> depends on the run-config Population Tolerance (Population popup &rarr; Population Tolerance).</td></tr>
             </table>
           </dd>
 
@@ -328,7 +330,7 @@
               <tr><th>Contribution</th><td><code>100 × Σ wₐ(1 − cohesionₐ) / Σ wₐ</code>, where <code>cohesionₐ = Σₚ fₐₚ²</code> over reference district <code>a</code>'s share <code>f</code> in each proposed district <code>p</code>, weighted by <code>w</code> (population, or a party's votes)</td></tr>
               <tr><th>Tunables</th><td>
                 <ul>
-                  <li><span class="gui">Alignment row &rarr; "..." &rarr; Load reference plan</span> (CSV with an id column and a district column; the district count need not match the run, and the reference need not be contiguous or population-balanced)</li>
+                  <li><span class="gui">Alignment row &rarr; "..." &rarr; Load reference plan</span> (CSV with an id column and a district column; the district count need not match the run, and the reference need not be contiguous or population-balanced. The CSV must have exactly one row per precinct and an ID set matching the shapefile exactly; either mismatch is an error)</li>
                   <li><span class="gui">Alignment row &rarr; "..." &rarr; Focus</span> (<code>alignment_party_focus</code>): measure retention in all residents (population), or in a party's votes &mdash; so each district scores on how many of <em>its</em> partisans stayed together. Needs election data; falls back to population without it</li>
                   <li><span class="gui">Alignment row &rarr; "..." &rarr; Only districts that party wins</span> + <span class="gui">win threshold</span> (<code>alignment_restrict_to_party</code>, <code>alignment_win_threshold</code>, default 0.535): score only the reference districts the focus party already holds, to preserve your own seats. Needs a party focus and election data</li>
                 </ul>
@@ -338,11 +340,12 @@
 
           <dt><strong>Compactness</strong></dt>
           <dd>
-            <p>Mosaic's primary compactness score &mdash; on by default at weight 50. One dial that blends mean Polsby-Popper and mean Reock 50/50, each mapped over a fixed band, so you can optimize compactness without juggling the two separate weights. Unclipped by default (Annealing Settings): instead of saturating at the band cap, it tracks the scorecard down to penalty 15 then eases to a flat landing at a realistic ceiling, so the optimizer keeps rounding districts out past &ldquo;compact enough.&rdquo; Off = clipped scorecard form that saturates at the cap.</p>
+            <p>Mosaic's primary compactness score &mdash; on by default at weight 50 in the GUI (a bare <code>ScoreConfig()</code> has it at 0). One dial that blends mean Polsby-Popper and mean Reock 50/50, each mapped over a fixed band, so you can optimize compactness without juggling the two separate weights. Unclipped by default (Annealing Settings): instead of saturating at the band cap, it tracks the scorecard down to penalty 15 then eases to a flat landing at a realistic ceiling, so the optimizer keeps rounding districts out past &ldquo;compact enough.&rdquo; Off = clipped scorecard form that saturates at the cap.</p>
             <table class="meta">
               <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
               <tr><th>Direction</th><td>lower contribution is better</td></tr>
               <tr><th>Contribution</th><td><code>100 − rating</code></td></tr>
+                          <tr><th>Tunables</th><td><span class="gui">Annealing Settings → Unclipped Compactness</span> (<code>compactness_unclipped</code>, default on). The two feeders are blended 50/50 but mapped over different bands — Reock 0.25–0.50, Polsby-Popper 0.10–0.50 — so equal mean PP and mean Reock do not contribute equally.</td></tr>
             </table>
           </dd>
 
@@ -353,6 +356,7 @@
               <tr><th>Unit</th><td>contribution [0, 100]; chart shows mean PP in [0, 1]</td></tr>
               <tr><th>Direction</th><td>lower contribution is better</td></tr>
               <tr><th>Contribution</th><td><code>(1 − mean(PP)) × 100</code></td></tr>
+                          <tr><th>Tunables</th><td>Weight only.</td></tr>
             </table>
           </dd>
 
@@ -364,6 +368,7 @@
               <tr><th>Unit</th><td>contribution [0, 100]; chart shows mean Reock in [0, 1]</td></tr>
               <tr><th>Direction</th><td>lower contribution is better</td></tr>
               <tr><th>Contribution</th><td><code>(1 − mean(Reock)) × 100</code></td></tr>
+                          <tr><th>Tunables</th><td>Weight only.</td></tr>
             </table>
           </dd>
 
@@ -402,23 +407,74 @@
             </table>
           </dd>
 
+          <dt><strong>Partisan Bias</strong></dt>
+          <dd>
+            <p>Seat-share asymmetry at a hypothetical tied statewide vote: shift every district's share so the statewide vote is exactly 50/50, then ask how far the Dem seat share is from half. Sign: positive = pro-R. Because it is evaluated at a tie, it describes a hypothetical election rather than the current one.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>signed seat-share tilt (display); contribution [0, 100]</td></tr>
+              <tr><th>Direction</th><td>set by mode: <strong>Fair</strong> drives <code>raw</code> toward 0; <strong>D</strong> / <strong>R</strong> drive it toward a one-party tilt</td></tr>
+              <tr><th>Contribution</th><td><code>d × 100</code> (or <code>d² × 100</code> with the quadratic toggle), same shape as Mean-Median and Efficiency Gap. <code>raw = 0.5 − S(0.5)</code>, the Dem seat share at a tied vote</td></tr>
+              <tr><th>Tunables</th><td>
+                <ul>
+                  <li><span class="gui">Score panel → Partisan Bias row → Fair / D / R radio</span> (<code>pbias_mode</code>, default Fair)</li>
+                  <li><span class="gui">Partisanship popup → Partisan Bias bound</span> (<code>pbias_bound</code>, default 0.25)</li>
+                  <li>Shared partisan calibration</li>
+                </ul>
+              </td></tr>
+            </table>
+          </dd>
+
+          <dt><strong>Partisan Gini</strong></dt>
+          <dd>
+            <p>Area between the seats-votes curve and its own reflection — a whole-curve symmetry measure rather than a reading at one point. Zero means each party would win the same seat share for the same vote share. Fair-only: there is no D/R mode, because asymmetry has no favoured direction.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>curve area (display); contribution [0, 100]</td></tr>
+              <tr><th>Direction</th><td>lower is better; 0 = perfectly symmetric</td></tr>
+              <tr><th>Contribution</th><td><code>min(1, area / 0.12) × 100</code>, area by trapezoid over a vote-share grid spanning 0.35 to 0.65 in steps of 0.02. The 0.12 bound and the grid are fixed, not user-tunable</td></tr>
+              <tr><th>Tunables</th><td>Weight only, plus the shared partisan calibration</td></tr>
+            </table>
+          </dd>
+
+          <dt><strong>Inversion Risk</strong></dt>
+          <dd>
+            <p>Probability that the party losing the statewide popular vote nonetheless controls the chamber, integrated over the swing model. Displayed only — it is not a weighted score. It is the term Proportionality blends toward 100, charted separately because it reads directly as a probability. Seat ties count as nobody in control and add nothing.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>probability [0, 1], charted as %</td></tr>
+              <tr><th>Direction</th><td>display only; lower is better</td></tr>
+              <tr><th>Contribution</th><td>none directly — enters the score through Proportionality's <code>P_inv</code> term</td></tr>
+              <tr><th>Tunables</th><td>Shared partisan calibration</td></tr>
+            </table>
+          </dd>
+
           <dt><strong>Proportionality</strong></dt>
           <dd>
-            <p>Single 0-100 rating of seat-share vs vote-share fairness. Unclipped by default (Partisanship Settings): a smooth seat-vs-vote gap (winner's bonus forgiven) escalated by <code>P_inv</code>, the swing-integrated probability that the popular-vote loser controls the chamber &mdash; so the optimizer feels antimajoritarian risk build up continuously rather than hitting a binary trip. Stays in [0, 100]. Off = clipped scorecard form: a linear-to-cap deviation with an instant 100 penalty for an antimajoritarian outcome (majority-vote, minority-seat).</p>
+            <p>Seat share vs vote share. Unclipped by default (Partisanship Settings): a magnitude term <code>M</code> for the seat/vote gap, blended toward 100 by <code>P_inv</code>, the swing-integrated probability that the popular-vote loser controls the chamber — so antimajoritarian risk builds continuously rather than tripping. Over-seating the statewide winner is charged at a quarter rate up to a bonus allowance, which keeps a gradient there. Off = clipped scorecard: linear-to-cap deviation from the rounded-proportional seat share, winner's bonus forgiven outright, with an instant 100 for an antimajoritarian outcome.</p>
             <table class="meta">
               <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
               <tr><th>Direction</th><td>lower contribution is better</td></tr>
-              <tr><th>Contribution</th><td><code>100 − rating</code></td></tr>
+              <tr><th>Contribution</th><td>Unclipped: <code>M × (1 − P_inv) + 100 × P_inv</code>, where <code>M = 100 × min(d / 0.42, 1)</code> and <code>d</code> is the seat/vote gap with winner over-seating charged at 0.25× up to an allowance of <code>|V − 0.5|</code> and at full rate beyond. Clipped: <code>100 × min(|adjusted| / 0.20, 1)</code>, or 100 outright when the vote loser holds a seat majority by more than 2pp.</td></tr>
+              <tr><th>Tunables</th><td>
+                <ul>
+                  <li><span class="gui">Partisanship popup → Unclipped Proportionality</span> (<code>proportionality_unclipped</code>, default on)</li>
+                  <li>Shared partisan calibration</li>
+                </ul>
+              </td></tr>
             </table>
           </dd>
 
           <dt><strong>Competitiveness</strong></dt>
           <dd>
-            <p>Soft-Bernoulli competitiveness rating. Per-district kernel <code>1 − 4·(P_win − 0.5)²</code> rewards toss-ups. Unclipped by default (Partisanship Settings): it tracks the clipped scorecard down to penalty 25, then curves off to a flat (slope-0) landing at the near-impossible all-toss-up end instead of clamping to 0, so the optimizer keeps a gradient where clipped saturates. Off = clipped scorecard form that saturates once ~75% of seats are toss-ups.</p>
+            <p>Soft-Bernoulli competitiveness rating. Per-district kernel <code>1 − 4·(P_win − 0.5)²</code> rewards toss-ups. Unclipped by default (Partisanship Settings): it tracks the clipped scorecard down to penalty 25, then curves off to a flat landing at the near-impossible all-toss-up end instead of clamping to 0, so the optimizer keeps a gradient where clipped saturates. Off = clipped scorecard, which saturates once the mean kernel reaches 0.75 — a threshold on the average across districts, not a count of toss-up seats.</p>
             <table class="meta">
               <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
               <tr><th>Direction</th><td>lower contribution is better</td></tr>
-              <tr><th>Contribution</th><td><code>100 − rating</code></td></tr>
+              <tr><th>Contribution</th><td><code>100 − rating</code>, rating derived from <code>cDf = mean(1 − 4·(P_win − 0.5)²)</code></td></tr>
+              <tr><th>Tunables</th><td>
+                <ul>
+                  <li><span class="gui">Partisanship popup → Unclipped Competitiveness</span> (<code>competitiveness_unclipped</code>, default on)</li>
+                  <li>Shared partisan calibration</li>
+                </ul>
+              </td></tr>
             </table>
           </dd>
 
@@ -431,7 +487,7 @@
               <tr><th>Contribution</th><td><code>(n − raw)/n × 100</code> when favoring D; <code>raw/n × 100</code> when favoring R</td></tr>
               <tr><th>Tunables</th><td>
                 <ul>
-                  <li><span class="gui">Score panel &rarr; Expected Dem Seats row &rarr; D / R checkboxes</span> (selects which party the optimizer pulls toward)</li>
+                  <li><span class="gui">Score panel &rarr; Expected Dem Seats row &rarr; D / R radio</span> (selects which party the optimizer pulls toward)</li>
                   <li>Shared partisan calibration</li>
                 </ul>
               </td></tr>
@@ -440,24 +496,24 @@
 
           <dt><strong>Chance of Majority</strong></dt>
           <dd>
-            <p>Probability that the selected party wins at least <code>⌈n/2⌉</code> districts, integrated over the partisan swing via Gauss-Hermite quadrature. D-majority and R-majority weights are independent.</p>
+            <p>Probability that the selected party wins at least <code>n//2 + 1</code> districts (a strict majority; for even <var>n</var> this is one more than <code>n/2</code>), integrated over the partisan swing via Gauss-Hermite quadrature. One weight slider is shared; the D and R checkboxes select which terms it applies to.</p>
             <table class="meta">
               <tr><th>Unit</th><td>probability [0, 1] (display)</td></tr>
               <tr><th>Direction</th><td>weighted party's probability pushed toward 1</td></tr>
-              <tr><th>Contribution</th><td><code>(1 − p)^1.5 × 100</code></td></tr>
+              <tr><th>Contribution</th><td><code>(1 − p)^1.5 × 100</code> per selected party. With both D and R selected both terms are added, so the contribution is <code>w·(1 − p_D)^1.5·100 + w·(1 − p_R)^1.5·100</code>.</td></tr>
               <tr><th>Tunables</th><td>
                 <ul>
                   <li><span class="gui">Score panel &rarr; Chance of Majority row &rarr; D / R checkboxes</span> (selects which party's probability is scored)</li>
                   <li>Shared partisan calibration</li>
                 </ul>
-                Threshold is fixed at <code>⌈n/2⌉</code>; use Hinge for custom thresholds.
+                Threshold is fixed at <code>n//2 + 1</code>; use Hinge for custom thresholds.
               </td></tr>
             </table>
           </dd>
 
           <dt><strong>Supermajority/Hinge</strong></dt>
           <dd>
-            <p>Probability that the selected party wins at least <code>hinge_threshold</code> seats, under the swing model. Penalty curve matches Chance of Majority &mdash; in fact Chance of Majority is exactly Hinge with <code>hinge_threshold = ⌈n/2⌉</code>; Hinge is the generalisation that lets you pick a different seat threshold (supermajority, blocking minority, etc.).</p>
+            <p>Probability that the selected party wins at least <code>hinge_threshold</code> seats, under the swing model. Penalty curve matches Chance of Majority &mdash; in fact Chance of Majority is exactly Hinge with <code>hinge_threshold = n//2 + 1</code>; Hinge is the generalisation that lets you pick a different seat threshold (supermajority, blocking minority, etc.).</p>
             <table class="meta">
               <tr><th>Unit</th><td>probability [0, 1] (display)</td></tr>
               <tr><th>Direction</th><td>probability pushed toward 1</td></tr>
@@ -478,9 +534,54 @@
             <table class="meta">
               <tr><th>Unit</th><td>penalty (0 = best; uncapped when unclipped)</td></tr>
               <tr><th>Direction</th><td>lower is better</td></tr>
+              <tr><th>Contribution</th><td>Unclipped: <code>0.5 × 45 × max(0, raw_county − 1) + 0.5 × 45 × max(0, raw_district − 1)</code>. Clipped: <code>0.2 × (0.5 × pen_c + 0.5 × pen_d)</code>, each direction ramping 0 → 100 from a map-derived reference to 1.33× it. The two forms have different zero points, so the toggle changes which plans score 0, not just where the penalty saturates.</td></tr>
+              <tr><th>Tunables</th><td><span class="gui">Annealing Settings → Unclipped County Congruence</span> (<code>holistic_splitting_unclipped</code>, default on)</td></tr>
+            </table>
+          </dd>
+
+          <dt><strong>Electoral Opportunity</strong></dt>
+          <dd>
+            <p>Minority opportunity to elect, per group. Each district earns credit on a logistic curve over the group's share, saturating at the solid level &mdash; the climb through 50% is rewarded, packing beyond solid is not. Credit is summed over the top <code>round(T)</code> districts, where <code>T</code> is the group's proportional seat count, which stops a plan being rewarded for cracking a group across many sub-opportunity districts. The sum is rated against <code>f_state</code>, the credit those districts could reach given the state's geography, so maps are graded against realistic possibilities. A group is dropped when <code>round(T) &lt; 1</code> or no opportunity district is drawable anywhere.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>penalty (0 = best); per-group 0&ndash;100 ratings on the chart</td></tr>
+              <tr><th>Direction</th><td>lower is better</td></tr>
+              <tr><th>Contribution</th><td><code>100 &times; (1 &minus; &Sigma; T&middot;frac / &Sigma; T)</code> over applicable groups, where <code>frac = min(O / f_state, 1)</code>, <code>O</code> = sum of the top <code>round(T)</code> district credits, <code>credit = min(x, 1)</code> clipped or <code>(x^&minus;8 + 1)^(&minus;1/8)</code> unclipped, <code>x = P / ref</code>, <code>P = 1 / (1 + exp(&minus;(share &minus; midpoint) / steepness))</code>, <code>ref = P at share = solid</code>. Displayed ratings always use the clipped credit.</td></tr>
+              <tr><th>Tunables</th><td>
+                <ul>
+                  <li><span class="gui">Electoral Opportunity row &rarr; &hellip; &rarr; Midpoint</span> (<code>opportunity_midpoint</code>, default 0.44) &mdash; share at which the chance to elect is 50/50</li>
+                  <li><span class="gui">&hellip; &rarr; Steepness</span> (<code>opportunity_steepness</code>, default 0.05)</li>
+                  <li><span class="gui">&hellip; &rarr; Solid level</span> (<code>opportunity_solid</code>, default 0.55) &mdash; share counting as one full opportunity district</li>
+                  <li><span class="gui">&hellip; &rarr; Smart targets</span> (<code>opportunity_smart_targets</code>, default on) &mdash; limits each hypothetical district to precincts near one anchor. Off, the benchmark ranks every precinct statewide, which can describe a district no map could draw. Costs a few seconds at run start.</li>
+                  <li><span class="gui">&hellip; &rarr; Unclipped</span> (<code>representation_unclipped</code>, default on) &mdash; softens the per-district credit cap. Moves the penalty only.</li>
+                </ul>
+              </td></tr>
+            </table>
+          </dd>
+
+          <dt><strong>Neighborhood Severance</strong></dt>
+          <dd>
+            <p>Penalises district lines drawn through the core of a minority community, whether or not it could form an opportunity district. Each adjacency carries, per group, the product of its two endpoints' group shares, so weight is large only where both sides are heavily that group; a boundary between two different groups costs nothing. The severed fraction is measured against what a compact race-blind map of the same size would sever, so 1.0 means cuts fall neutrally and above 1.0 means cores are being fractured. Severity scales with how much of a group's own adjacency is cut. Correlates with Cut Edges, so start the weight low.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>penalty (0 = best); per-group % intact on the chart</td></tr>
+              <tr><th>Direction</th><td>lower is better</td></tr>
+              <tr><th>Contribution</th><td><code>curve(ratio)</code>, where <code>ratio = pooled / expected</code>, <code>pooled = (&Sigma; mass&middot;severed&sup2; / &Sigma; mass)^&frac12;</code> over groups with <code>mass = (&Sigma; w)^0.5</code>, <code>severed = &Sigma; w over cut edges / &Sigma; w</code>, <code>w = share(u) &times; share(v)</code> per real edge, and <code>expected = 0.6972 &times; (k&minus;1)^0.5150 / N^0.4091</code>. The curve is anchored 5 / 55 / 95 at <code>R5 = 1 &minus; 1.1362 &times; (k&minus;1)^&minus;0.2447</code>, <code>1.0</code>, <code>R95 = 1 + 13.9170 &times; (k&minus;1)^&minus;0.6368</code>: <code>5(r/R5)^q</code> below R5, linear between anchors, <code>100 &minus; 5s/(s + r &minus; R95)</code> above R95, with <code>q = min(18&middot;R5/(R95&minus;R5), 12)</code> and <code>s = (R95&minus;1)/18</code>. Island-bridge edges are excluded.</td></tr>
+              <tr><th>Tunables</th><td>Weight only. Needs demographic columns; see <a href="shapefiles.html">Shapefile requirements</a>.</td></tr>
+            </table>
+          </dd>
+
+          <dt><strong>Community Dispersion</strong></dt>
+          <dd>
+            <p>Keeps a community inside as few districts as population equality allows. Where Severance measures where lines fall, this measures how many pieces a community ends up in, which a cut-edge measure cannot see. Per community it compares the effective number of pieces against the number its size forces, so a community too large for one district is not charged for the split it cannot avoid. Communities are built per group at three concentration levels and overlap, so splitting a dense core registers at every level while splitting a diffuse fringe registers only at the lowest.</p>
+            <table class="meta">
+              <tr><th>Unit</th><td>penalty (0 = best); per-group congruence on the chart</td></tr>
+              <tr><th>Direction</th><td>lower is better</td></tr>
+              <tr><th>Contribution</th><td><code>curve(spread)</code>, where <code>spread = (&Sigma; w&middot;(N_eff/m)&sup2; / &Sigma; w)^&frac12;</code> over communities, <code>N_eff = 1 / &Sigma; p&sup2;</code> for population shares <code>p</code> across districts, <code>m = ceil(pop / ideal_pop)</code>, and <code>w = pop^0.5 &times; &lambda;</code> for <code>&lambda; = 1.0 / 0.5 / 0.25</code> at the 50% / 35% / 20% concentration levels. Communities are connected precincts at or above each level holding &ge; 20,000 people. Same 5 / 55 / 95 curve as Neighborhood Severance, anchored at <code>R5 = 1 + 0.000074 &times; (k&minus;1)^1.784031</code>, <code>Rmid = 1 + 0.259077 &times; (k&minus;1)^0.267266</code>, <code>R95 = 3.923603 &minus; 3.232672 &times; (k&minus;1)^&minus;0.688527</code>.</td></tr>
+              <tr><th>Tunables</th><td>Weight only. Needs demographic columns; see <a href="shapefiles.html">Shapefile requirements</a>.</td></tr>
             </table>
           </dd>
         </dl>
+
+        <p>The three demographic scores measure different things and correlate only weakly, so they can carry weight at the same time without double-counting. All three need demographic columns in the shapefile; see <a href="shapefiles.html">Shapefile requirements</a>. Where a state has nothing for one of them to measure &mdash; no group reaching a full district, no minority adjacency, no communities above the size floor &mdash; that score reports as not applicable and disables, rather than reporting a perfect result you did not earn.</p>
       </section>
 
       <!-- Map overlays ────────────────────────────────────────────────────── -->
@@ -519,7 +620,7 @@
           <dt><strong>Alignment</strong></dt>
           <dd>When the Alignment metric is active, this panel plots <em>cohesion</em> &mdash; the share of each reference district that stays intact &mdash; as a mean across districts and the single worst-hit district. The axis is inverted relative to the score: higher here means closer to the reference, while the score row reports the penalty (lower is better).</dd>
           <dt><strong>Score Contributors</strong></dt>
-          <dd>Bar chart showing the share of the total score each enabled metric contributes right now. The quickest way to see which weight is actually driving the optimizer.</dd>
+          <dd>Horizontal bar chart of the share of the total score each enabled metric contributes right now, one bar per metric with the metric named in full. Shares always sum to 100. The quickest way to see which weight is actually driving the optimizer. Only metrics contributing more than zero appear.</dd>
           <dt><strong>Comet Plot</strong></dt>
           <dd>Plots any two metrics against each other as a trajectory, showing how the search moves through the trade-off between them &mdash; compactness against efficiency gap, say. The tail cools with age (recent steps run hot, older ones fade toward dark blue) and a bright dot marks the current plan. Choose the axes with the two selectors; <span class="gui">Smooth</span> damps the line, <span class="gui">Fit all</span> keeps the whole trajectory in view while <span class="gui">Follow dot</span> tracks the live head, and <span class="gui">Fade</span> dims older steps. Partisan metrics appear only once election data is loaded.</dd>
           <dt><strong>District Info</strong></dt>

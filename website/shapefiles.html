@@ -226,10 +226,45 @@
         per election. Required for partisan scores (mean-median, efficiency gap,
         expected seats, etc.). Mosaic supports one election per run, and
         auto-detects a recognized D/R column pair (e.g. <code>baseline_d</code> /
-        <code>baseline_r</code>), pre-filling it in the column-picker dialog; pick
-        your own pair there if the names differ.
+        <code>baseline_r</code>, or plain <code>DEM</code> / <code>REP</code>),
+        pre-filling it in the column-picker dialog; pick your own pair there if
+        the names differ.
+      </li>
+      <li>
+        <strong>Population by group</strong> &mdash; required for the three
+        demographic scores (Electoral Opportunity, Neighborhood Severance,
+        Community Dispersion). You need a <strong>total</strong> column plus at
+        least one of <strong>Black</strong>, <strong>Hispanic</strong> or
+        <strong>Asian</strong>; a <strong>White</strong> column is optional and
+        feeds the map overlay only. Common names are auto-detected
+        (<code>VAP_TOTAL</code>, <code>VAP_BLACK</code>, <code>CVAP_HISP</code>,
+        <code>BVAP</code>, &hellip;) and pre-filled in the column-picker, where
+        you confirm or change them.
       </li>
     </ul>
+
+    <p>
+      <strong>Which population basis?</strong> Any consistent one works &mdash;
+      voting-age population (VAP), citizen voting-age population (CVAP), or plain
+      total population. Mosaic measures each group as a share of whichever total
+      you select, so the arithmetic is the same either way. Use the best basis
+      your file carries; if it only has total population by group, that is fine
+      and Mosaic will not nag you about it.
+    </p>
+    <p>
+      Whichever basis you use, you may want to tune the opportunity curve to
+      match it &mdash; the midpoint and solid level in
+      <span class="gui">Electoral Opportunity settings</span> are thresholds on
+      a group's share of a district, so what counts as an opportunity district
+      depends on how that share was measured.
+    </p>
+    <p>
+      Mosaic checks the columns you pick and will tell you if something looks
+      wrong &mdash; a group column that sums to more than the total, groups
+      summing well past the total, a column already used for votes or population,
+      or a total that is not a head count. A group you leave unset is simply left
+      out of the scores rather than silently counted as zero.
+    </p>
 
     <h3>Coordinate system (CRS)</h3>
     <p>
@@ -260,12 +295,19 @@
         <code>shapefiles/North_Carolina_Simplified.shp</code> from the folder
         you extracted.</li>
       <li>
-        The column-picker dialog opens. Mosaic auto-fills <strong>Population</strong>
-        with <code>POP</code>, <strong>Precinct ID</strong> with
-        <code>GEOID20</code>, and <strong>County</strong> with <code>CTY</code>.
-        Confirm.
+        The column-picker dialog opens. Every column in the sample is
+        auto-detected: <strong>Population</strong> <code>POP</code>,
+        <strong>Precinct ID</strong> <code>GEOID20</code>,
+        <strong>County</strong> <code>CTY</code>, the election pair
+        <code>DEM</code> / <code>REP</code>, and the demographic columns
+        <code>VAP_TOTAL</code> / <code>VAP_WHITE</code> / <code>VAP_BLACK</code> /
+        <code>VAP_LATINO</code> / <code>VAP_ASIAN</code>. Confirm.
       </li>
       <li>Set district count to 14 (NC's congressional total) and run.</li>
+      <li>
+        The sample carries election and demographic columns, so every score is
+        available on it, including the three demographic ones.
+      </li>
     </ol>
 
     <!-- ── About the cache ───────────────────────────────────────────────── -->
@@ -316,6 +358,36 @@
       Population must be present on every row. Clean the data in your GIS tool
       (set blanks to 0 if you really want, but understand 0-pop districts get
       treated as empty) and reload.
+    </p>
+
+    <h3>"Demographics: a Total column is required"</h3>
+    <p>
+      You picked one or more group columns but no total to measure them against.
+      Every demographic score works on shares, so pick the matching total column
+      &mdash; or clear the demographic dropdowns entirely, in which case the
+      three demographic scores are simply unavailable and nothing else changes.
+    </p>
+
+    <h3>"Demographics: select at least one scored group"</h3>
+    <p>
+      A total on its own has nothing to compare against. Pick at least one of
+      Black, Hispanic or Asian. A White column does not satisfy this &mdash; it
+      feeds the map overlay and is never scored.
+    </p>
+
+    <h3>"Demographic total column '&hellip;' is not numeric"</h3>
+    <p>
+      The selected column holds text rather than counts &mdash; a county name or
+      an ID, most often, picked from the dropdown by mistake. Choose the column
+      holding the actual population figures.
+    </p>
+
+    <h3>"&hellip; sums to more than the demographic total" (warning)</h3>
+    <p>
+      A group column is larger than the total you selected, which usually means
+      the two are swapped or the total is a subgroup. This is a warning, not a
+      blocker: Mosaic will run, but the shares it computes will be wrong, so it
+      is worth fixing before you trust the demographic scores.
     </p>
 
     <h3>"Adjacency graph has N disconnected components"</h3>

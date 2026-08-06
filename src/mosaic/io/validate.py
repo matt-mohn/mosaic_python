@@ -21,7 +21,6 @@ import networkx as nx
 
 from mosaic.io.inspect import ShapefileInspection
 
-
 _MAX_ROWS_IN_MSG = 10
 
 
@@ -125,6 +124,126 @@ def check_columns(
             )
 
     return issues
+
+
+SCORED_GROUPS: tuple[tuple[str, str], ...] = (
+    ("black", "Black"), ("latino", "Hispanic"), ("asian", "Asian"),
+)
+
+# Any population basis is valid -- voting-age, citizen voting-age, or
+# total population, whichever the file carries -- so the ratio to total
+# population is not checked from above. Far below it, the column is not a head
+# count at all: a share encoded 0-1, a subgroup, or a count in thousands.
+_TOTAL_MIN_SHARE = 0.25
+# Named groups overlap (Hispanic is an ethnicity), so they can sum slightly
+# past the total legitimately; well past it means the wrong column.
+_NAMED_OVER_TOTAL = 1.25
+
+
+def check_demographics(
+    inspection: ShapefileInspection,
+    demographics: dict | None,
+    *,
+    pop_col: str = "",
+    vote_cols: Iterable[tuple[str, str]] = (),
+) -> tuple[list[str], list[str]]:
+    """Validate the demographic columns. Returns (errors, warnings).
+
+    Errors block the load on the same terms as ``check_columns``. Warnings are
+    shown but proceed: a usable-but-partial selection still scores, and saying
+    so beats silently dropping groups the user believes are being scored.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+    if not demographics:
+        return errors, warnings
+
+    total_col = demographics.get("total")
+    scored = [(g, lbl) for g, lbl in SCORED_GROUPS if demographics.get(g)]
+    if not total_col:
+        errors.append("Demographics: a Total column is required.")
+        return errors, warnings
+    if not scored:
+        errors.append(
+            "Demographics: select at least one scored group (Black, Hispanic, "
+            "Asian).")
+        return errors, warnings
+
+    def _numeric(label: str, col: str) -> bool:
+        info = inspection.column_info.get(col)
+        if info is None:
+            errors.append(f"{label} column '{col}' is not present in the shapefile.")
+            return False
+        if not info.is_numeric:
+            errors.append(f"{label} column '{col}' is not numeric (dtype: {info.dtype}).")
+            return False
+        if info.min_value is not None and info.min_value < 0:
+            errors.append(
+                f"{label} column '{col}' has negative value(s) "
+                f"(min = {info.min_value:g}).")
+        if info.n_null:
+            warnings.append(
+                f"{label} column '{col}' has {info.n_null} null value(s); "
+                f"they are read as 0.")
+        return True
+
+    if not _numeric("Demographic total", total_col):
+        return errors, warnings
+    tot_info = inspection.column_info[total_col]
+    tot_sum = float(tot_info.col_sum or 0.0)
+    if tot_sum <= 0:
+        errors.append(
+            f"Demographic total column '{total_col}' sums to {tot_sum:g}; "
+            f"expected a positive total.")
+        return errors, warnings
+
+    named_sum = 0.0
+    for group, label in scored:
+        col = demographics[group]
+        if not _numeric(f"{label}", col):
+            continue
+        info = inspection.column_info[col]
+        col_sum = float(info.col_sum or 0.0)
+        named_sum += col_sum
+        if col_sum > tot_sum:
+            warnings.append(
+                f"{label} ({col}) sums to more than the race total "
+                f"({total_col}); check the column mapping.")
+        elif col_sum <= 0:
+            warnings.append(
+                f"{label} ({col}) sums to 0, so that group is never scored.")
+
+    if named_sum > tot_sum * _NAMED_OVER_TOTAL:
+        warnings.append(
+            f"The selected races sum to {named_sum / tot_sum:.0%} of "
+            f"'{total_col}'; check that the total is the right column.")
+
+    pop_info = inspection.column_info.get(pop_col) if pop_col else None
+    pop_sum = float(pop_info.col_sum or 0.0) if pop_info else 0.0
+    if pop_sum > 0 and tot_sum / pop_sum < _TOTAL_MIN_SHARE:
+        warnings.append(
+            f"Demographic total '{total_col}' is only {tot_sum / pop_sum:.0%} of total "
+            f"population; check it is a head count and not a share.")
+
+    # A column doing double duty as votes or population is a mis-pick, not a
+    # data property, so it survives every distributional check above.
+    taken = {c for pair in vote_cols for c in pair if c}
+    if pop_col:
+        taken.add(pop_col)
+    for group, label in scored:
+        col = demographics[group]
+        if col in taken:
+            warnings.append(
+                f"{label} ({col}) is also selected as a population or vote "
+                f"column; check the column mapping.")
+
+    missing = [lbl for g, lbl in SCORED_GROUPS if not demographics.get(g)]
+    if missing:
+        warnings.append(
+            f"No column for {', '.join(missing)}; "
+            f"{'that group is' if len(missing) == 1 else 'those groups are'} "
+            f"left out of the demographic scores.")
+    return errors, warnings
 
 
 def check_connectivity(graph: nx.Graph) -> list[str]:
