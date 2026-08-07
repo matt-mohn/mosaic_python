@@ -48,12 +48,16 @@ class ExportMixin:
                 precinct_ids = self.runner.gdf[col].tolist()
                 id_col_name = col
 
-        save_assignments(
-            self._export_labeled_assignment(current),
-            output_path,
-            precinct_ids=precinct_ids,
-            id_col_name=id_col_name,
-        )
+        try:
+            save_assignments(
+                self._export_labeled_assignment(current),
+                output_path,
+                precinct_ids=precinct_ids,
+                id_col_name=id_col_name,
+            )
+        except Exception as exc:
+            self.state.update(status_message=f"Export failed: {exc}")
+            return
         self.state.update(status_message=f"Assignments saved to {output_path}")
         self._saved_plan = current.copy()   # mark the plan clean for the unsaved-changes guard
 
@@ -81,19 +85,23 @@ class ExportMixin:
         gop = self.runner.election_arrays[0][1] if self.runner.election_arrays else None
         cfg = self.state.score_config
 
-        save_metrics(
-            self._export_labeled_assignment(current),
-            output_path,
-            populations=self.runner.populations,
-            ideal_pop=ideal_pop,
-            dem_votes=dem,
-            gop_votes=gop,
-            pp_data=self.runner.pp_data,
-            reock_data=self.runner.reock_data,
-            county_ids=self.runner.county_array,
-            win_prob_at_55=cfg.election_win_prob_at_55,
-            swing_sigma=cfg.election_swing_sigma,
-        )
+        try:
+            save_metrics(
+                self._export_labeled_assignment(current),
+                output_path,
+                populations=self.runner.populations,
+                ideal_pop=ideal_pop,
+                dem_votes=dem,
+                gop_votes=gop,
+                pp_data=self.runner.pp_data,
+                reock_data=self.runner.reock_data,
+                county_ids=self.runner.county_array,
+                win_prob_at_55=cfg.election_win_prob_at_55,
+                swing_sigma=cfg.election_swing_sigma,
+            )
+        except Exception as exc:
+            self.state.update(status_message=f"Metrics export failed: {exc}")
+            return
         self.state.update(status_message=f"Metrics saved to {output_path}")
 
     # ── File menu: New / recent files / named saves ───────────────────────────
@@ -267,6 +275,8 @@ class ExportMixin:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 Image.fromarray(rgba, mode="RGBA").save(output_path)
                 self.state.update(status_message=f"Map saved to {output_path}")
+            except Exception as exc:
+                self.state.update(status_message=f"Save failed: {exc}")
             finally:
                 dpg.configure_item(self._save_spinner, show=False)
                 self._saving = False
@@ -830,5 +840,7 @@ class ExportMixin:
             new_img.save(output_path, dpi=(dpi, dpi))
             self.state.update(status_message=f"Map saved to {output_path}")
             self._open_in_os(output_path)
+        except Exception as exc:
+            self.state.update(status_message=f"PNG export failed: {exc}")
         finally:
             self._adv_finish()

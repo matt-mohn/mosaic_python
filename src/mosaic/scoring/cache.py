@@ -42,8 +42,11 @@ def save_cached_pp_data(
     cache_path: str | Path,
     shapefile_path: str | Path,
 ) -> None:
+    """Pickle PPData alongside a fingerprint of its source.
+
+    Best-effort: a cache write failure must never fail the caller.
+    """
     cache_path = Path(cache_path)
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "fingerprint": shapefile_fingerprint(shapefile_path),
         "areas": pp_data.areas,
@@ -52,8 +55,12 @@ def save_cached_pp_data(
         "edge_v": pp_data.edge_v,
         "edge_len": pp_data.edge_len,
     }
-    with open(cache_path, "wb") as f:
-        pickle.dump(payload, f)
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(cache_path, "wb") as f:
+            pickle.dump(payload, f)
+    except Exception as exc:
+        log.warning(f"Could not write PP cache to {cache_path}: {exc}.")
 
 
 def load_cached_pp_data(

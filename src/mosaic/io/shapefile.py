@@ -1,9 +1,12 @@
 """Shapefile loading utilities."""
 
 import hashlib
+import logging
 from pathlib import Path
 
 import geopandas as gpd
+
+log = logging.getLogger("mosaic")
 
 
 def load_shapefile(path: str | Path) -> gpd.GeoDataFrame:
@@ -61,9 +64,15 @@ def shapefile_fingerprint(shapefile_path: str | Path) -> dict:
         if not path.exists():
             return {}
         h = hashlib.sha256()
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(65536), b""):
-                h.update(chunk)
+        try:
+            with open(path, "rb") as f:
+                for chunk in iter(lambda: f.read(65536), b""):
+                    h.update(chunk)
+            out[f"{label}_size"] = path.stat().st_size
+        except OSError as exc:
+            # Locked by a sync client, or an unhydratable cloud placeholder.
+            # An empty dict means "do not cache" to every caller.
+            log.warning(f"Could not fingerprint {path.name}: {exc}. Skipping cache.")
+            return {}
         out[label] = h.hexdigest()
-        out[f"{label}_size"] = path.stat().st_size
     return out

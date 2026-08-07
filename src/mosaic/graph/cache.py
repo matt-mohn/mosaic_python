@@ -31,9 +31,11 @@ def save_cached_graph(
     cache_path: str | Path,
     shapefile_path: str | Path,
 ) -> None:
-    """Pickle the adjacency graph alongside a fingerprint of its source."""
+    """Pickle the adjacency graph alongside a fingerprint of its source.
+
+    Best-effort: a cache write failure must never fail the caller.
+    """
     cache_path = Path(cache_path)
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     payload = {
         "cache_version": 2,
@@ -49,8 +51,12 @@ def save_cached_graph(
         "populations": {n: graph.nodes[n].get("population", 0) for n in graph.nodes()},
     }
 
-    with open(cache_path, "wb") as f:
-        pickle.dump(payload, f)
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(cache_path, "wb") as f:
+            pickle.dump(payload, f)
+    except Exception as exc:
+        log.warning(f"Could not write graph cache to {cache_path}: {exc}.")
 
 
 def load_cached_graph(

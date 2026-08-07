@@ -106,7 +106,12 @@ class MenuMixin:
             return
         try:
             data = json.loads(_RECENT_FILE.read_text(encoding="utf-8"))
-            self._recent_shapefiles = data if isinstance(data, list) else []
+            # Drop malformed entries here, not at render time: the menu is
+            # built during setup(), where a bad entry crashes startup.
+            self._recent_shapefiles = [
+                e for e in data
+                if isinstance(e, dict) and isinstance(e.get("path"), str)
+            ] if isinstance(data, list) else []
         except Exception:
             self._recent_shapefiles = []
 
