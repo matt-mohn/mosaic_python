@@ -527,6 +527,7 @@ def compute_opportunity(
     solid=0.55,
     coords=None,
     smart_targets: bool = False,
+    _prepared: _OppPrep | None = None,
 ) -> OpportunityResult:
     """
     Args:
@@ -547,8 +548,11 @@ def compute_opportunity(
         OpportunityResult with T, P, ref, feasible, ceiling keyed by GROUPS.
     """
     assignment = np.asarray(assignment)
-    prep = _get_prep(vap, n_districts, midpoint, steepness, solid,
-                     coords=coords, smart_targets=smart_targets)
+    # The runner supplies preparation for its frozen settings. Standalone calls
+    # retain the parameter-keyed lookup, including after settings change.
+    prep = (_prepared if _prepared is not None else
+            _get_prep(vap, n_districts, midpoint, steepness, solid,
+                      coords=coords, smart_targets=smart_targets))
     # Single fused Numba pass: per-district sums for total (col 0) + every active
     # group, then the logistic curve per district.
     _, P_act = _accum_and_curve(assignment, prep.W, n_districts,

@@ -321,6 +321,7 @@ class RunnerMixin:
             }[dpg.get_value(self._tolerance_ratchet_mode)],
             max_iterations=dpg.get_value(self._iterations),
             seed=seed,
+            tree_mode="fast" if dpg.get_value(self._fast_trees) else "reference",
             score_config=score_cfg,
             annealing_config=ann_cfg,
             map_render_interval=dpg.get_value(self._map_interval),

@@ -13,6 +13,7 @@ from typing import Optional
 import geopandas as gpd
 import networkx as nx
 import numpy as np
+from numba import njit
 
 log = logging.getLogger("mosaic")
 
@@ -52,6 +53,21 @@ class CountyData:
     n_counties: int
 
 
+@njit(cache=True)
+def _county_district_matrix(assignment, county_ids, pops_f, n_counties, n_districts):
+    """Match bincount's precinct-order sums without allocating flat indices."""
+    if len(assignment) != len(county_ids) or len(assignment) != len(pops_f):
+        raise ValueError("County, assignment, and population lengths must match")
+    matrix = np.zeros((n_counties, n_districts), dtype=np.float64)
+    for i in range(len(assignment)):
+        county = county_ids[i]
+        district = assignment[i]
+        if county < 0 or county >= n_counties or district < 0 or district >= n_districts:
+            raise ValueError("County or district index out of range")
+        matrix[county, district] += pops_f[i]
+    return matrix
+
+
 def build_county_district_matrix(
     assignment: np.ndarray,
     county_ids: np.ndarray,
@@ -62,15 +78,12 @@ def build_county_district_matrix(
 
     Both county_splits and holistic_splitting need this exact matrix every
     iteration; building it once in score_plan and sharing it avoids a second
-    full-precinct bincount per step. Summation order matches each scorer's own
-    inline build (same flat_idx, same bincount), so results are bit-identical.
+    full-precinct aggregation per step. The compiled loop visits precincts in
+    the same order as the original bincount, so results are bit-identical.
     """
-    pops_f = county_data.pops_f
-    n_counties = county_data.n_counties
-    flat_idx = (county_ids * n_districts + assignment).astype(np.int64)
-    co_di_flat = np.bincount(flat_idx, weights=pops_f,
-                             minlength=n_counties * n_districts)
-    return co_di_flat.reshape(n_counties, n_districts)
+    return _county_district_matrix(
+        assignment, county_ids, county_data.pops_f, county_data.n_counties, n_districts,
+    )
 
 
 def find_county_array(gdf: gpd.GeoDataFrame) -> Optional[np.ndarray]:

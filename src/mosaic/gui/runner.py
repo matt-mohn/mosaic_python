@@ -40,6 +40,7 @@ from mosaic.scoring.community_congruence import (
     CommunityCongruenceData,
     precompute_community_congruence_data,
 )
+from mosaic.scoring.compactness_cache import CompactnessCache
 from mosaic.scoring.minority_cohesion import (
     MinorityCohesionData,
     precompute_minority_cohesion_data,
@@ -529,6 +530,13 @@ class AlgorithmRunner:
 
         ideal_pop = self.populations.sum() / num_districts
         ctx = self.graph_ctx
+        tree_mode, = self.state.get("tree_mode")
+        if tree_mode not in ("reference", "compiled", "fast"):
+            self.state.update(status=AlgorithmStatus.ERROR,
+                              error_message=f"Unknown tree mode: {tree_mode}")
+            return
+        ctx.scratch.tree_mode = tree_mode
+        log.info("Tree mode: %s", tree_mode)
         effective_bias = county_bias if county_bias_enabled else 1.0
         # Freeze the n=3 mix at run start. When n3_enabled is False, the dispatch
         # in the hot loop short-circuits BEFORE np.random.random() is even called,
@@ -654,6 +662,15 @@ class AlgorithmRunner:
             community_congruence_data=self.community_congruence_data,
             opportunity_coords=self.opportunity_coords,
         )
+        if self.vap_data is not None and score_config.weight_representation:
+            from mosaic.scoring.opportunity import _get_prep
+
+            # Match score_plan's exact input convention; refresh for each run.
+            _skw["_opportunity_prep"] = _get_prep(
+                self.vap_data, num_districts, score_config.opportunity_midpoint,
+                score_config.opportunity_steepness, score_config.opportunity_solid,
+                coords=self.opportunity_coords,
+                smart_targets=score_config.opportunity_smart_targets)
 
         # ── Tolerance Ratchet setup ──────────────────────────────────────────
         # active_tolerance starts at the user's map-wide tolerance and only ever
@@ -743,6 +760,18 @@ class AlgorithmRunner:
             # to set here -- the same map always scores the same, including a
             # relight reseeded from the last map.
             cut_edge_indices = ctx.compute_cut_edges(assignment)
+            # Both compactness components share one ordered affected-region
+            # scan. A proposal owns its new buffers; rejection leaves the
+            # accepted cache unchanged. Recreate the cache for every new run.
+            compactness_cache = None
+            if (self.pp_data is not None and self.reock_data is not None
+                    and (score_config.weight_polsby_popper
+                         or score_config.weight_holistic_compactness)
+                    and (score_config.weight_reock or score_config.weight_holistic_compactness)):
+                compactness_cache = CompactnessCache(
+                    assignment, num_districts, self.pp_data, self.reock_data)
+                _skw["_compactness_scores"] = (
+                    compactness_cache.current.pp_score, compactness_cache.current.reock_score)
             current_ps = score_plan(cut_edge_indices, score_config,
                                     assignment=assignment, **_skw)
 
@@ -939,6 +968,10 @@ class AlgorithmRunner:
                     continue
 
                 # ── Score proposal ───────────────────────────────────────────
+                if compactness_cache is not None:
+                    compactness_proposal = compactness_cache.propose(new_assignment)
+                    _skw["_compactness_scores"] = (
+                        compactness_proposal.pp_score, compactness_proposal.reock_score)
                 proposed_ps = score_plan(new_cut_indices, score_config,
                                          assignment=new_assignment, **_skw)
 
@@ -954,6 +987,8 @@ class AlgorithmRunner:
                     is_worse = False
 
                 if accepted:
+                    if compactness_cache is not None:
+                        compactness_cache.accept(compactness_proposal)
                     assignment = new_assignment
                     cut_edge_indices = new_cut_indices
                     current_ps = proposed_ps

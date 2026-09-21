@@ -81,7 +81,7 @@ def recom_step_ig(
 
     Args:
         ctx: Precomputed graph context (edge arrays, etc.)
-        assignment: Current district assignment (modified in-place on success)
+        assignment: Current district assignment (never modified in-place)
         populations: Population per precinct
         ideal_pop: Target population per district
         tolerance: Fractional population deviation tolerance
@@ -106,9 +106,10 @@ def recom_step_ig(
     district_a = int(assignment[u])
     district_b = int(assignment[v])
 
-    nodes_a = np.flatnonzero(assignment == district_a).astype(np.int32)
-    nodes_b = np.flatnonzero(assignment == district_b).astype(np.int32)
-    merged_nodes = np.concatenate([nodes_a, nodes_b])
+    # One index extraction instead of separate district arrays + concatenation.
+    # Ascending IDs match the tree builder's canonical local-node order.
+    merged_nodes = np.flatnonzero(
+        (assignment == district_a) | (assignment == district_b)).astype(np.int32)
 
     # Both districts are connected (invariant maintained by construction) and the
     # selected cut edge bridges them, so the merged region is always connected.
@@ -117,6 +118,7 @@ def recom_step_ig(
             ctx.edge_u, ctx.edge_v, ctx.scratch, merged_nodes,
             populations, ideal_pop, tolerance, max_attempts=100,
             county_array=county_array, county_bias=county_bias,
+            _nodes_sorted=True,
         )
     else:
         subgraph = ctx.graph.subgraph(merged_nodes)
@@ -232,10 +234,9 @@ def recom_step_ig_n3(
     if district_c is None:
         return assignment, False, cut_edge_indices
 
-    nodes_a = np.flatnonzero(assignment == district_a).astype(np.int32)
-    nodes_b = np.flatnonzero(assignment == district_b).astype(np.int32)
-    nodes_c = np.flatnonzero(assignment == district_c).astype(np.int32)
-    merged_nodes = np.concatenate([nodes_a, nodes_b, nodes_c])
+    merged_nodes = np.flatnonzero(
+        (assignment == district_a) | (assignment == district_b)
+        | (assignment == district_c)).astype(np.int32)
 
     # Merged region is connected: A∪B via the picked cut edge, C joined via the
     # cut edge selected by _pick_third_district.
@@ -248,6 +249,7 @@ def recom_step_ig_n3(
             one_sided=True,
             county_array=county_array, county_bias=county_bias,
             out_state=stage1_state,
+            _nodes_sorted=True,
         )
     else:
         subgraph_3 = ctx.graph.subgraph(merged_nodes)
@@ -286,6 +288,7 @@ def recom_step_ig_n3(
                 max_attempts=max_attempts_per_stage,
                 one_sided=False,
                 county_array=county_array, county_bias=county_bias,
+                _nodes_sorted=True,
             )
         else:
             subgraph_2 = ctx.graph.subgraph(remaining_nodes)

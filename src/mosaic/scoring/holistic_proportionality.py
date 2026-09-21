@@ -31,6 +31,8 @@ This is a *derived* score -- shares/total_d come from the shared partisan pass.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 import numpy as np
 from scipy.special import ndtr
 
@@ -38,6 +40,7 @@ from mosaic.scoring.partisan import (
     _GH_NODES,
     _GH_NORM,
     _GH_WEIGHTS,
+    _nb_inversion_terms,
     _poisson_binomial_ge_batched,
     build_p_wins_matrix,
 )
@@ -53,16 +56,19 @@ _MAG_FULL  = 0.42   # seat/vote gap at which M reaches 100 (linear below; flat a
 _VOTE_BLUR = 0.005  # smooths the vote-winner flip so P_inv is continuous through a tie
 
 
-def _clipped_proportionality(shares, total_d, sigma_comb):
+def _clipped_proportionality(shares, total_d, sigma_comb,
+                             vote_share=None, p_district=None):
     """Original point-estimate form: linear-to-cap deviation with a binary
     antimajoritarian short-circuit. Kept as the clipped fallback."""
     n = len(shares)
-    Vf = float((shares * total_d).sum() / total_d.sum())
+    Vf = (float((shares * total_d).sum() / total_d.sum())
+          if vote_share is None else vote_share)
 
-    if sigma_comb <= 0.0:
-        p_district = (shares > 0.5).astype(np.float64)
-    else:
-        p_district = ndtr((shares - 0.5) / sigma_comb)
+    if p_district is None:
+        if sigma_comb <= 0.0:
+            p_district = (shares > 0.5).astype(np.float64)
+        else:
+            p_district = ndtr((shares - 0.5) / sigma_comb)
     est_sf = float(p_district.sum() / n)
 
     best_sf = round(n * Vf - 1e-9) / n
@@ -91,11 +97,14 @@ def _clipped_proportionality(shares, total_d, sigma_comb):
     return adjusted, 100.0 - rating, 0.0
 
 
-def _magnitude(shares, total_d, sigma_comb):
+def _magnitude(shares, total_d, sigma_comb, vote_share=None, p_district=None):
     """Expected seat/vote gap -> [0, 100). Winner's-bonus forgiveness is a gentle
     slope (no flat basin); the map saturates so it can never exceed 100."""
-    Vf = float((shares * total_d).sum() / total_d.sum())
-    if sigma_comb <= 0.0:
+    Vf = (float((shares * total_d).sum() / total_d.sum())
+          if vote_share is None else vote_share)
+    if p_district is not None:
+        est_sf = float(p_district.mean())
+    elif sigma_comb <= 0.0:
         est_sf = float((shares > 0.5).mean())
     else:
         est_sf = float(ndtr((shares - 0.5) / sigma_comb).mean())
@@ -112,7 +121,22 @@ def _magnitude(shares, total_d, sigma_comb):
     return Vf, M, Vf - est_sf              # display gap: + = D under-seated
 
 
-def _p_inversion(shares, total_d, p_wins, swing_sigma):
+@lru_cache(maxsize=64)
+def _inversion_vote_weights(vote_share, swing_sigma, vote_blur):
+    """Exact-input reuse of the statewide vote model, independent of districting.
+
+    District aggregation may change the last bits of vote_share: keep those
+    distinct keys, never round them. Returned arrays must not be modified.
+    """
+    vf_nodes = vote_share + _GH_NODES * swing_sigma
+    dem_lost = ndtr((0.5 - vf_nodes) / vote_blur)
+    rep_lost = 1.0 - dem_lost
+    dem_lost.setflags(write=False)
+    rep_lost.setflags(write=False)
+    return dem_lost, rep_lost
+
+
+def _p_inversion(shares, total_d, p_wins, swing_sigma, vote_share=None):
     """Swing-integrated P(the popular-vote loser controls the chamber), in [0, 1].
 
     Seat ties (even chambers) are excluded from both majority terms, so they add
@@ -122,12 +146,16 @@ def _p_inversion(shares, total_d, p_wins, swing_sigma):
     """
     n = len(shares)
     maj = n // 2 + 1
-    p_maj_d = _poisson_binomial_ge_batched(p_wins, maj)          # (M,) P(D holds | node)
-    p_maj_r = _poisson_binomial_ge_batched(1.0 - p_wins, maj)    # (M,) P(R holds | node)
-    Vf = float((shares * total_d).sum() / total_d.sum())
-    vf_nodes = Vf + _GH_NODES * swing_sigma                      # shifted vote share per node
-    w_dem_lost = ndtr((0.5 - vf_nodes) / _VOTE_BLUR)   # ~1 if D lost the vote, ~0 if R lost
-    g = w_dem_lost * p_maj_d + (1.0 - w_dem_lost) * p_maj_r   # per-node inversion prob, [0, 1]
+    Vf = (float((shares * total_d).sum() / total_d.sum())
+          if vote_share is None else vote_share)
+    w_dem_lost, w_rep_lost = _inversion_vote_weights(float(Vf), swing_sigma, _VOTE_BLUR)
+    if p_wins.dtype == np.float64:
+        g = _nb_inversion_terms(p_wins, maj, w_dem_lost, w_rep_lost)
+    else:
+        # Preserve the original complement dtype for standalone non-float64 inputs.
+        p_maj_d = _poisson_binomial_ge_batched(p_wins, maj)
+        p_maj_r = _poisson_binomial_ge_batched(1.0 - p_wins, maj)
+        g = w_dem_lost * p_maj_d + w_rep_lost * p_maj_r
     return float(np.dot(_GH_WEIGHTS, g) / _GH_NORM)
 
 
@@ -140,7 +168,10 @@ def holistic_proportionality_from_shares(
     swing_sigma: float | None = None,
     sigma_d: float | None = None,
     p_wins: np.ndarray | None = None,
-) -> tuple[float, float]:
+    _vote_share: float | None = None,
+    _total_votes: float | None = None,
+    _p_district: np.ndarray | None = None,
+) -> tuple[float, float, float]:
     """
     Args:
         unclipped:   if True (default), the probabilistic form (magnitude escalated
@@ -159,18 +190,25 @@ def holistic_proportionality_from_shares(
                             the clipped form returns its binary antimajoritarian flag.
     """
     n = len(shares)
-    if float(total_d.sum()) == 0.0 or n == 0:
+    if _total_votes is None:
+        _total_votes = float(total_d.sum())
+    if _total_votes == 0.0 or n == 0:
         return 0.0, 0.0, 0.0
 
+    if _vote_share is None:
+        _vote_share = float((shares * total_d).sum() / _total_votes)
+
     if not unclipped or swing_sigma is None:
-        return _clipped_proportionality(shares, total_d, sigma_comb)
+        return _clipped_proportionality(shares, total_d, sigma_comb,
+                                        _vote_share, _p_district)
 
     if p_wins is None:
         if sigma_d is None:
-            return _clipped_proportionality(shares, total_d, sigma_comb)
+            return _clipped_proportionality(shares, total_d, sigma_comb,
+                                            _vote_share, _p_district)
         p_wins = build_p_wins_matrix(shares, sigma_d, swing_sigma)
 
-    _, M, gap = _magnitude(shares, total_d, sigma_comb)
-    p_inv = _p_inversion(shares, total_d, p_wins, swing_sigma)
+    _, M, gap = _magnitude(shares, total_d, sigma_comb, _vote_share, _p_district)
+    p_inv = _p_inversion(shares, total_d, p_wins, swing_sigma, _vote_share)
     penalty = M * (1.0 - p_inv) + 100.0 * p_inv    # convex blend -> [0, 100], >= 0
     return gap, penalty, p_inv

@@ -174,6 +174,7 @@ class SharedState:
     # 0.05 default helps the chain escape local minima at ~5-7% wall-time cost.
     # Set by GUI before run; frozen at run start to keep dispatch zero-overhead at 0.
     n3_probability: float = 0.05
+    tree_mode: str = "reference"  # opt-in compiled retry loop changes seeded trajectories
     # Per-stage attempt cap for n=3 cuts. Bench showed 20 is the sweet spot.
     n3_max_attempts_per_stage: int = 20
 

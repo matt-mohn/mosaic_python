@@ -23,6 +23,8 @@ EG is vote-weighted: (total_wasted_dem - total_wasted_rep) / total_votes.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 import numpy as np
 
 # Numba JIT for the Poisson Binomial DP inner loop.
@@ -53,6 +55,14 @@ def _nb_pb_ge_batched(p_wins, threshold):
         result[i] = s
     return result
 
+@njit(cache=True)
+def _nb_inversion_terms(p_wins, threshold, dem_lost, rep_lost):
+    """Same two majority DPs and per-node blend, in one compiled call."""
+    dem = _nb_pb_ge_batched(p_wins, threshold)
+    rep = _nb_pb_ge_batched(1.0 - p_wins, threshold)
+    return dem_lost * dem + rep_lost * rep
+
+
 # Shared swing uncertainty (partisan-environment sigma).
 # Default 0.03 (3pp). User-configurable via ScoreConfig.election_swing_sigma.
 _EG_SWING_SIGMA: float = 0.03
@@ -61,6 +71,30 @@ _EG_SWING_SIGMA: float = 0.03
 # hermegauss integrates against exp(-x^2/2); divide by sqrt(2*pi) to integrate against N(0,1).
 _GH_NODES, _GH_WEIGHTS = np.polynomial.hermite_e.hermegauss(17)
 _GH_NORM: float = float(np.sqrt(2.0 * np.pi))
+
+
+@njit(cache=True)
+def _district_dem_shares(assignment, dem_votes, gop_votes, n_districts):
+    """Accumulate both parties in precinct order without full-precinct copies."""
+    if len(dem_votes) != len(assignment) or len(gop_votes) != len(assignment):
+        raise ValueError("The weights and list don't have the same length.")
+    size = max(n_districts, 0)
+    for district in assignment:
+        if district < 0:
+            raise ValueError("'list' argument must have no negative elements")
+        size = max(size, district + 1)
+    dem_d = np.zeros(size, dtype=np.float64)
+    gop_d = np.zeros(size, dtype=np.float64)
+    for i in range(len(assignment)):
+        district = assignment[i]
+        dem_d[district] += np.float64(dem_votes[i])
+        gop_d[district] += np.float64(gop_votes[i])
+    total_d = dem_d + gop_d
+    shares = np.full(size, 0.5)
+    for district in range(size):
+        if total_d[district] > 0:
+            shares[district] = dem_d[district] / total_d[district]
+    return shares, total_d
 
 
 def district_dem_shares(
@@ -76,22 +110,20 @@ def district_dem_shares(
         shares  -- (n_districts,) float D two-party share
         total_d -- (n_districts,) float total two-party votes per district
     """
-    dem_d = np.bincount(assignment, weights=dem_votes.astype(np.float64),
-                        minlength=n_districts)
-    gop_d = np.bincount(assignment, weights=gop_votes.astype(np.float64),
-                        minlength=n_districts)
-    total_d = dem_d + gop_d
-    shares = np.divide(dem_d, total_d, out=np.full(len(dem_d), 0.5), where=total_d > 0)
-    return shares, total_d
+    if n_districts < 0:
+        raise ValueError("'minlength' must not be negative")
+    return _district_dem_shares(assignment, dem_votes, gop_votes, n_districts)
 
 
-def _eg_votes(shares: np.ndarray, total_d: np.ndarray) -> float:
+def _eg_votes(shares: np.ndarray, total_d: np.ndarray,
+              total_votes: float | None = None) -> float:
     """
     Vote-weighted efficiency gap.
 
     EG = (total_wasted_dem - total_wasted_rep) / total_votes
     """
-    total_votes = float(total_d.sum())
+    if total_votes is None:
+        total_votes = float(total_d.sum())
     if total_votes == 0.0:
         return 0.0
     dem_wins = shares > 0.5
@@ -102,6 +134,7 @@ def _eg_votes(shares: np.ndarray, total_d: np.ndarray) -> float:
     return float((wasted_dem.sum() - wasted_rep.sum()) / total_votes)
 
 
+@lru_cache(maxsize=32)
 def k_to_sigma(win_prob_at_55: float) -> float:
     """Per-district Gaussian sigma from the P(win | share=0.55) calibration point."""
     p = float(np.clip(win_prob_at_55, 0.501, 0.9999))
@@ -114,19 +147,22 @@ def p_win_gaussian(share: np.ndarray, sigma: float) -> np.ndarray:
 
 
 def _eg_votes_robust(shares: np.ndarray, total_d: np.ndarray,
-                     sigma: float) -> float:
+                     sigma: float, *, p_dem_wins: np.ndarray | None = None,
+                     total_votes: float | None = None) -> float:
     """
     Expected vote-weighted EG when each district's share is N(share, sigma^2).
 
     Closed-form via the normal CDF -- no sampling, no RNG, fully deterministic.
     Falls back to _eg_votes when sigma <= 0.
     """
-    total_votes = float(total_d.sum())
+    if total_votes is None:
+        total_votes = float(total_d.sum())
     if total_votes == 0.0:
         return 0.0
     if sigma <= 0.0:
-        return _eg_votes(shares, total_d)
-    p_dem_wins = ndtr((shares - 0.5) / sigma)
+        return _eg_votes(shares, total_d, total_votes)
+    if p_dem_wins is None:
+        p_dem_wins = ndtr((shares - 0.5) / sigma)
     contrib = total_d * ((2.0 * shares - 0.5) - p_dem_wins)
     return float(contrib.sum() / total_votes)
 
@@ -134,6 +170,32 @@ def _eg_votes_robust(shares: np.ndarray, total_d: np.ndarray,
 def eg_from_shares(shares: np.ndarray, total_d: np.ndarray) -> float:
     """Vote-weighted efficiency gap. Public alias for _eg_votes."""
     return _eg_votes(shares, total_d)
+
+
+def party_display_scores(shares, total_d, sigma_comb, sigma_d, vote_share,
+                         total_votes, robust, favor_dem, p_dem_wins=None):
+    """Batch the four unweighted live displays; retain the seats penalty field.
+
+    Uses the public scorers' array arithmetic, including expected seats'
+    reciprocal multiplication rather than reusing division-based probabilities.
+    Call only for nonempty float64 shares with all four objective weights zero.
+    """
+    n = len(shares)
+    ordered = np.sort(shares)
+    median = (0.5 * (ordered[n // 2 - 1] + ordered[n // 2])
+              if n % 2 == 0 else float(ordered[n // 2]))
+    mm = float(shares.sum() / n - median)
+    if robust:
+        eg_sigma = float(np.sqrt(_EG_SWING_SIGMA ** 2 + sigma_d ** 2))
+        eg = _eg_votes_robust(shares, total_d, eg_sigma,
+                             p_dem_wins=p_dem_wins, total_votes=total_votes)
+    else:
+        eg = _eg_votes(shares, total_d, total_votes)
+    seats = float(p_win_gaussian(shares, sigma_comb).sum())
+    seats_penalty = max(0.0, min(100.0,
+        (n - seats if favor_dem else seats) / n * 100.0))
+    bias = 0.5 - float(ndtr((shares + (0.5 - vote_share) - 0.5) / sigma_comb).sum() / n)
+    return (mm, 0.0), (eg, 0.0), (seats, seats_penalty), (bias, 0.0)
 
 
 def score_mean_median(
@@ -189,6 +251,8 @@ def score_efficiency_gap(
     _shares: np.ndarray | None = None,
     _total_d: np.ndarray | None = None,
     _sigma_d: float | None = None,
+    _p_dem_wins: np.ndarray | None = None,
+    _total_votes: float | None = None,
 ) -> tuple[float, float]:
     """
     Unified Efficiency Gap score (one row, three modes).
@@ -207,9 +271,10 @@ def score_efficiency_gap(
         if _sigma_d is None:
             _sigma_d = k_to_sigma(win_prob_at_55)
         sigma_comb = float(np.sqrt(_EG_SWING_SIGMA ** 2 + _sigma_d ** 2))
-        raw = _eg_votes_robust(_shares, _total_d, sigma_comb)
+        raw = _eg_votes_robust(_shares, _total_d, sigma_comb,
+                              p_dem_wins=_p_dem_wins, total_votes=_total_votes)
     else:
-        raw = _eg_votes(_shares, _total_d)
+        raw = _eg_votes(_shares, _total_d, _total_votes)
 
     if mode == "favor_dem":
         d = max(0.0, min(1.0, (raw + bound) / (2.0 * bound)))
@@ -231,6 +296,7 @@ def score_dem_seats(
     swing_sigma: float = _EG_SWING_SIGMA,
     _shares: np.ndarray | None = None,
     _sigma_d: float | None = None,
+    _sigma_comb: float | None = None,
 ) -> tuple[float, float]:
     """
     Expected Dem seats as a directional penalty (no target).
@@ -243,12 +309,13 @@ def score_dem_seats(
     favor_dem=True pushes the plan toward more Dem seats (penalty = (n - raw)/n * 100).
     favor_dem=False pushes toward more GOP seats (penalty = raw/n * 100).
     """
-    if _sigma_d is None:
-        _sigma_d = k_to_sigma(win_prob_at_55)
-    sigma_comb = float(np.sqrt(swing_sigma ** 2 + _sigma_d ** 2))
+    if _sigma_comb is None:
+        if _sigma_d is None:
+            _sigma_d = k_to_sigma(win_prob_at_55)
+        _sigma_comb = float(np.sqrt(swing_sigma ** 2 + _sigma_d ** 2))
     if _shares is None:
         _shares, _ = district_dem_shares(assignment, dem_votes, gop_votes, n_districts)
-    raw = float(p_win_gaussian(_shares, sigma_comb).sum())
+    raw = float(p_win_gaussian(_shares, _sigma_comb).sum())
     if n_districts <= 0:
         return raw, 0.0
     if favor_dem:
@@ -268,6 +335,14 @@ def _poisson_binomial_ge_batched(p_wins_matrix: np.ndarray, threshold: int) -> n
     return _nb_pb_ge_batched(p_wins_matrix, threshold)
 
 
+@lru_cache(maxsize=32)
+def _swing_node_offsets(sigma_d: float, swing_sigma: float) -> np.ndarray:
+    """Run-constant quadrature offsets; never expose a writable cached array."""
+    offsets = _GH_NODES * swing_sigma * (1.0 / sigma_d)
+    offsets.setflags(write=False)
+    return offsets
+
+
 def build_p_wins_matrix(
     shares: np.ndarray, sigma_d: float, swing_sigma: float,
 ) -> np.ndarray:
@@ -276,7 +351,7 @@ def build_p_wins_matrix(
     builds it once per iteration and shares it across both scorers."""
     inv_sigma_d = 1.0 / sigma_d
     centered = (shares - 0.5) * inv_sigma_d
-    node_offsets = _GH_NODES * swing_sigma * inv_sigma_d   # (M,)
+    node_offsets = _swing_node_offsets(sigma_d, swing_sigma)   # (M,)
     return ndtr(centered[None, :] + node_offsets[:, None])  # (M, n)
 
 
@@ -393,6 +468,7 @@ def score_partisan_bias(
     mode: str = "fair",          # "fair" | "favor_dem" | "favor_rep"
     bound: float = 0.25,
     quadratic_penalty: bool = False,
+    _vote_share: float | None = None,
 ) -> tuple[float, float]:
     """Partisan bias: D seat-share surplus at a hypothetical 50/50 statewide vote.
 
@@ -402,8 +478,9 @@ def score_partisan_bias(
 
     Returns (raw, penalty in [0, 100]).
     """
-    v0 = _statewide_dem_share(shares, total_d)
-    s50 = float(_seat_curve(shares, sigma_comb, np.array([0.5 - v0]))[0])
+    v0 = _statewide_dem_share(shares, total_d) if _vote_share is None else _vote_share
+    # One swing point needs no 2-D broadcast or axis-wise reduction.
+    s50 = float(ndtr((shares + (0.5 - v0) - 0.5) / sigma_comb).mean())
     raw = 0.5 - s50
     if mode == "favor_dem":
         d = max(0.0, min(1.0, (raw + bound) / (2.0 * bound)))
@@ -419,6 +496,7 @@ def score_partisan_gini(
     shares: np.ndarray,
     total_d: np.ndarray,
     sigma_comb: float,
+    _vote_share: float | None = None,
 ) -> tuple[float, float]:
     """Partisan Gini: area between the S-V curve and its reflection 1 - S(1 - v).
 
@@ -427,7 +505,7 @@ def score_partisan_gini(
 
     Returns (area, penalty in [0, 100]).
     """
-    v0 = _statewide_dem_share(shares, total_d)
+    v0 = _statewide_dem_share(shares, total_d) if _vote_share is None else _vote_share
     # _GINI_GRID is symmetric about 0.5, so the reflection 1 - S(1 - v) is exactly
     # the forward curve reversed: S(1 - GRID[j]) = S(GRID[n-1-j]). One seat-curve
     # sweep suffices; diff[j] = |S[j] - (1 - S[n-1-j])| = |S[j] + S[n-1-j] - 1|.

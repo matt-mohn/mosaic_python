@@ -139,11 +139,20 @@ class PopupsMixin:
 
     def _build_opt_popup(self):
         with self._dialog(
-            "Annealing Settings", "popup_opt", (460, 460),
+            "Annealing Settings", "popup_opt", (460, 500),
             show=False,
             secondary=("Close",
                        lambda: dpg.configure_item("popup_opt", show=False)),
         ):
+            self._fast_trees = dpg.add_checkbox(
+                label="Fast tree generation", default_value=True,
+            )
+            self._tooltip(
+                self._fast_trees,
+                "Faster iterations; results may differ. "
+                "Turn off to use the original tree generator.",
+            )
+            dpg.add_separator()
             self._ann_enabled = dpg.add_checkbox(
                 label="Enable simulated annealing", default_value=True,
                 callback=self._on_ann_toggle,

@@ -37,6 +37,8 @@ def holistic_competitiveness_from_shares(
     shares: np.ndarray,
     sigma_comb: float,
     unclipped: bool = True,
+    *,
+    _p_district: np.ndarray | None = None,
 ) -> tuple[float, float]:
     """
     Args:
@@ -52,7 +54,9 @@ def holistic_competitiveness_from_shares(
     if n == 0:
         return 0.0, 0.0
 
-    if sigma_comb <= 0.0:
+    if _p_district is not None:
+        p_wins = _p_district
+    elif sigma_comb <= 0.0:
         p_wins = (shares > 0.5).astype(np.float64)
     else:
         p_wins = ndtr((shares - 0.5) / sigma_comb)

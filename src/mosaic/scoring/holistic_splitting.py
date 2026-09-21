@@ -74,6 +74,10 @@ def _hsplit_raw_numba(co, county_pops, district_pops, state_pop,
         safe_cp = cp if cp > 0.0 else 1.0
         for d in range(n_districts):
             v = co[c, d]
+            # An empty intersection contributes zero in both directions.
+            # Preserve the original order of every nonzero accumulation.
+            if v == 0.0:
+                continue
             dp = district_pops[d]
             # County direction: whole district sitting inside this county.
             if v == dp and v > 0.0:

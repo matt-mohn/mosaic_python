@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
+from scipy.special import ndtr
 
 from mosaic.scoring.alignment import score_alignment
 from mosaic.scoring.community_congruence import score_community_congruence
@@ -28,9 +29,11 @@ from mosaic.scoring.holistic_splitting import score_holistic_splitting
 from mosaic.scoring.minority_cohesion import score_minority_cohesion
 from mosaic.scoring.opportunity import compute_opportunity
 from mosaic.scoring.partisan import (
+    _EG_SWING_SIGMA,
     build_p_wins_matrix,
     district_dem_shares,
     k_to_sigma,
+    party_display_scores,
     score_dem_seats,
     score_efficiency_gap,
     score_hinge_chance,
@@ -175,6 +178,8 @@ def score_plan(
     minority_cohesion_data=None,
     community_congruence_data=None,
     opportunity_coords: Optional[np.ndarray] = None,
+    _compactness_scores: tuple[float, float] | None = None,
+    _opportunity_prep=None,
 ) -> PlanScore:
     """
     Compute the weighted plan score.
@@ -247,14 +252,16 @@ def score_plan(
     need_pp = bool(config.weight_polsby_popper or config.weight_holistic_compactness)
     if need_pp and assignment is not None and pp_data is not None \
             and n_districts is not None:
-        pp_raw = score_polsby_popper(assignment, pp_data, n_districts)
+        pp_raw = (_compactness_scores[0] if _compactness_scores is not None
+                  else score_polsby_popper(assignment, pp_data, n_districts))
         if config.weight_polsby_popper:
             total += config.weight_polsby_popper * pp_raw
 
     need_reock = bool(config.weight_reock or config.weight_holistic_compactness)
     if need_reock and assignment is not None and reock_data is not None \
             and n_districts is not None:
-        reock_raw = score_reock(assignment, reock_data, n_districts)
+        reock_raw = (_compactness_scores[1] if _compactness_scores is not None
+                     else score_reock(assignment, reock_data, n_districts))
         if config.weight_reock:
             total += config.weight_reock * reock_raw
 
@@ -332,20 +339,40 @@ def score_plan(
         _sigma_d = k_to_sigma(config.election_win_prob_at_55)
         _sigma_comb = float(np.sqrt(
             config.election_swing_sigma ** 2 + _sigma_d ** 2))
+        _total_votes = float(_total_d.sum())
+        _vote_share = (float((_shares * _total_d).sum() / _total_votes)
+                       if _total_votes > 0.0 else 0.5)
+        # Only combine identical arithmetic. Expected seats uses reciprocal
+        # multiplication, whereas these metrics use division. Robust EG has
+        # its own fixed swing sigma, so it shares only at that calibration.
+        _share_eg_probs = (config.use_robust_eg
+                          and config.election_swing_sigma == _EG_SWING_SIGMA)
+        _need_district_probs = (_share_eg_probs or config.weight_holistic_proportionality
+                                or config.weight_holistic_competitiveness)
+        _p_district = (ndtr((_shares - 0.5) / _sigma_comb)
+                       if _need_district_probs else None)
 
-        # ── Cheap tier: always computed (free riders on the shared model — each is
-        # one bincount/ndtr read — so their display panels stay live at ~no cost).
-        mm_raw, mm_penalty = score_mean_median(
+        # Live display tier: evaluated every proposal. Batch the unweighted case;
+        # weighted objectives retain their individual penalty calculations.
+        _display = None
+        if (n_districts > 0 and not (config.weight_mean_median
+                or config.weight_efficiency_gap or config.weight_dem_seats
+                or config.weight_partisan_bias)):
+            _display = party_display_scores(
+                _shares, _total_d, _sigma_comb, _sigma_d, _vote_share,
+                _total_votes, config.use_robust_eg, config.dem_seats_favor_dem,
+                _p_district if _share_eg_probs else None)
+        mm_raw, mm_penalty = (_display[0] if _display is not None else score_mean_median(
             assignment, dem_votes, gop_votes, n_districts,
             mode=config.mm_mode,
             bound=config.mm_bound,
             quadratic_penalty=config.partisan_quadratic_penalty,
             _shares=_shares,
-        )
+        ))
         if config.weight_mean_median:
             total += config.weight_mean_median * mm_penalty
 
-        eg_raw, eg_penalty = score_efficiency_gap(
+        eg_raw, eg_penalty = (_display[1] if _display is not None else score_efficiency_gap(
             assignment, dem_votes, gop_votes, n_districts,
             mode=config.eg_mode,
             bound=config.eg_bound,
@@ -355,27 +382,31 @@ def score_plan(
             _shares=_shares,
             _total_d=_total_d,
             _sigma_d=_sigma_d,
-        )
+            _p_dem_wins=_p_district if _share_eg_probs else None,
+            _total_votes=_total_votes,
+        ))
         if config.weight_efficiency_gap:
             total += config.weight_efficiency_gap * eg_penalty
 
-        seats_raw, seats_penalty = score_dem_seats(
+        seats_raw, seats_penalty = (_display[2] if _display is not None else score_dem_seats(
             assignment, dem_votes, gop_votes, n_districts,
             favor_dem=config.dem_seats_favor_dem,
             win_prob_at_55=config.election_win_prob_at_55,
             swing_sigma=config.election_swing_sigma,
             _shares=_shares,
             _sigma_d=_sigma_d,
-        )
+            _sigma_comb=_sigma_comb,
+        ))
         if config.weight_dem_seats:
             total += config.weight_dem_seats * seats_penalty
 
-        bias_raw, bias_pen = score_partisan_bias(
+        bias_raw, bias_pen = (_display[3] if _display is not None else score_partisan_bias(
             _shares, _total_d, _sigma_comb,
             mode=config.pbias_mode,
             bound=config.pbias_bound,
             quadratic_penalty=config.partisan_quadratic_penalty,
-        )
+            _vote_share=_vote_share,
+        ))
         if config.weight_partisan_bias:
             total += config.weight_partisan_bias * bias_pen
 
@@ -398,17 +429,22 @@ def score_plan(
                 unclipped=config.proportionality_unclipped,
                 swing_sigma=config.election_swing_sigma,
                 p_wins=_p_wins,
+                _vote_share=_vote_share,
+                _total_votes=_total_votes,
+                _p_district=_p_district,
             )
             total += config.weight_holistic_proportionality * hprop_pen
 
         if config.weight_holistic_competitiveness:
             _, hcmp_pen = holistic_competitiveness_from_shares(
                 _shares, _sigma_comb, unclipped=config.competitiveness_unclipped,
+                _p_district=_p_district,
             )
             total += config.weight_holistic_competitiveness * hcmp_pen
 
         if config.weight_partisan_gini:
-            _, gini_pen = score_partisan_gini(_shares, _total_d, _sigma_comb)
+            _, gini_pen = score_partisan_gini(
+                _shares, _total_d, _sigma_comb, _vote_share=_vote_share)
             total += config.weight_partisan_gini * gini_pen
 
         if config.weight_majority_chance_dem or config.weight_majority_chance_rep:
@@ -463,6 +499,7 @@ def score_plan(
             solid=config.opportunity_solid,
             coords=opportunity_coords,
             smart_targets=config.opportunity_smart_targets,
+            _prepared=_opportunity_prep,
         )
         rep_rating, rep_pen, _rr, _reff = representation_from_opportunity(
             _opp, mode=config.representation_mode,

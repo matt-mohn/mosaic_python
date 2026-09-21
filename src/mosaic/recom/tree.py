@@ -13,15 +13,40 @@ class FbcScratch:
     """Persistent scratch buffers for find_balanced_cut_fast.
 
     Sized once per GraphContext to the parent graph's node and edge counts;
-    reused across every ReCom step so the hot loop allocates nothing. Three
-    of the four buffers are write-then-overwrite; only `in_merged` carries
-    persistent state, and it is reset (in-place at positions touched by the
-    last call) before each new call.
+    reused across ReCom steps. Kernels overwrite their working ranges; only
+    `in_merged` needs explicit reset at positions touched by the last call.
+    A saved residual-tree state owns copies, so later calls cannot corrupt it.
+    Like GraphContext, a scratch instance is for one algorithm thread.
     """
     in_merged: np.ndarray  # bool[n_total] — True for nodes in current merged region
     local_idx: np.ndarray  # int32[n_total] — global -> local, valid where in_merged
     loc_eu: np.ndarray     # int32[n_edges_parent] — merged-region edges (local idx)
     loc_ev: np.ndarray     # int32[n_edges_parent]
+    tree_work: Optional[tuple] = None
+    tree_mode: str = "reference"
+
+    def tree_buffers(self) -> tuple:
+        """Allocate tree workspace once; kernels receive the active node count."""
+        if self.tree_work is None:
+            n = len(self.in_merged)
+            self.tree_work = (
+                np.empty(n + 1, dtype=np.int32),             # CSR pointers
+                np.empty(max(2 * (n - 1), 1), dtype=np.int32),  # CSR neighbors
+                np.empty(n, dtype=np.int32),                 # degree
+                np.empty(n, dtype=np.int32),                 # CSR cursor
+                np.empty(n, dtype=np.int32),                 # BFS queue
+                np.empty(n, dtype=np.int32),                 # parent
+                np.empty(n, dtype=np.bool_),                 # visited
+                np.empty(n, dtype=np.float64),               # subtree population
+                np.empty(n, dtype=np.bool_),                 # subtree membership
+                np.empty(n, dtype=np.int32),                 # collected nodes
+                np.empty(n, dtype=np.int32),                 # root candidates
+                np.empty(n, dtype=np.int32),                 # union-find parent
+                np.empty(n, dtype=np.int32),                 # union-find rank
+                np.empty(max(n - 1, 1), dtype=np.int32),      # MST u
+                np.empty(max(n - 1, 1), dtype=np.int32),      # MST v
+            )
+        return self.tree_work
 
     @classmethod
     def allocate(cls, n_nodes: int, n_edges: int) -> "FbcScratch":
@@ -138,6 +163,20 @@ try:
         return cnt
 
     @_njit(cache=True)
+    def _nb_prepare_region(nodes, populations, parent_eu, parent_ev,
+                           in_merged, local_idx, out_eu, out_ev):
+        """Mark nodes, gather populations and extract edges in canonical order."""
+        sub_pops = np.empty(len(nodes), dtype=np.float64)
+        for i in range(len(nodes)):
+            node = nodes[i]
+            in_merged[node] = True
+            local_idx[node] = i
+            sub_pops[i] = populations[node]
+        count = _nb_extract_local_edges(parent_eu, parent_ev, in_merged,
+                                        local_idx, out_eu, out_ev)
+        return sub_pops, count
+
+    @_njit(cache=True)
     def _nb_kruskal_mst(eu, ev, sorted_idx, n_nodes,
                         uf_parent, uf_rank, mst_eu, mst_ev):
         """Kruskal MST with union-by-rank + path compression.
@@ -212,6 +251,58 @@ try:
             if ok:
                 return i
         return -1
+
+    @_njit(cache=True)
+    def _nb_fast_draw(state):
+        """xorshift64* step for the explicitly non-academic fast shuffle mode."""
+        state ^= state >> np.uint64(12)
+        state ^= state << np.uint64(25)
+        state ^= state >> np.uint64(27)
+        return state, state * np.uint64(2685821657736338717)
+
+    @_njit(cache=True)
+    def _nb_balanced_attempts(eu, ev, n, sub_pops, total_pop, min_pop, max_pop,
+                              one_sided, max_attempts, seed, work, fast=False):
+        """Compiled randomized-Kruskal retry loop with a per-region RNG seed.
+
+        Retains random edge permutations; not a uniform-spanning-tree claim.
+        Numba's RNG is separate from Python NumPy's RNG. This mode intentionally
+        changes seeded trajectories, while reference mode remains untouched.
+        """
+        if not fast:
+            np.random.seed(seed)
+        state = np.uint64(seed) + np.uint64(0x9E3779B97F4A7C15)
+        (ptr, idx, deg, cur, bfsq, par, vis, stp, insub, res, cand,
+         uf_par, uf_rank, mst_eu, mst_ev) = work
+        order = np.empty(len(eu), dtype=np.int32)
+        for _ in range(max_attempts):
+            for i in range(len(order)):
+                order[i] = i
+            if fast:
+                # Modulo reduction intentionally accepts sampling bias. Keep
+                # this opt-in; never silently substitute it for reference RNG.
+                for i in range(len(order) - 1, 0, -1):
+                    state, value = _nb_fast_draw(state)
+                    j = int(value % np.uint64(i + 1))
+                    order[i], order[j] = order[j], order[i]
+            else:
+                np.random.shuffle(order)
+            k = _nb_kruskal_mst(eu, ev, order, n, uf_par, uf_rank, mst_eu, mst_ev)
+            _nb_build_csr(mst_eu[:k], mst_ev[:k], n, ptr, idx, deg, cur)
+            n_cand = _nb_collect_candidates(deg, n, cand)
+            if n_cand == 0:
+                continue
+            if fast:
+                state, value = _nb_fast_draw(state)
+                root = cand[int(value % np.uint64(n_cand))]
+            else:
+                root = cand[np.random.randint(n_cand)]
+            tail = _nb_bfs_subtree(ptr, idx, n, sub_pops, root, par, bfsq, stp, vis)
+            v = _nb_first_valid_cut(stp, total_pop, min_pop, max_pop, one_sided, root, n)
+            if v >= 0:
+                cnt = _nb_collect_subtree(v, bfsq, tail, par, insub, res)
+                return v, root, tail, cnt
+        return -1, -1, 0, 0
 
     @_njit(cache=True)
     def _nb_district_connected_without(edge_u, edge_v, assignment, district, exclude):
@@ -481,6 +572,31 @@ def find_balanced_cut_ig(
     return None
 
 
+def _pack_fast_cut(nodes, work, n, v, root, tail, cnt, one_sided,
+                   min_pop, max_pop, total_pop, out_state):
+    """Own residual snapshots independently of the reused tree workspace."""
+    bfsq, parent, stp, result_nodes = work[4], work[5], work[7], work[9]
+    subtree_nodes = result_nodes[:cnt]
+    complement = one_sided and not (min_pop <= stp[v] <= max_pop)
+    if complement:
+        mask = np.ones(n, dtype=np.bool_)
+        mask[subtree_nodes] = False
+        carved = np.flatnonzero(mask).astype(np.int32)
+        result = nodes[mask].tolist()
+    else:
+        carved = subtree_nodes.astype(np.int32, copy=True)
+        result = nodes[subtree_nodes].tolist()
+    if out_state is not None:
+        saved_bfs = np.zeros(n, dtype=np.int32)
+        saved_bfs[:tail] = bfsq[:tail]
+        out_state.update(
+            carved_sub_idx=carved, v_cut=v, carved_is_complement=complement,
+            parent=parent[:n].copy(), bfs_q=saved_bfs, tail=tail,
+            subtree_pops=stp[:n].copy(), root=root, n=n, node_ids=nodes,
+            total_pop=total_pop)
+    return result
+
+
 def find_balanced_cut_fast(
     parent_edge_u: np.ndarray,
     parent_edge_v: np.ndarray,
@@ -495,6 +611,7 @@ def find_balanced_cut_fast(
     county_bias: float = 1.0,
     timeout: float | None = None,
     out_state: dict | None = None,
+    _nodes_sorted: bool = False,
 ) -> list | None:
     """Numba fast path for balanced bipartition. Equivalent to find_balanced_cut_ig
     but bypasses igraph entirely on the hot loop:
@@ -509,6 +626,9 @@ def find_balanced_cut_fast(
     connected subgraph (true by construction in recom_step_ig and _n3, where
     A∪B and A∪B∪C are joined through the picked cut edge).
 
+    `_nodes_sorted` is an internal shortcut for ReCom's ascending, unique node
+    arrays. Other callers retain sorting so local IDs and RNG behavior agree.
+
     On success, returns the carved district's nodes as a list of GLOBAL IDs —
     same shape as find_balanced_cut_ig — and (if `out_state` is supplied)
     populates the same dict schema, so try_residual_balanced_cut works unchanged.
@@ -521,6 +641,8 @@ def find_balanced_cut_fast(
             "find_balanced_cut_fast requires Numba; check _NUMBA_OK and "
             "dispatch to find_balanced_cut_ig as a fallback"
         )
+    if scratch.tree_mode not in ("reference", "compiled", "fast"):
+        raise ValueError(f"Unknown tree mode: {scratch.tree_mode}")
 
     n = int(merged_nodes.shape[0])
     if n == 0:
@@ -537,23 +659,21 @@ def find_balanced_cut_fast(
     # path and find_balanced_cut_ig share one local-index space. Without it the
     # deterministic first-pick acquires an A-side bias (concat puts A nodes in
     # the low index range) that strands districts.
-    merged_nodes = np.sort(merged_nodes).astype(np.int32, copy=False)
+    merged_nodes = (merged_nodes.astype(np.int32, copy=False) if _nodes_sorted
+                    else np.sort(merged_nodes).astype(np.int32, copy=False))
 
     # Mark region + build global->local map. Only n_merged entries touched; the
     # rest stay False from the finally-reset, so extract excludes outside nodes.
-    in_merged[merged_nodes] = True
-    local_idx[merged_nodes] = np.arange(n, dtype=np.int32)
-
-    sub_pops = populations[merged_nodes].astype(np.float64, copy=True)
-    total_pop = float(sub_pops.sum())
     min_pop = target_pop * (1.0 - tolerance)
     max_pop = target_pop * (1.0 + tolerance)
 
     try:
-        m = int(_nb_extract_local_edges(
-            parent_edge_u, parent_edge_v, in_merged, local_idx,
-            loc_eu, loc_ev,
-        ))
+        sub_pops, m = _nb_prepare_region(
+            merged_nodes, populations, parent_edge_u, parent_edge_v,
+            in_merged, local_idx, loc_eu, loc_ev)
+        m = int(m)
+        # Retain NumPy's summation order, including fractional populations.
+        total_pop = float(sub_pops.sum())
         # Views into the scratch — no copy. Safe to slice; we don't write
         # past `m` and we re-extract on the next call.
         local_eu = loc_eu[:m]
@@ -567,24 +687,24 @@ def find_balanced_cut_fast(
             cty_local = county_array[merged_nodes]
             cross_county_mask = (cty_local[local_eu] != cty_local[local_ev])
 
-        # Per-call BFS/CSR/collect buffers. Stack-local, not pooled: out_state
-        # captures _nb_par/_nb_bfsq/_nb_stp on success, so pooling would collide
-        # with the n=3 residual path.
-        _nb_ptr   = np.zeros(n + 1,            dtype=np.int32)
-        _nb_idx   = np.zeros(max(2 * (n - 1), 1), dtype=np.int32)
-        _nb_deg   = np.zeros(n,                dtype=np.int32)
-        _nb_cur   = np.zeros(n,                dtype=np.int32)
-        _nb_bfsq  = np.zeros(n,                dtype=np.int32)
-        _nb_par   = np.zeros(n,                dtype=np.int32)
-        _nb_vis   = np.zeros(n,                dtype=np.bool_)
-        _nb_stp   = np.zeros(n,                dtype=np.float64)
-        _nb_insub = np.zeros(n,                dtype=np.bool_)
-        _nb_res   = np.zeros(n,                dtype=np.int32)
-        _nb_cand  = np.empty(n,                dtype=np.int32)
-        _uf_par   = np.empty(n,                dtype=np.int32)
-        _uf_rank  = np.empty(n,                dtype=np.int32)
-        _mst_eu   = np.empty(max(n - 1, 1),    dtype=np.int32)
-        _mst_ev   = np.empty(max(n - 1, 1),    dtype=np.int32)
+        # Kernels initialize the active range themselves. Retain the capacity
+        # across proposals; only successful out_state callers need snapshots.
+        (_nb_ptr, _nb_idx, _nb_deg, _nb_cur, _nb_bfsq, _nb_par,
+         _nb_vis, _nb_stp, _nb_insub, _nb_res, _nb_cand,
+         _uf_par, _uf_rank, _mst_eu, _mst_ev) = scratch.tree_buffers()
+
+        # Preserve weighted county ordering and timeout checks on the reference
+        # path. The optional compiled mode only changes unbiased, untimed cuts.
+        if scratch.tree_mode != "reference" and cross_county_mask is None and timeout is None:
+            v, root, tail, cnt = _nb_balanced_attempts(
+                local_eu, local_ev, n, sub_pops, total_pop, min_pop, max_pop,
+                one_sided, max_attempts, np.random.randint(0, 2**31 - 1),
+                scratch.tree_buffers(), scratch.tree_mode == "fast")
+            if v < 0:
+                return None
+            return _pack_fast_cut(merged_nodes, scratch.tree_buffers(), n,
+                                  int(v), int(root), int(tail), int(cnt),
+                                  one_sided, min_pop, max_pop, total_pop, out_state)
 
         for _ in range(max_attempts):
             if start_time and (time.perf_counter() - start_time) > timeout:
@@ -633,33 +753,9 @@ def find_balanced_cut_fast(
             if v >= 0:
                 cnt = _nb_collect_subtree(np.int32(v), _nb_bfsq, tail,
                                           _nb_par, _nb_insub, _nb_res)
-                subtree_nodes = _nb_res[:cnt]
-                carved_is_complement = (
-                    one_sided and not (min_pop <= _nb_stp[v] <= max_pop)
-                )
-                if carved_is_complement:
-                    mask = np.ones(n, dtype=np.bool_)
-                    mask[subtree_nodes] = False
-                    carved_sub_idx = np.flatnonzero(mask).astype(np.int32)
-                    result = merged_nodes[mask].tolist()
-                else:
-                    carved_sub_idx = subtree_nodes.astype(np.int32, copy=True)
-                    result = merged_nodes[subtree_nodes].tolist()
-                if out_state is not None:
-                    out_state.update(
-                        carved_sub_idx=carved_sub_idx,
-                        v_cut=v,
-                        carved_is_complement=carved_is_complement,
-                        parent=_nb_par,
-                        bfs_q=_nb_bfsq,
-                        tail=int(tail),
-                        subtree_pops=_nb_stp,
-                        root=int(root),
-                        n=n,
-                        node_ids=merged_nodes,
-                        total_pop=total_pop,
-                    )
-                return result
+                return _pack_fast_cut(merged_nodes, scratch.tree_buffers(), n,
+                                      v, root, int(tail), int(cnt), one_sided,
+                                      min_pop, max_pop, total_pop, out_state)
 
         return None
 

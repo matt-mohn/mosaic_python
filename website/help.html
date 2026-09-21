@@ -209,6 +209,8 @@
           <dd>When enabled (default on), Mosaic re-anchors the temperature to the current score after a set number of iterations, configurable via the <strong>Re-anchor after iter</strong> input (default 250). Useful when score collapses early (common with County Congruence and County-Edge Bias enabled) and the initial-anchored temperature would otherwise become too hot to be useful by the time the score has stabilized.</dd>
           <dt><strong>n=3 ReCom Mix slider</strong></dt>
           <dd>Frozen at run start (see ReCom). Listed here too because the Annealing popup is where it lives in the GUI.</dd>
+          <dt><strong>Fast tree generation</strong></dt>
+          <dd>On by default. Runs the balanced-cut retry loop inside a single compiled kernel using a cheaper random draw, which is slightly biased and runs on its own RNG stream. Iterations are faster, but a seeded run will not reproduce one made with this off, and headless always uses the original generator. Turn it off for the original generator, or for seed parity with headless. Automatically ignored while County-Edge Bias is active.</dd>
         </dl>
 
         <h3>Seed</h3>
