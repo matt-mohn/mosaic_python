@@ -1,4 +1,12 @@
 """Map render/overlay toggles and theme synchronisation."""
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from queue import Empty, SimpleQueue
+
+from mosaic.gui.map_navigation import MapViewport
+from mosaic.gui.map_view import MapView
+
 from ._common import (
     _FILL_ATTRS,
     _FILL_NEEDS,
@@ -14,6 +22,224 @@ from ._common import (
 
 class MapMixin:
     """Map render/overlay toggles and theme synchronisation."""
+
+    def _init_map_navigation(self):
+        self._map_viewport = MapViewport()
+        # Keep the established Windows/Linux drawlist input path unchanged.
+        # macOS trackpads need ImPlot's fractional native wheel handling.
+        self._map_native_input = sys.platform == "darwin"
+        self._map_nav_events = SimpleQueue()
+        self._map_plot_reset = True
+        self._map_axes_locked_frame = None
+        self._map_inputs_enabled = False
+        self._map_nav_revision = 0
+        self._map_nav_changed_at = 0.0
+        self._map_nav_failed_revision = None
+        self._map_drag_pos = None
+        self._map_nav_executor = None
+        self._map_nav_future = None
+        self._map_nav_job = None
+
+    def _map_can_navigate(self):
+        return (self.map_view is not None and self.map_view._loaded
+                and not self._map_loading and self.runner is not None
+                and self.runner.gdf is not None
+                and id(self.runner.gdf) == self._map_loaded_gdf_id)
+
+    def _on_map_wheel(self, sender, app_data):
+        # Callbacks only enqueue input; frame-loop code owns the viewport.
+        if self._map_can_navigate() and dpg.is_item_hovered("map_canvas"):
+            x, y = dpg.get_mouse_pos(local=False)
+            left, top = dpg.get_item_rect_min("map_canvas")
+            self._map_nav_events.put(("zoom", float(app_data),
+                                      (x - left) / _MAP_DW, (y - top) / _MAP_DH))
+
+    def _reset_map_navigation(self):
+        # Invalidates an in-flight raster even if a new file uses the same path.
+        self._map_nav_revision += 1
+        self._map_viewport.fit()
+        self._map_drag_pos = None
+        self._map_nav_failed_revision = None
+        self._map_plot_reset = True
+        while True:
+            try:
+                self._map_nav_events.get_nowait()
+            except Empty:
+                break
+        self._update_map_preview()
+
+    def _shutdown_map_navigation(self):
+        self._map_nav_revision += 1
+        if self._map_nav_executor is not None:
+            self._map_nav_executor.shutdown(wait=False, cancel_futures=True)
+
+    def _update_map_preview(self):
+        if self.map_view is None or not dpg.does_item_exist("map_image"):
+            return
+        if not self._map_native_input:
+            rectangle = self._map_viewport.preview(
+                self.map_view._view_bounds, _MAP_DW, _MAP_DH)
+            if rectangle is None:
+                dpg.configure_item("map_image", show=False)
+            else:
+                dpg.configure_item("map_image", show=True, **rectangle)
+            return
+        # ImPlot crops/transforms the existing texture using its native axes.
+        # Plot y points upward; viewport/image y points downward.
+        x0, y0, x1, y1 = self.map_view._view_bounds
+        dpg.configure_item("map_image", bounds_min=(x0, -y1), bounds_max=(x1, -y0))
+
+    def _read_map_mouse(self, ready):
+        """Existing wheel/drag behavior for Windows and Linux."""
+        changed = False
+        while True:
+            try:
+                event = self._map_nav_events.get_nowait()
+            except Empty:
+                break
+            if ready:
+                changed |= (self._map_viewport.fit() if event[0] == "fit"
+                            else self._map_viewport.zoom(event[1], event[2:]))
+        if not ready:
+            self._map_drag_pos = None
+            return False
+        hovered = dpg.is_item_hovered("map_canvas")
+        mouse = dpg.get_mouse_pos(local=False)
+        left = dpg.mvMouseButton_Left
+        if hovered and dpg.is_mouse_button_double_clicked(left):
+            changed |= self._map_viewport.fit()
+            self._map_drag_pos = None
+        elif hovered and dpg.is_mouse_button_clicked(left):
+            self._map_drag_pos = mouse
+        if self._map_drag_pos is not None:
+            if dpg.is_mouse_button_down(left):
+                dx = (mouse[0] - self._map_drag_pos[0]) / _MAP_DW
+                dy = (mouse[1] - self._map_drag_pos[1]) / _MAP_DH
+                changed |= self._map_viewport.pan(dx, dy)
+                self._map_drag_pos = mouse
+            else:
+                self._map_drag_pos = None
+        return changed
+
+    def _set_map_axes(self):
+        x0, y0, x1, y1 = self._map_viewport.bounds
+        dpg.set_axis_limits("map_x", x0, x1)
+        dpg.set_axis_limits("map_y", -y1, -y0)
+        # Explicit limits lock native input. Release after one rendered frame.
+        self._map_axes_locked_frame = dpg.get_frame_count()
+
+    def _read_map_plot(self, ready):
+        """Read native pan/zoom, bypassing DPG's integer-only wheel callback."""
+        if not dpg.does_item_exist("map_x"):
+            return False
+        if ready != self._map_inputs_enabled:
+            dpg.configure_item("map_canvas", no_inputs=not ready)
+            self._map_inputs_enabled = ready
+        if self._map_plot_reset:
+            self._set_map_axes()
+            self._map_plot_reset = False
+            return False
+        if self._map_axes_locked_frame is not None:
+            # A minimized/clipped plot may not render even as frames advance.
+            # Do not unlock until its requested limits have actually landed.
+            x0, y0, x1, y1 = self._map_viewport.bounds
+            applied = (dpg.get_axis_limits("map_x"), dpg.get_axis_limits("map_y"))
+            expected = ((x0, x1), (-y1, -y0))
+            if (dpg.get_frame_count() > self._map_axes_locked_frame
+                    and np.allclose(applied, expected, rtol=0, atol=1e-12)):
+                dpg.set_axis_limits_auto("map_x")
+                dpg.set_axis_limits_auto("map_y")
+                self._map_axes_locked_frame = None
+            return False
+        if not ready:
+            self._map_drag_pos = None
+            return False
+
+        hovered = dpg.is_item_hovered("map_canvas")
+        left = dpg.mvMouseButton_Left
+        if hovered and dpg.is_mouse_button_double_clicked(left):
+            changed = self._map_viewport.fit()
+            self._map_drag_pos = None
+            self._set_map_axes()
+            return changed
+        if hovered and dpg.is_mouse_button_clicked(left):
+            self._map_drag_pos = True
+        if not dpg.is_mouse_button_down(left):
+            self._map_drag_pos = None
+
+        x0, x1 = dpg.get_axis_limits("map_x")
+        bottom, top = dpg.get_axis_limits("map_y")
+        bounds = (x0, -top, x1, -bottom)
+        changed = self._map_viewport.from_plot(bounds)
+        # Also guard against axis-specific modifier gestures changing aspect.
+        if not np.allclose(bounds, self._map_viewport.bounds, rtol=0, atol=1e-12):
+            self._set_map_axes()
+        return changed
+
+    def _tick_map_navigation(self):
+        future = self._map_nav_future
+        if future is not None and future.done():
+            self._map_nav_future = None
+            revision, gdf, source = self._map_nav_job
+            try:
+                raster = future.result()
+            except Exception as exc:
+                raster = None
+                if revision == self._map_nav_revision:
+                    self._map_nav_failed_revision = revision
+                    self.state.update(status_message=f"Map zoom failed: {exc}")
+            if (raster is not None and revision == self._map_nav_revision
+                    and self._map_can_navigate() and self.runner.gdf is gdf
+                    and self.map_view is source):
+                # Only one displayed pixel grid. The temporary replacement is
+                # discarded after installation; no previous views are retained.
+                source._pixel_map = raster._pixel_map
+                source._precinct_centroids = raster._precinct_centroids
+                source._view_bounds = raster._view_bounds
+                source._label_centers_cache = None  # existing label cache
+                with self.state._lock:
+                    has_assignment = self.state.current_assignment is not None
+                if not has_assignment:
+                    source.draw_blank()
+                self.state.update(map_needs_update=True)
+                self._update_map_preview()
+            self._map_nav_job = None
+
+        ready = self._map_can_navigate()
+        changed = (self._read_map_plot(ready) if self._map_native_input
+                   else self._read_map_mouse(ready))
+        if not ready:
+            self._map_drag_pos = None
+            return
+        if changed:
+            self._map_nav_revision += 1
+            self._map_nav_changed_at = time.monotonic()
+            self._map_nav_failed_revision = None
+            self._update_map_preview()
+
+        if (self._map_nav_future is not None or self._map_drag_pos is not None
+                or self._map_viewport.bounds == self.map_view._view_bounds
+                or self._map_nav_failed_revision == self._map_nav_revision
+                or time.monotonic() - self._map_nav_changed_at < 0.18):
+            return
+
+        revision = self._map_nav_revision
+        gdf, source = self.runner.gdf, self.map_view
+        bounds = self._map_viewport.bounds
+        self._map_nav_job = (revision, gdf, source)
+
+        def rebuild():
+            raster = MapView(source._ttag, source._w, source._h)
+            complete = raster.load(
+                gdf, view_bounds=bounds,
+                cancelled=lambda: revision != self._map_nav_revision,
+            )
+            return raster if complete else None
+
+        if self._map_nav_executor is None:
+            self._map_nav_executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="mosaic-map")
+        self._map_nav_future = self._map_nav_executor.submit(rebuild)
 
     def _on_theme_change(self):
         choice = dpg.get_value(self._theme_radio)

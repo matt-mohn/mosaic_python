@@ -83,9 +83,9 @@ class PopupsMixin:
             show=False, autosize=False,
         ):
             self.theme.text(
-                "Map exports mirror the settings you currently have in your "
-                "district map view.",
-                "muted", wrap=400,
+                "PNG and PDF export the whole state, regardless of zoom.\n"
+                "Current colors, overlays, and labels are preserved.",
+                "muted", wrap=380,
             )
             dpg.add_spacer(height=8)
             self._adv_save_title = dpg.add_input_text(

@@ -277,6 +277,7 @@ class UpdatesMixin:
                 and self.runner
                 and self.runner.gdf is not None):
             self._map_loading = True
+            self._reset_map_navigation()
             self._map_loaded_path = loaded_path
             self._map_loaded_gdf_id = loaded_gdf_id
             gdf_ref = self.runner.gdf
@@ -325,6 +326,9 @@ class UpdatesMixin:
             self._map_ready = False
             if self.map_view is not None:
                 self.map_view.draw_blank()
+                self._update_map_preview()
+
+        self._tick_map_navigation()
 
         # ── Map: colour update triggered by runner ────────────────────────────
         with self.state._lock:

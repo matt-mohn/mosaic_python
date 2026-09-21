@@ -553,6 +553,7 @@ class IOMixin:
         path = app_data.get("file_path_name", "") if isinstance(app_data, dict) else ""
         if not path:
             return
+        self._reset_map_navigation()
         self.runner = AlgorithmRunner(self.state)
         self._loaded_config = None
         self._has_elections = False

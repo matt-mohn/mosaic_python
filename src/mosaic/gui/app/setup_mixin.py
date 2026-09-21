@@ -1,4 +1,6 @@
 """Builds the main two-column window layout (one large builder)."""
+from mosaic.gui.map_navigation import MAX_ZOOM
+
 from ._common import (
     _APP_ICON,
     _ASSETS_DIR,
@@ -11,6 +13,7 @@ from ._common import (
     _MAP_DW,
     _MAP_H,
     _SCORE_COL_W,
+    _SCORE_H,
     _TOP_H,
     _VP_H,
     _VP_W,
@@ -125,7 +128,9 @@ class SetupMixin:
         self._build_phase_panel()
 
         # ── Main window ───────────────────────────────────────────────────────
-        with dpg.window(tag="main_window", no_scrollbar=True):
+        # The page may scroll on short displays. Map children block wheel
+        # propagation locally, so zooming never scrolls the page/header.
+        with dpg.window(tag="main_window"):
 
 
             with dpg.menu_bar():
@@ -216,7 +221,7 @@ class SetupMixin:
                     dpg.add_text("Map Render Interval:")
                     self._map_interval = dpg.add_slider_float(
                         label="sec",
-                        default_value=0.75, min_value=0.25, max_value=30.0,
+                        default_value=0.75, min_value=0.25, max_value=5.0,
                         format="%.2f s", width=160,
                         callback=lambda s, d: self.state.update(
                             map_render_interval=d),
@@ -564,7 +569,7 @@ class SetupMixin:
                     )
 
             with dpg.child_window(height=_TOP_H, border=False,
-                                  no_scrollbar=True):
+                                  no_scrollbar=True, no_scroll_with_mouse=True):
                 with dpg.group(horizontal=True):
 
                     # ── Left column ───────────────────────────────────────────
@@ -734,14 +739,21 @@ class SetupMixin:
 
                     # ── Right column (map + plots) ────────────────────────────
                     with dpg.child_window(width=-1, border=False,
-                                          no_scrollbar=True):
+                                          no_scrollbar=True, no_scroll_with_mouse=True):
 
-                        self.theme.text("District Map", "heading")
+                        map_heading = self.theme.text(
+                            "District Map", "heading", tag="map_heading")
+                        self._tooltip(
+                            map_heading,
+                            "Scroll to zoom in or out. Drag to pan.\n"
+                            "Double-click the map to zoom out to the full state.",
+                        )
                         with dpg.child_window(
                             height=_MAP_H, width=-1, border=True,
-                            tag="map_container",
+                            tag="map_container", no_scrollbar=True,
+                            no_scroll_with_mouse=True,
                         ):
-                            dpg.add_image("map_texture")
+                            self._build_map_canvas()
                         # Map toolbar, one row. The six body fills are mutually
                         # exclusive (see _FILL_OPTIONS), so they live in a single
                         # combo instead of six checkboxes that looked additive;
@@ -828,14 +840,16 @@ class SetupMixin:
                                         width=20, height=20,
                                     )
                                     with dpg.tooltip(cam_btn):
-                                        dpg.add_text("Quick PNG")
+                                        dpg.add_text(
+                                            "Quick PNG: whole state, regardless of zoom.")
                                     self._more_btn = more_btn = dpg.add_button(
                                         label="Export Photo...",
                                         callback=self._on_advanced_save_open,
                                     )
                                     with dpg.tooltip(more_btn):
                                         dpg.add_text(
-                                            "Size, scale, and format options.")
+                                            "Export PNG or PDF of the whole state,\n"
+                                            "regardless of zoom.")
                                     self._save_spinner = dpg.add_loading_indicator(
                                         style=0, radius=2.0, show=False,
                                         color=self.theme.color("body"),
@@ -880,7 +894,7 @@ class SetupMixin:
                                             tag="acc_series")
 
             # ── Score panel (bottom) ──────────────────────────────────────────
-            with dpg.child_window(height=-1, border=True):
+            with dpg.child_window(height=_SCORE_H, border=True, tag="score_panel"):
                 with dpg.group(horizontal=True):
                     self.theme.text("Full list of scores available in toolbar", "muted")
                     dpg.add_spacer(width=12)
@@ -1441,6 +1455,7 @@ class SetupMixin:
 
 
         dpg.set_primary_window("main_window", True)
+        dpg.configure_item("main_window", no_scrollbar=False, no_scroll_with_mouse=False)
         dpg.setup_dearpygui()
 
         self.map_view = MapView("map_texture", _MAP_DW, _MAP_DH)
@@ -1449,6 +1464,48 @@ class SetupMixin:
         # Re-sync now that the view is constructed, otherwise the first
         # shapefile load builds its LUT against a stale dark background.
         self._sync_map_bg_to_theme()
+
+    def _build_map_canvas(self):
+        if not self._map_native_input:
+            with dpg.drawlist(width=_MAP_DW, height=_MAP_DH, tag="map_canvas"):
+                dpg.draw_image("map_texture", (0, 0),
+                               (_MAP_DW, _MAP_DH), tag="map_image")
+            with dpg.handler_registry():
+                dpg.add_mouse_wheel_handler(callback=self._on_map_wheel)
+            return
+
+        # macOS only: ImPlot reads the original fractional wheel input instead
+        # of DPG's integer-only mouse-wheel callback. No axes/chrome are shown.
+        with dpg.theme() as map_theme:
+            with dpg.theme_component(dpg.mvPlot):
+                for style in (dpg.mvPlotStyleVar_PlotPadding, dpg.mvPlotStyleVar_FitPadding):
+                    dpg.add_theme_style(style, 0, 0, category=dpg.mvThemeCat_Plots)
+                dpg.add_theme_style(dpg.mvPlotStyleVar_PlotBorderSize, 0,
+                                    category=dpg.mvThemeCat_Plots)
+                dpg.add_theme_color(dpg.mvPlotCol_PlotBg, (0, 0, 0, 0),
+                                    category=dpg.mvThemeCat_Plots)
+        with dpg.plot(width=_MAP_DW, height=_MAP_DH, tag="map_canvas",
+                      no_title=True, no_menus=True, no_box_select=True,
+                      no_mouse_pos=True, no_frame=True, no_inputs=True,
+                      fit_button=dpg.mvMouseButton_Left, zoom_rate=0.025):
+            for axis, tag, limits in ((dpg.mvXAxis, "map_x", (0, 1)),
+                                      (dpg.mvYAxis, "map_y", (-1, 0))):
+                dpg.add_plot_axis(axis, tag=tag, no_label=True, no_gridlines=True,
+                                  no_tick_marks=True, no_tick_labels=True,
+                                  no_initial_fit=True)
+                dpg.set_axis_limits(tag, *limits)
+                dpg.set_axis_limits_constraints(tag, *limits)
+                dpg.set_axis_zoom_constraints(tag, 1 / MAX_ZOOM, 1)
+            dpg.add_image_series("map_texture", (0, -1), (1, 0),
+                                 parent="map_y", tag="map_image")
+        dpg.bind_item_theme("map_canvas", map_theme)
+
+    def _update_window_layout(self):
+        # Keep score controls usable when the page is shorter than its content.
+        # In tall windows, retain the original fill-the-remaining-space layout.
+        height = -1 if dpg.get_viewport_client_height() >= _VP_H - 40 else _SCORE_H
+        if dpg.get_item_configuration("score_panel")["height"] != height:
+            dpg.configure_item("score_panel", height=height)
 
     # ── Popup builders ────────────────────────────────────────────────────────
 

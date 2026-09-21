@@ -871,7 +871,6 @@ class AlgorithmRunner:
             self.state.update(start_time=time.time())
             log.info(f"Starting ReCom loop: {max_iterations} iterations")
 
-            (map_render_interval,) = self.state.get("map_render_interval")
             _last_map_time = 0.0
             _launch_watch_fired = False
 
@@ -1007,6 +1006,9 @@ class AlgorithmRunner:
 
                 n_score = n_temp = n_acc = 0
                 with self.state._lock:
+                    # The display interval is live-editable. Read it under the
+                    # existing lock, rather than retaining the run-start value.
+                    map_render_interval = self.state.map_render_interval
                     self.state.score_history.append(current_ps.total)
                     self.state.county_splits_score_history.append(
                         current_ps.county_excess_score + current_ps.county_unified_score)

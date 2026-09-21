@@ -426,7 +426,17 @@ class ExportMixin:
     def _pdf_vector_worker(self, title: str, output_path) -> None:
         """Build a true vector PDF on US Letter paper (auto landscape/portrait).
         Precinct fills and all outlines are real vector paths, not a raster."""
+        from copy import copy
         from datetime import datetime
+
+        from mosaic.gui.export_geometry import (
+            grouped_geometry,
+            is_valid_coverage,
+            polygon_path,
+            union_geometry,
+        )
+
+        fig = None
         try:
             if self.runner is None or self.runner.gdf is None:
                 self.state.update(
@@ -440,8 +450,10 @@ class ExportMixin:
                 n_dist = self.state.num_districts
 
             gdf = self.runner.gdf
-            mv  = self.map_view
+            mv = copy(self.map_view)  # freeze display flags during export
             n   = len(gdf)
+            geometry = gdf.geometry.copy()
+            coverage = is_valid_coverage(geometry.array)
 
             # ── Per-precinct fill colours (same logic as MapView LUTs) ────────
             if mv.partisan_overlay and mv._dem_votes is not None:
@@ -485,10 +497,8 @@ class ExportMixin:
             from matplotlib.collections import PatchCollection
             from matplotlib.font_manager import FontProperties
             from matplotlib.patches import PathPatch
-            from matplotlib.path import Path as MplPath
-            from shapely.ops import unary_union as _shapely_union
 
-            bounds = gdf.total_bounds
+            bounds = geometry.total_bounds
             bx0, by0, bx1, by1 = (float(v) for v in bounds)
             gw = max(bx1 - bx0, 1e-9)
             gh = max(by1 - by0, 1e-9)
@@ -555,41 +565,6 @@ class ExportMixin:
             ax.set_xlim(bx0, bx1)
             ax.set_ylim(by0, by1)
 
-            def _to_mpl_path(geom):
-                """Shapely Polygon/MultiPolygon → matplotlib Path with holes."""
-                if geom is None:
-                    return None
-                gtype = geom.geom_type
-                if gtype == "Polygon":
-                    polys = [geom]
-                elif gtype == "MultiPolygon":
-                    polys = list(geom.geoms)
-                else:
-                    return None
-                verts, codes = [], []
-                for poly in polys:
-                    coords = np.asarray(poly.exterior.coords)
-                    if len(coords) < 3:
-                        continue
-                    verts.append(coords)
-                    codes.append(np.array(
-                        [MplPath.MOVETO]
-                        + [MplPath.LINETO] * (len(coords) - 2)
-                        + [MplPath.CLOSEPOLY], dtype=np.uint8))
-                    for ring in poly.interiors:
-                        coords = np.asarray(ring.coords)
-                        if len(coords) < 3:
-                            continue
-                        verts.append(coords)
-                        codes.append(np.array(
-                            [MplPath.MOVETO]
-                            + [MplPath.LINETO] * (len(coords) - 2)
-                            + [MplPath.CLOSEPOLY], dtype=np.uint8))
-                if not verts:
-                    return None
-                return MplPath(np.concatenate(verts, axis=0),
-                               np.concatenate(codes))
-
             # ── Gentle geometry simplification to shrink the vector PDF ───────
             # Douglas-Peucker at a fraction of a print pixel (fitted map size at
             # 300 DPI), so the deviation stays sub-pixel and invisible on paper.
@@ -601,13 +576,13 @@ class ExportMixin:
             _SIMPLIFY_PX = 0.5
             _data_per_px = (gw / map_w) / 300.0 if map_w > 0 else 0.0
             _simp_tol = _data_per_px * _SIMPLIFY_PX
-            geom_simplified = (gdf.geometry.simplify(_simp_tol)
-                               if _simp_tol > 0 else gdf.geometry)
+            geom_simplified = (geometry.simplify(_simp_tol)
+                               if _simp_tol > 0 else geometry)
 
             # ── Precinct fills (batched PatchCollection) ──────────────────────
             patches, colors = [], []
             for i, geom in enumerate(geom_simplified):
-                path = _to_mpl_path(geom)
+                path = polygon_path(geom)
                 if path is None:
                     continue
                 patches.append(PathPatch(path))
@@ -615,28 +590,26 @@ class ExportMixin:
             if patches:
                 # Fills: no edges (keeps PDF edge transparency independent)
                 ax.add_collection(
-                    PatchCollection(patches, facecolors=colors, edgecolors='none'))
+                    PatchCollection(patches, facecolors=colors, edgecolors='none'),
+                    autolim=False)
                 # Precinct boundaries: prominent when the Precincts overlay is on,
                 # near-invisible when off. Stroke-only; set_alpha() writes a PDF /CA.
                 edge_coll = PatchCollection(patches, facecolors='none',
                                             edgecolors='white', linewidths=0.2)
                 edge_coll.set_alpha(PRECINCT_EDGE_ALPHA if mv.precinct_overlay
                                     else _PDF_PRECINCT_OFF_ALPHA)
-                ax.add_collection(edge_coll)
+                ax.add_collection(edge_coll, autolim=False)
 
             # ── Pre-dissolve district & county geometries (fast, avoids
             #    looping n_dist × unary_union over all precincts) ───────────────
             # Dissolve from ORIGINAL geometry: independently-simplified precincts
             # no longer share exact edges, so their union leaves interior slivers
             # that the district/county borders would trace as jagged lines.
-            gdf_work = gdf[["geometry"]].copy()
-            gdf_work["_dist"] = assignment
             have_county = (mv._county_array is not None
                            and (mv.county_overlay or mv.splits_view))
             if have_county:
-                gdf_work["_cty"] = mv._county_array
-                cty_geoms = gdf_work.dissolve(by="_cty").geometry
-            dist_geoms = gdf_work.dissolve(by="_dist").geometry
+                cty_geoms, cty_paths = grouped_geometry(geometry, mv._county_array, coverage)
+            dist_geoms, dist_paths = grouped_geometry(geometry, assignment, coverage)
 
             # ── Splits view: dim clean (un-split) counties ────────────────────
             if mv.splits_view and mv._county_array is not None:
@@ -651,37 +624,38 @@ class ExportMixin:
                 dim_patches = []
                 for ci_idx in range(nct):
                     if county_clean[ci_idx] and ci_idx in cty_geoms.index:
-                        p = _to_mpl_path(cty_geoms.loc[ci_idx])
+                        p = cty_paths[ci_idx]
                         if p:
                             dim_patches.append(PathPatch(p))
                 if dim_patches:
                     ax.add_collection(
                         PatchCollection(dim_patches,
                                         facecolors=[dim_c] * len(dim_patches),
-                                        edgecolors="none", linewidths=0))
+                                        edgecolors="none", linewidths=0),
+                        autolim=False)
 
             # ── County borders ────────────────────────────────────────────────
             if have_county:
                 cty_color = (180 / 255, 180 / 255, 180 / 255)
-                for geom in cty_geoms:
-                    p = _to_mpl_path(geom)
+                for p in cty_paths.values():
                     if p:
-                        ax.add_patch(PathPatch(p, facecolor="none",
+                        # Limits are fixed above. add_artist avoids rescanning
+                        # every outline vertex for unused autoscale limits.
+                        ax.add_artist(PathPatch(p, facecolor="none",
                                                edgecolor=cty_color,
                                                linewidth=0.5))
 
             # ── District borders (dissolved geoms, no per-precinct loop) ──────
-            for geom in dist_geoms:
-                p = _to_mpl_path(geom)
+            for p in dist_paths.values():
                 if p:
-                    ax.add_patch(PathPatch(p, facecolor="none",
+                    ax.add_artist(PathPatch(p, facecolor="none",
                                            edgecolor="black", linewidth=0.7))
 
             # ── State outline (union of already-dissolved district geoms) ──────
-            state_geom = _shapely_union(list(dist_geoms.values))
-            p = _to_mpl_path(state_geom)
+            state_geometry = geometry.array if coverage else dist_geoms.array
+            p = polygon_path(union_geometry(state_geometry, coverage))
             if p:
-                ax.add_patch(PathPatch(p, facecolor="none",
+                ax.add_artist(PathPatch(p, facecolor="none",
                                        edgecolor="black", linewidth=1.2))
 
             # ── District labels ───────────────────────────────────────────────
@@ -768,12 +742,15 @@ class ExportMixin:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             fig.savefig(str(output_path), format="pdf")
             plt.close(fig)
+            fig = None
             self.state.update(status_message=f"Map saved to {output_path}")
             self._open_in_os(output_path)
 
         except Exception as exc:
             self.state.update(status_message=f"PDF export failed: {exc}")
         finally:
+            if fig is not None:
+                plt.close(fig)
             self._adv_finish()
 
     def _png_worker(self, title: str, dpi: int, output_path) -> None:

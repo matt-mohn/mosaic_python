@@ -226,6 +226,7 @@ class MenuMixin:
         dpg.configure_item("popup_new_confirm", show=False)
         self._on_reset()
         self._saved_plan = None
+        self._reset_map_navigation()
         self.runner = AlgorithmRunner(self.state)
         self._loaded_config = None
         self._has_elections = False
@@ -240,3 +241,4 @@ class MenuMixin:
         self.theme.retoken(self._shp_info, "muted")
         if self.map_view is not None:
             self.map_view.wipe()
+            self._update_map_preview()

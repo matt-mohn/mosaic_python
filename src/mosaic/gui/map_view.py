@@ -32,6 +32,7 @@ from typing import Optional
 import dearpygui.dearpygui as dpg
 import geopandas as gpd
 import numpy as np
+import shapely
 from PIL import Image, ImageDraw, ImageFont
 
 log = logging.getLogger("mosaic")
@@ -246,6 +247,7 @@ class MapView:
         self._pixel_map: Optional[np.ndarray] = None   # (H, W) int32; -1 = bg
         self._n_precincts: int = 0
         self._loaded: bool = False
+        self._view_bounds = (0.0, 0.0, 1.0, 1.0)
         # Last rendered RGBA (uint8, HxWx4); cached so the GUI can save it to disk.
         self._last_rgba: Optional[np.ndarray] = None
         # Background color used outside polygon pixels; theme can override.
@@ -301,10 +303,13 @@ class MapView:
         reock_data=None,
         populations: Optional[np.ndarray] = None,
         vap_data: Optional[dict] = None,
-    ) -> None:
+        view_bounds=None,
+        cancelled=None,
+    ) -> bool:
         """
         Project geometries and rasterise each precinct into pixel_map.
-        Safe to call from any thread; does not touch DPG.
+        Safe to call from any thread; does not touch DPG. Navigation builds a
+        separate temporary view and may cancel it before installing its grid.
         """
         self._county_array = county_array
         self._dem_votes = dem_votes
@@ -314,6 +319,9 @@ class MapView:
         self._populations = populations
         self._vap = vap_data
         W, H = self._w, self._h
+        if cancelled is not None and cancelled():
+            return False
+        geometries = np.asarray(gdf.geometry.array).copy()
         bounds = gdf.total_bounds
         gw = max(bounds[2] - bounds[0], 1e-9)
         gh = max(bounds[3] - bounds[1], 1e-9)
@@ -322,45 +330,75 @@ class MapView:
         oy = (H - gh * scale) / 2.0
         b0, b1 = float(bounds[0]), float(bounds[1])
         fh = float(H)
+        view = tuple(view_bounds) if view_bounds is not None else (0.0, 0.0, 1.0, 1.0)
+        vx0, vy0, vx1, vy1 = view
+        if not (0 <= vx0 < vx1 <= 1 and 0 <= vy0 < vy1 <= 1):
+            raise ValueError("Invalid map viewport")
+        sx, sy = vx1 - vx0, vy1 - vy0
 
-        def proj(x: float, y: float) -> tuple[float, float]:
-            return ((x - b0) * scale + ox,
-                    fh - ((y - b1) * scale + oy))
+        def project(coords):
+            # Keep the scalar operation order: pixel rounding must not change.
+            pts = np.empty((len(coords), 2), dtype=np.float64)
+            pts[:, 0] = ((coords[:, 0] - b0) * scale + ox - vx0 * W) / sx
+            pts[:, 1] = (fh - ((coords[:, 1] - b1) * scale + oy) - vy0 * H) / sy
+            return pts
+
+        # Cheap geometry bounds rejection, no spatial index or tile cache.
+        crop_left = b0 + (vx0 * W - ox) / scale
+        crop_right = b0 + (vx1 * W - ox) / scale
+        crop_bottom = b1 + (H - vy1 * H - oy) / scale
+        crop_top = b1 + (H - vy0 * H - oy) / scale
+        visible = np.isin(shapely.get_type_id(geometries), [3, 6])
+        if view != (0.0, 0.0, 1.0, 1.0):
+            boxes = shapely.bounds(geometries)
+            visible &= ((boxes[:, 2] >= crop_left) & (boxes[:, 0] <= crop_right)
+                        & (boxes[:, 3] >= crop_bottom) & (boxes[:, 1] <= crop_top))
+        precinct_ids = np.flatnonzero(visible)
 
         img = Image.new("I", (W, H), -1)
         draw = ImageDraw.Draw(img)
 
-        for prec_idx, geom in enumerate(gdf.geometry):
-            if geom is None:
-                continue
-            gt = geom.geom_type
-            if gt == "Polygon":
-                exteriors = [geom.exterior]
-            elif gt == "MultiPolygon":
-                exteriors = [part.exterior for part in geom.geoms]
-            else:
-                continue
-            for ring in exteriors:
-                pts = [proj(x, y) for x, y in ring.coords[:-1]]
-                if len(pts) >= 3:
-                    flat = [c for xy in pts for c in xy]
-                    draw.polygon(flat, fill=prec_idx)
-
-        self._pixel_map = np.array(img, dtype=np.int32)
-        self._n_precincts = len(gdf)
+        # Batch GEOS extraction and NumPy projection, not individual Python
+        # points. Every original ring is still drawn in the original order.
+        # Small transient batches also bound memory and cancellation latency.
+        for start in range(0, len(precinct_ids), 64):
+            if cancelled is not None and cancelled():
+                return False
+            ids = precinct_ids[start:start + 64]
+            parts, parents = shapely.get_parts(geometries[ids], return_index=True)
+            rings = shapely.get_exterior_ring(parts)
+            counts = shapely.get_num_coordinates(rings)
+            points = project(shapely.get_coordinates(rings))
+            offset = 0
+            for parent, count in zip(parents, counts):
+                end = offset + int(count)
+                if count >= 4:
+                    # The closing coordinate repeats the first, as before.
+                    draw.polygon(points[offset:end - 1].ravel().tolist(),
+                                 fill=int(ids[parent]))
+                offset = end
 
         # Precompute precinct centroids in pixel coordinates for label placement
-        centroids = []
-        for geom in gdf.geometry:
-            if geom is not None:
-                c = geom.centroid
-                centroids.append(proj(c.x, c.y))
-            else:
-                centroids.append((0.0, 0.0))
-        self._precinct_centroids = np.array(centroids, dtype=np.float64)
+        centroids = np.empty((len(geometries), 2), dtype=np.float64)
+        for start in range(0, len(geometries), 256):
+            if cancelled is not None and cancelled():
+                return False
+            batch = geometries[start:start + 256]
+            centers = shapely.centroid(batch)
+            coords = np.column_stack((shapely.get_x(centers), shapely.get_y(centers)))
+            projected = project(coords)
+            projected[shapely.is_missing(batch) | shapely.is_empty(batch)] = 0.0
+            centroids[start:start + len(batch)] = projected
+        if cancelled is not None and cancelled():
+            return False
+        self._pixel_map = np.array(img, dtype=np.int32)
+        self._n_precincts = len(gdf)
+        self._precinct_centroids = centroids
         self._label_centers_cache = None   # geometry changed; drop stale positions
 
         self._loaded = True
+        self._view_bounds = view
+        return True
 
     # ── DPG upload helpers (GUI thread only) ──────────────────────────────────
 
@@ -543,6 +581,7 @@ class MapView:
         self._pixel_map = None
         self._last_rgba = None
         self._n_precincts = 0
+        self._view_bounds = (0.0, 0.0, 1.0, 1.0)
         self._county_array = None
         self._dem_votes = None
         self._gop_votes = None
@@ -752,9 +791,18 @@ class MapView:
                         d_mask = pm_valid & (pixel_district == d)
                         if not d_mask.any():
                             continue
-                        dist = distance_transform_edt(d_mask)
+                        # One background pixel around the district contains
+                        # every possible nearest-zero boundary. Cropping the
+                        # EDT preserves distances and row-major argmax ties.
+                        rows = np.flatnonzero(d_mask.any(axis=1))
+                        cols = np.flatnonzero(d_mask.any(axis=0))
+                        y0 = max(0, int(rows[0]) - 1)
+                        y1 = min(d_mask.shape[0], int(rows[-1]) + 2)
+                        x0 = max(0, int(cols[0]) - 1)
+                        x1 = min(d_mask.shape[1], int(cols[-1]) + 2)
+                        dist = distance_transform_edt(d_mask[y0:y1, x0:x1])
                         cy, cx = np.unravel_index(int(dist.argmax()), dist.shape)
-                        centers.append((d, float(cx), float(cy)))
+                        centers.append((d, float(cx + x0), float(cy + y0)))
                     self._label_centers_cache = (assignment.copy(), centers)
 
             # Sort by approximate area (larger districts first for priority).

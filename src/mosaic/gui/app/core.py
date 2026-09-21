@@ -96,6 +96,7 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         # The map may only load a gdf that reached this point, so it never
         # captures the runner mid-populate. See the map bg-load gate below.
         self._map_data_gdf_id: int = 0
+        self._init_map_navigation()
 
         # Plot appearance toggle (app-local)
         self._limit_plots: int | str = ""   # DPG checkbox tag, set during setup
@@ -277,10 +278,14 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
 
     def run(self):
         dpg.show_viewport()
-        while dpg.is_dearpygui_running():
-            self._update_ui()
-            dpg.render_dearpygui_frame()
-        dpg.destroy_context()
+        try:
+            while dpg.is_dearpygui_running():
+                self._update_window_layout()
+                self._update_ui()
+                dpg.render_dearpygui_frame()
+        finally:
+            self._shutdown_map_navigation()
+            dpg.destroy_context()
 
     # ── Frame update ──────────────────────────────────────────────────────────
 
