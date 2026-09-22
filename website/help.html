@@ -3,49 +3,30 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Mosaic — docs</title>
-  <meta name="description" content="Getting started, run-config reference, metrics glossary, and FAQ for Mosaic.">
+  <title>Mosaic — help</title>
+  <meta name="description" content="A practical guide to setting up, running, inspecting, and saving a district plan in Mosaic.">
   <link rel="icon" href="mosaic_logo.png">
-
-  <meta property="og:type"          content="website">
-  <meta property="og:title"         content="Mosaic — docs">
-  <meta property="og:description"   content="Run config reference, metrics glossary, map overlays, exports, and FAQ.">
-  <meta property="og:url"           content="https://matt-mohn.github.io/mosaic_python/help.html">
-  <meta property="og:image"         content="https://matt-mohn.github.io/mosaic_python/new_landing_hero.png">
-  <meta property="og:image:width"   content="1200">
-  <meta property="og:image:height"  content="630">
-  <meta name="twitter:card"         content="summary_large_image">
-  <meta name="twitter:title"        content="Mosaic — docs">
-  <meta name="twitter:description"  content="Run config reference, metrics glossary, map overlays, exports, and FAQ.">
-  <meta name="twitter:image"        content="https://matt-mohn.github.io/mosaic_python/new_landing_hero.png">
-
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Mosaic — help">
+  <meta property="og:description" content="Set up a run, choose priorities, inspect a plan, and save your work.">
+  <meta property="og:url" content="https://matt-mohn.github.io/mosaic_python/help.html">
+  <meta property="og:image" content="https://matt-mohn.github.io/mosaic_python/new_landing_hero.png">
+  <meta name="twitter:card" content="summary_large_image">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
       theme: {
         extend: {
-          fontFamily: {
-            sans: ['Inter', 'system-ui', 'sans-serif'],
-            mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
-          },
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
           colors: {
-            ink:         '#1a1f2c',
-            'ink-soft':  '#4a5263',
-            'ink-mute':  '#7c8497',
-            paper:       '#fafbfc',
-            'paper-2':   '#f1f3f7',
-            navy:        '#1d4180',
-            'navy-soft': '#e6ecf6',
-            gold:        '#f4b631',
-            line:        '#e3e7ef',
+            ink: '#1a1f2c', 'ink-soft': '#4a5263', 'ink-mute': '#7c8497',
+            paper: '#fafbfc', 'paper-2': '#f1f3f7', navy: '#1d4180',
+            'navy-soft': '#e6ecf6', gold: '#f4b631', line: '#e3e7ef'
           },
-          boxShadow: {
-            'card': '0 1px 2px rgba(20, 28, 48, 0.04), 0 8px 24px rgba(20, 28, 48, 0.06)',
-          }
+          boxShadow: { card: '0 1px 2px rgba(20, 28, 48, 0.04), 0 8px 24px rgba(20, 28, 48, 0.06)' }
         }
       }
     }
@@ -53,681 +34,254 @@
   <style>
     html { scroll-behavior: smooth; }
     body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
-    .prose-block h3 { font-size: 1.05rem; font-weight: 600; color: #1a1f2c; margin-top: 1.75rem; }
-    .prose-block p  { color: #4a5263; line-height: 1.65; margin-top: 0.75rem; }
-    .prose-block ul { color: #4a5263; line-height: 1.65; margin-top: 0.75rem; padding-left: 1.25rem; list-style: disc; }
-    .prose-block li { margin-top: 0.25rem; }
-    .prose-block dl { color: #4a5263; line-height: 1.65; margin-top: 0.75rem; }
-    .prose-block dt { color: #1a1f2c; margin-top: 1.5rem; font-size: 1.05rem; }
-    .prose-block dd { margin-top: 0.5rem; margin-left: 0; }
-    .prose-block code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.9em; background: #f1f3f7; padding: 0.05rem 0.3rem; border-radius: 3px; }
-    .meta {
-      margin-top: 0.65rem;
-      background: #f1f3f7;
-      border-left: 3px solid #1d4180;
-      border-radius: 0.4rem;
-      padding: 0.6rem 1rem 0.6rem 1.5rem;
-      font-size: 0.9rem;
-      width: 100%;
-      border-collapse: collapse;
+    .help-section { scroll-margin-top: 6rem; }
+    .help-section p { color: #4a5263; line-height: 1.7; }
+    .help-section a { color: #1d4180; text-decoration: underline; text-underline-offset: 2px; }
+    .help-list { color: #4a5263; line-height: 1.65; padding-left: 1.2rem; list-style: disc; }
+    .help-list li + li { margin-top: 0.45rem; }
+    .number-list { counter-reset: step; }
+    .number-list > li { counter-increment: step; position: relative; padding-left: 3.25rem; }
+    .number-list > li::before {
+      content: counter(step); position: absolute; left: 0; top: 0; width: 2rem; height: 2rem;
+      display: grid; place-items: center; border-radius: 999px; background: #1d4180;
+      color: white; font-weight: 700; font-size: 0.85rem;
     }
-    .meta th {
-      text-align: left;
-      font-weight: 600;
-      color: #1a1f2c;
-      padding: 0.2rem 1rem 0.2rem 0.25rem;
-      vertical-align: top;
-      white-space: nowrap;
-      width: 7rem;
-    }
-    .meta td { padding: 0.2rem 0; vertical-align: top; }
-    .meta td ul { margin-top: 0.25rem; padding-left: 1.1rem; list-style: disc; }
-    .meta td ul li { margin-top: 0.2rem; }
-    .meta td ul li:first-child { margin-top: 0; }
-    .meta .gui { color: #1d4180; font-weight: 500; }
-    .prose-block a  { color: #1d4180; text-decoration: underline; text-underline-offset: 2px; }
-    .prose-block a:hover { color: #1a1f2c; }
-    .stub { color: #7c8497; font-style: italic; }
+    details > summary { list-style: none; }
+    details > summary::-webkit-details-marker { display: none; }
+    details > summary::after { content: '+'; margin-left: auto; color: #7c8497; font-size: 1.25rem; }
+    details[open] > summary::after { content: '−'; }
+    .setting-table th { text-align: left; color: #1a1f2c; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .setting-table th, .setting-table td { padding: 0.85rem 1rem; vertical-align: top; border-bottom: 1px solid #e3e7ef; }
+    .setting-table td { color: #4a5263; line-height: 1.55; }
+    .setting-table tr:last-child td { border-bottom: 0; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; background: #f1f3f7; padding: 0.08rem 0.3rem; border-radius: 0.25rem; }
   </style>
 </head>
 <body class="bg-paper text-ink">
-
-  <!-- ── Top bar ───────────────────────────────────────────────────────────── -->
-  <header class="border-b border-line bg-paper/80 backdrop-blur sticky top-0 z-10">
+  <header class="border-b border-line bg-paper/90 backdrop-blur sticky top-0 z-10">
     <div class="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
       <a href="index.html" class="flex items-center gap-2.5 font-semibold tracking-tight text-lg">
-        <img src="mosaic_logo.png" alt="" class="w-7 h-7">
-        Mosaic
+        <img src="mosaic_logo.png" alt="" class="w-7 h-7">Mosaic
       </a>
-      <nav class="text-sm text-ink-soft hidden sm:flex items-center gap-7">
+      <nav class="text-sm text-ink-soft hidden md:flex items-center gap-7">
         <a href="index.html" class="hover:text-ink transition">Home</a>
         <a href="install.html" class="hover:text-ink transition">Install</a>
-        <a href="help.html" class="text-ink font-medium">Docs</a>
+        <a href="help.html" class="text-ink font-medium">Help</a>
+        <a href="methodology.html" class="hover:text-ink transition">Methodology</a>
+        <a href="about.html" class="hover:text-ink transition">About</a>
         <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub →</a>
       </nav>
     </div>
   </header>
 
-  <!-- ── Page header ───────────────────────────────────────────────────────── -->
-  <section class="border-b border-line">
+  <section class="border-b border-line bg-white">
     <div class="max-w-6xl mx-auto px-6 py-12">
-      <h1 class="text-4xl font-bold tracking-tight">Documentation</h1>
-      <p class="mt-3 text-ink-soft">Everything you need to install Mosaic, configure a run, and read the output.</p>
+      <p class="text-sm font-semibold uppercase tracking-wider text-navy">User guide</p>
+      <h1 class="mt-2 text-4xl font-bold tracking-tight">Mosaic help</h1>
+      <p class="mt-3 max-w-2xl text-lg text-ink-soft leading-relaxed">How to set up a run, choose priorities, inspect the map, and save the result.</p>
       <div class="mt-6 relative max-w-xl">
-        <input
-          id="help-search"
-          type="search"
-          placeholder="Search the docs — try &quot;polsby&quot;, &quot;seed&quot;, &quot;safe-harbor&quot;..."
-          class="w-full px-4 py-2.5 rounded-lg border border-line bg-paper text-ink placeholder:text-ink-mute focus:outline-none focus:border-navy focus:ring-2 focus:ring-navy-soft transition"
-          autocomplete="off"
-        >
+        <input id="help-search" type="search" placeholder="Search this guide"
+               class="w-full px-4 py-2.5 rounded-lg border border-line bg-paper text-ink placeholder:text-ink-mute focus:outline-none focus:border-navy focus:ring-2 focus:ring-navy-soft transition"
+               autocomplete="off">
         <span id="help-search-count" class="hidden absolute right-3 top-1/2 -translate-y-1/2 text-xs text-ink-mute"></span>
       </div>
     </div>
   </section>
-  <div id="help-no-results" class="hidden max-w-6xl mx-auto px-6 py-12 text-center text-ink-soft">
-    <p>No matches. Try a shorter term, or <button id="help-search-clear" class="underline text-navy hover:text-ink">clear the search</button>.</p>
-  </div>
+  <div id="help-no-results" class="hidden max-w-6xl mx-auto px-6 py-12 text-center text-ink-soft">No section matches that search. Try a shorter phrase.</div>
 
-  <!-- ── Layout: TOC + content ─────────────────────────────────────────────── -->
-  <div class="max-w-6xl mx-auto px-6 py-12 grid lg:grid-cols-[220px_1fr] gap-12">
-
-    <!-- TOC -->
+  <div class="max-w-6xl mx-auto px-6 py-12 grid lg:grid-cols-[230px_1fr] gap-12">
     <aside class="hidden lg:block">
-      <nav class="sticky top-24 text-sm text-ink-soft space-y-2">
-        <div class="font-semibold text-ink uppercase tracking-wide text-xs mb-3">On this page</div>
-        <a href="#shapefile"        class="block hover:text-ink transition">Loading a shapefile</a>
-        <a href="#run-config"       class="block hover:text-ink transition">Run Config reference</a>
-        <a href="#run-controls"     class="block hover:text-ink transition">Run controls</a>
-        <a href="#renumber"         class="block hover:text-ink transition">Renumbering districts</a>
-        <a href="#metrics"          class="block hover:text-ink transition">Metrics glossary</a>
-        <a href="#map-overlays"     class="block hover:text-ink transition">Map overlays</a>
-        <a href="#charts"           class="block hover:text-ink transition">Reading the charts</a>
-        <a href="#export"           class="block hover:text-ink transition">Exporting results</a>
-        <a href="#faq"              class="block hover:text-ink transition">FAQ</a>
-        <a href="#about"            class="block hover:text-ink transition">About &amp; methodology</a>
-        <a href="#license"          class="block hover:text-ink transition">License</a>
+      <nav class="sticky top-24 text-sm text-ink-soft space-y-2.5" aria-label="On this page">
+        <div class="font-semibold text-ink uppercase tracking-wide text-xs mb-4">On this page</div>
+        <a href="#overview" class="block hover:text-ink transition">What Mosaic does</a>
+        <a href="#getting-started" class="block hover:text-ink transition">Basic workflow</a>
+        <a href="#setup" class="block hover:text-ink transition">Set up a run</a>
+        <a href="#scores" class="block hover:text-ink transition">Choose priorities</a>
+        <a href="#run" class="block hover:text-ink transition">Run and inspect</a>
+        <a href="#save" class="block hover:text-ink transition">Save and export</a>
+        <a href="#troubleshooting" class="block hover:text-ink transition">Troubleshooting</a>
+        <a href="#advanced" class="block hover:text-ink transition">Advanced settings</a>
+        <a href="#how-it-works" class="block hover:text-ink transition">How Mosaic searches</a>
       </nav>
     </aside>
 
-    <!-- Content -->
-    <main class="min-w-0">
-
-      <!-- Loading a shapefile ─────────────────────────────────────────────── -->
-      <section id="shapefile" class="prose-block">
-        <h2 class="text-2xl font-bold tracking-tight">Loading a shapefile</h2>
-        <p>
-          Where to get a shapefile, what Mosaic needs it to look like (required
-          columns, geometry type, CRS), and what to do when Mosaic refuses to
-          load yours: see the dedicated
-          <a href="shapefiles.html" class="text-navy hover:text-ink underline">shapefile guide</a>.
-        </p>
+    <main class="min-w-0 space-y-20">
+      <section id="overview" class="help-section">
+        <h2 class="text-3xl font-bold tracking-tight">What Mosaic does</h2>
+        <div class="mt-6 grid md:grid-cols-2 gap-5">
+          <div class="rounded-xl border border-line bg-white p-6 shadow-card">
+            <h3 class="font-semibold text-lg">Mosaic builds district plans</h3>
+            <p class="mt-2">Load a polygon shapefile, choose how many districts to create, and tell Mosaic which qualities matter to you. Mosaic repeatedly changes the boundaries and keeps track of plans that better match those priorities.</p>
+          </div>
+          <div class="rounded-xl border border-line bg-white p-6 shadow-card">
+            <h3 class="font-semibold text-lg">You remain in control</h3>
+            <p class="mt-2">The map, scores, and charts update during a run. You can pause, inspect the current plan, return to the best plan found so far, and export the plan on screen.</p>
+          </div>
+        </div>
       </section>
 
-      <!-- Run Config ──────────────────────────────────────────────────────── -->
-      <section id="run-config" class="prose-block mt-16">
-        <h2 class="text-2xl font-bold tracking-tight">Run Config reference</h2>
-        <p>Mosaic groups its knobs into four popups in the Run Config panel.</p>
-
-        <h3>ReCom</h3>
-        <dl>
-          <dt><strong>Number of Districts</strong></dt>
-          <dd>How many districts to draw. Set to the chamber size (e.g. 14 for NC's US House delegation, larger for state legislatures). Mosaic will refuse to start if the precinct count is too small to support the requested number of districts.</dd>
-          <dt><strong>Max Iterations</strong></dt>
-          <dd>Hard cap on the optimisation budget. The annealing schedule is sized against this number, so changing it changes the cooling trajectory, not just the stopping point.</dd>
-          <dt><strong>n=3 ReCom Mix</strong></dt>
-          <dd>Probability per step of attempting a three-way recombination (merge 3 adjacent districts and re-split into 3) instead of the default two-way step. Three-way moves are slower but escape local minima better; 0.0 disables it.</dd>
-          <dt><strong>Polish Flips</strong> (on by default)</dt>
-          <dd>Adds single-precinct boundary flips alongside ReCom to clean up district borders late in the run. The flip probability ramps along a two-piece logistic: about 5% at the start, rising to 50% at the crossover, and 85% by the end &mdash; so at least 15% of steps stay ReCom throughout and the chain can still escape local minima. The <strong>50% crossover</strong> slider (default 84% of the run) sets where the rate hits 50%; higher keeps flips rare until later. The live <strong>Flip rate</strong> readout in the status panel shows the current ramp value during a run.</dd>
-        </dl>
-
-        <h3>Population</h3>
-        <dl>
-          <dt><strong>Population Tolerance</strong></dt>
-          <dd>Per-district deviation from the ideal population that Mosaic will accept as a valid plan. Any candidate that violates this is rejected at the recombination step (default 2.5%). Tighter is harder to satisfy and slower to converge.</dd>
-          <dt><strong>Tolerance Ratchet</strong> (Off / Standard / Strict)</dt>
-          <dd>Progressively tightens Population Tolerance over the back two-thirds of the run, from the value you set down toward 0.25%. The schedule only ever <em>tightens</em>, and never below the deviation the map has actually achieved &mdash; so it can't strand a plan it is unable to satisfy. <strong>Standard</strong> tightens only when a new best plan is found; <strong>Strict</strong> tightens at every eligible iteration; <strong>Off</strong> (default) leaves the tolerance fixed. Scoring always uses your fixed map-wide tolerance &mdash; the ratchet acts on the move-acceptance bound, squeezing population balance down as the run settles. While on, the Population Deviation score is tracked every iteration even at weight 0 &mdash; its score-row label turns green to signal the ratchet is driving it, and its chart records data regardless of weight.</dd>
-          <dt><strong>Safe Harbor</strong></dt>
-          <dd>The no-penalty band for the Population Deviation score (default 0.0%, i.e. off &mdash; every district outside perfect balance is penalized). Districts inside the band contribute 0 to that metric; districts outside contribute their squared excess deviation. Clamped at run-start to never exceed Population Tolerance.</dd>
-        </dl>
-
-        <h3>Annealing</h3>
-        <dl>
-          <dt><strong>GUIDED cooling (recommended)</strong></dt>
-          <dd>Temperature drops fastest during an initial guide window (a fraction of max iterations) and tapers off afterward. The schedule self-tunes to acceptance rate, so the same settings work across very different shapefiles and weight mixes.</dd>
-          <dt><strong>STATIC cooling</strong></dt>
-          <dd>Temperature decays on a fixed geometric schedule. Useful when reproducing a published methodology or when you want fine control over the cooling curve. Requires more manual tuning to match GUIDED's quality.</dd>
-          <dt><strong>Initial Temp Factor</strong></dt>
-          <dd>
-            The GUI exposes the factor slider (default 0.2). In the default <code>PROPORTIONAL</code> mode the starting temperature is <code>factor × initial_score</code> &mdash; the right behavior when you don't know what magnitudes to expect from your weight mix, since temperature scales with whatever the score actually is. (A <code>NOMINAL</code> mode that treats the factor as an absolute temperature exists for headless/config use but is not surfaced as a GUI control.)
-          </dd>
-          <dt><strong>GUIDED — Guide Point &amp; Target Temperature</strong></dt>
-          <dd>The schedule is sized so that temperature reaches Target Temperature at <code>Guide Point × max_iterations</code>. Defaults: 0.9 and 1.0. Lowering Guide Point means faster cooling (more aggressive); lowering Target Temperature means a colder endpoint (less random late in the run). (The underlying config field is <code>guide_fraction</code>.)</dd>
-          <dt><strong>STATIC — Cooling Rate</strong></dt>
-          <dd>Per-iteration temperature multiplier (default 0.9995, meaning temp drops 0.05% per step). The total cooling over a run is <code>cooling_rate^max_iterations</code>; e.g. 0.9995 over 10,000 iterations leaves temperature at about 0.7% of initial.</dd>
-          <dt><strong>Launch Watch</strong></dt>
-          <dd>When enabled (default on), Mosaic re-anchors the temperature to the current score after a set number of iterations, configurable via the <strong>Re-anchor after iter</strong> input (default 250). Useful when score collapses early (common with County Congruence and County-Edge Bias enabled) and the initial-anchored temperature would otherwise become too hot to be useful by the time the score has stabilized.</dd>
-          <dt><strong>n=3 ReCom Mix slider</strong></dt>
-          <dd>Frozen at run start (see ReCom). Listed here too because the Annealing popup is where it lives in the GUI.</dd>
-          <dt><strong>Fast tree generation</strong></dt>
-          <dd>On by default. Runs the balanced-cut retry loop inside a single compiled kernel using a cheaper random draw, which is slightly biased and runs on its own RNG stream. Iterations are faster, but a seeded run will not reproduce one made with this off, and headless always uses the original generator. Turn it off for the original generator, or for seed parity with headless. Automatically ignored while County-Edge Bias is active.</dd>
-        </dl>
-
-        <h3>Seed</h3>
-        <dl>
-          <dt><strong>Random Seed</strong></dt>
-          <dd>Sets the RNG state at the start of the run. <code>0</code> (default) leaves the RNG random, so every run is different. Any non-zero integer makes a run reproducible <em>on the same machine, with the same Mosaic version, with the same shapefile</em>. Cross-machine or cross-version runs may diverge slightly due to floating-point ordering inside numpy / igraph; the seed buys you reproducibility, not bit-exactness across environments.</dd>
-          <dt><strong>Hot start</strong> (Advanced menu)</dt>
-
-          <dd>Instead of beginning from a random seed plan, load an existing precinct-to-district assignment as the starting point. Pick a CSV with an id column and a district column (1-indexed; the format matches Mosaic's own assignment export), then map the id column to your shapefile. Mosaic validates that every precinct is assigned, the district count matches Number of Districts, and each district is contiguous before the run will use it. Useful for polishing a published map or resuming from a prior result. Clear it from the same menu to return to random seeding.</dd>
-          <dt><strong>Relight</strong> (Advanced menu)</dt>
-          <dd>A "keep refining" mode. With a paused or finished run on screen, arming Relight makes each subsequent <span class="gui">Start</span> reseed from the <em>current map</em> instead of a random plan &mdash; so runs chain, the result of one becoming the seed of the next (unlike Hot start, which pins a fixed CSV). It also applies a gentle polish preset to the Annealing settings &mdash; a very low initial temperature, a long guided-cooling window, a heavy n=3 ReCom mix, late-onset flips, and Launch Watch off &mdash; so a run settles the existing map rather than tearing it up. It leaves your weights, Population Tolerance, and everything else alone. Mutually exclusive with Hot start (each greys the other out). <strong>Clear Relight</strong> turns it off and restores the annealing settings to exactly what they were when you armed it; loading a new shapefile clears it automatically. A run is refused if the current map no longer matches the Districts count or the Population Tolerance.</dd>
-        </dl>
-
-        <h3>County-Edge Bias</h3>
-        <dl>
-          <dt><strong>County-Edge Bias</strong> (enable + Multiplier slider)</dt>
-          <dd>Makes ReCom less likely to <em>propose</em> cut edges that cross county lines when generating new district boundaries. Higher multiplier = stronger preference for cuts along county borders. Distinct from any splitting score: the splitting scores penalize splits in the score function (post hoc), while County-Edge Bias steers the proposal distribution (per step). The two work well together — the bias keeps splits rare in proposals; the splitting score cleans up the ones that do happen.</dd>
-          <dd>It has its own row in the score panel (listed under <strong>Scores &rarr; County-Edge Bias</strong>) and no weight slider, because it is not part of the objective — it shapes which moves get proposed. Enabling <strong>County Congruence</strong> switches the bias on as a convenience and reveals its row, but the two are independent from then on: you can run the bias with the score off, or the score with the bias off. Hiding its row from the Scores menu switches it off, so a bias you cannot see is never still steering the chain.</dd>
-        </dl>
-
-        <h3>Scoring weights</h3>
-        <p>Each enabled metric is multiplied by its weight and summed into <code>PlanScore.total</code>, which the optimizer minimizes. Weight 0 removes the metric from the score total. The expensive metrics (Partisan Gini, Proportionality, Competitiveness, Chance of Majority, Hinge) are then skipped entirely; the cheap ones are still computed so their panels stay live. Per-metric contribution formulas are in the <a href="#metrics">Metrics glossary</a>.</p>
-
-        <h3>Partisan calibration</h3>
-        <p>Set in the Partisanship popup. Applied when any of Efficiency Gap (Robust), Expected Dem Seats, Partisan Bias, Partisan Gini, Proportionality, Competitiveness, Chance of Majority, or Hinge is enabled.</p>
-        <dl>
-          <dt><strong><code>election_win_prob_at_55</code></strong> — default 0.9</dt>
-          <dd>Calibration anchor: P(D wins | D share = 0.55). Inverted to <code>σ_district = 0.05 / Φ⁻¹(p)</code>. Higher values yield sharper per-district win probabilities.</dd>
-
-          <dt><strong><code>election_swing_sigma</code></strong> — default 0.03 (3pp)</dt>
-          <dd>Standard deviation of a shared partisan-environment swing added to every district before computing win probability. Higher values widen the partisan metric distributions.</dd>
-        </dl>
-        <p>Combined as <code>σ_combined = √(σ_swing² + σ_district²)</code>. For point-estimate behavior, set <code>election_swing_sigma</code> to its minimum and disable Robust EG (Partisanship popup &rarr; Efficiency Gap mode &rarr; Static).</p>
+      <section id="getting-started" class="help-section">
+        <h2 class="text-3xl font-bold tracking-tight">Basic workflow</h2>
+        <p class="mt-3">Most work in Mosaic follows the same five stages.</p>
+        <ol class="number-list mt-8 space-y-7">
+          <li><h3 class="font-semibold text-lg">Load your data</h3><p class="mt-1">Open a polygon shapefile and identify the population, precinct ID, county, election, and demographic columns that are available. See the <a href="shapefiles.html">shapefile guide</a> for file requirements.</p></li>
+          <li><h3 class="font-semibold text-lg">Set the basic limits</h3><p class="mt-1">Choose the number of districts, the population tolerance, and the maximum number of iterations.</p></li>
+          <li><h3 class="font-semibold text-lg">Choose your priorities</h3><p class="mt-1">Enable the scores you want Mosaic to consider and set their weights. Only use priorities supported by the data you loaded.</p></li>
+          <li><h3 class="font-semibold text-lg">Run and inspect</h3><p class="mt-1">Start the search, watch the map and charts, and pause when you want a closer look.</p></li>
+          <li><h3 class="font-semibold text-lg">Save the map you want</h3><p class="mt-1">Export the assignment, district information, or a map image. Exports use the plan currently shown on the map.</p></li>
+        </ol>
       </section>
 
-      <!-- Run controls ────────────────────────────────────────────────────── -->
-      <section id="run-controls" class="prose-block mt-16">
-        <h2 class="text-2xl font-bold tracking-tight">Run controls</h2>
-        <p>Four buttons in the main panel drive a run.</p>
-        <dl>
-          <dt><strong>Start</strong></dt>
-          <dd>Begins (or resumes) optimisation with the current Run Config and score weights. Most settings are frozen at run start &mdash; including the n=3 mix probability and the annealing schedule &mdash; so changes to the popups during a run don't take effect until you Reset.</dd>
-          <dt><strong>Pause</strong></dt>
-          <dd>Stops the algorithm thread at the next clean iteration boundary. Charts and the map stay where they were. Click Start again to resume from the same iteration.</dd>
-          <dt><strong>Revert to Best</strong></dt>
-          <dd>Restores the current assignment to the best-scoring plan seen so far in this run, without resetting the iteration counter or temperature. Useful when the algorithm has wandered into a worse region and you want to continue annealing from a known-good point. The score history charts keep their full trace. The button greys out when the map already <em>is</em> the best plan, since there is nothing to revert to.</dd>
-          <dt><strong>Reset</strong></dt>
-          <dd>Discards the current run entirely. Clears the map, the iteration counter, the score history, and the annealing state. The loaded shapefile and column choices are kept. Use this when you want to try a fresh run with new weights or a new seed.</dd>
-        </dl>
+      <section id="setup" class="help-section">
+        <h2 class="text-3xl font-bold tracking-tight">Set up a run</h2>
+        <p class="mt-3"><strong class="text-ink">Import Shapefile from File</strong> opens <strong class="text-ink">Shapefile Setup</strong>. Choose the required Population and Precinct ID columns; County, Elections, and Demographics are optional. <strong class="text-ink">+ Add Election</strong> pairs DEM and GOP columns. Then choose <strong class="text-ink">Confirm and Load</strong>.</p>
+        <p class="mt-3">Start with the three settings below. The defaults for the remaining controls are suitable for an ordinary first run.</p>
+        <div class="mt-6 overflow-x-auto rounded-xl border border-line bg-white">
+          <table class="setting-table w-full min-w-[620px]">
+            <thead class="bg-paper-2"><tr><th>Setting</th><th>What it changes</th><th>Practical guidance</th></tr></thead>
+            <tbody>
+              <tr><td class="font-semibold text-ink">Districts</td><td>The number of districts in the plan.</td><td>Use the size of the chamber or map you are drawing.</td></tr>
+              <tr><td class="font-semibold text-ink">Population Tolerance</td><td>The largest allowed difference from the ideal district population.</td><td>A smaller tolerance demands more equal populations but makes valid moves harder to find.</td></tr>
+              <tr><td class="font-semibold text-ink">Iterations</td><td>The maximum number of search steps in the run.</td><td>More iterations give Mosaic more opportunities to improve the plan, but take longer.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="mt-6 rounded-xl border border-line bg-navy-soft/50 p-5">
+          <h3 class="font-semibold">Settings are checked when the run starts</h3>
+          <p class="mt-1 text-sm">If Mosaic cannot start, read the status message first. It usually identifies a missing column, an invalid district count, a population constraint that cannot be met, or an incompatible starting map.</p>
+        </div>
       </section>
 
-      <!-- Renumbering ─────────────────────────────────────────────────────── -->
-      <section id="renumber" class="prose-block mt-16">
-        <h2 class="text-2xl font-bold tracking-tight">Renumbering districts</h2>
-        <p>By default Mosaic numbers districts in the arbitrary order it draws them. The <span class="gui">Advanced menu</span> can renumber a finished map by geography &mdash; numbers only. Colors stay put, so a district keeps its color and simply shows a different label on the map, in the District Info panel, and in exported CSVs. Renumbering is deterministic and never touches the assignment or any score.</p>
-        <dl>
-          <dt><strong>Renumber districts after run</strong> (on by default)</dt>
-          <dd>When a run finishes, relabel automatically using the rule chosen in Renumber options. Turn it off to keep the draw-order numbering.</dd>
-          <dt><strong>Renumber options</strong></dt>
-          <dd>Pick the rule:
-            <ul>
-              <li><strong>By proximity</strong> (default) &mdash; greedy nearest-neighbour traversal: district 1 is the furthest-northwest, then each subsequent number goes to the unvisited district whose centroid is closest to the last one. Keeps consecutively numbered districts geographically adjacent.</li>
-              <li><strong>NW to SE</strong> &mdash; diagonal sweep: district 1 sits furthest northwest, the last furthest southeast. Each axis is normalized so the diagonal stays balanced regardless of the state's shape.</li>
-              <li><strong>North to South</strong> &mdash; district 1 is northernmost, ties broken west-to-east.</li>
-              <li><strong>None</strong> &mdash; draw-order numbering (no renumber).</li>
-              <li><strong>Infer from alignment</strong> &mdash; available only with a reference plan loaded (see the <a href="#metrics">Alignment</a> metric). Each proposed district adopts the <em>number</em> of the reference district it most overlaps, decided by a global maximum-overlap matching so two districts never claim the same number; any surplus districts get fresh numbers. Lets a new map carry the enacted map's district numbers.</li>
-            </ul>
-          </dd>
-        </dl>
+      <section id="scores" class="help-section">
+        <h2 class="text-3xl font-bold tracking-tight">Choose what to optimize</h2>
+        <p class="mt-3">A score tells Mosaic what kind of plan to favor. Enabling a score adds it to the search objective; its weight controls how strongly it competes with the other enabled scores.</p>
+        <div class="mt-5 rounded-xl border border-gold/60 bg-amber-50 px-5 py-4">
+          <p class="text-sm text-ink">Scores do not all use the same scale or direction. Some panels show ratings, some show penalties, and some show measurements in their natural units. Read the label on the score or chart rather than assuming that every high or low number means the same thing.</p>
+        </div>
+
+        <h3 class="mt-9 text-xl font-semibold">Geography and population</h3>
+        <div class="mt-4 grid md:grid-cols-2 gap-4">
+          <div class="rounded-lg border border-line bg-white p-5"><h4 class="font-semibold">Compactness</h4><p class="mt-1 text-sm">Favors districts that are less stretched or irregular. Mosaic combines two complementary shape measures.</p></div>
+          <div class="rounded-lg border border-line bg-white p-5"><h4 class="font-semibold">Polsby-Popper and Reock</h4><p class="mt-1 text-sm">Expose the two shape measures separately when you want direct control instead of the combined Compactness score.</p></div>
+          <div class="rounded-lg border border-line bg-white p-5"><h4 class="font-semibold">Cut Edges</h4><p class="mt-1 text-sm">Counts neighboring precinct pairs placed in different districts. Fewer cut edges generally means simpler boundaries.</p></div>
+          <div class="rounded-lg border border-line bg-white p-5"><h4 class="font-semibold">County Congruence</h4><p class="mt-1 text-sm">Favors plans that keep counties together and avoid severe county splits.</p></div>
+          <div class="rounded-lg border border-line bg-white p-5"><h4 class="font-semibold">Classic Splitting</h4><p class="mt-1 text-sm">Provides a count-based alternative for limiting county splits and rewarding districts contained within one county.</p></div>
+          <div class="rounded-lg border border-line bg-white p-5"><h4 class="font-semibold">Population Deviation</h4><p class="mt-1 text-sm">Favors district populations closer to the ideal, beyond the hard population limit used to reject invalid moves.</p></div>
+          <div class="rounded-lg border border-line bg-white p-5 md:col-span-2"><h4 class="font-semibold">Alignment</h4><p class="mt-1 text-sm">Favors plans that preserve districts from a reference assignment. Load a reference plan before enabling it.</p></div>
+        </div>
+
+        <h3 class="mt-9 text-xl font-semibold">Election-based priorities</h3>
+        <p class="mt-2 text-sm">These options require Democratic and Republican vote columns.</p>
+        <div class="mt-4 grid md:grid-cols-2 gap-4">
+          <div class="rounded-lg border border-line bg-white p-5"><h4 class="font-semibold">Mean-Median, Efficiency Gap, Partisan Bias, and Partisan Gini</h4><p class="mt-1 text-sm">Measure different forms of partisan asymmetry. Directional controls are available where Mosaic can favor fairness or a selected party.</p></div>
+          <div class="rounded-lg border border-line bg-white p-5"><h4 class="font-semibold">Proportionality</h4><p class="mt-1 text-sm">Compares the balance of seats with the balance of votes and accounts for the risk that the statewide vote winner loses control.</p></div>
+          <div class="rounded-lg border border-line bg-white p-5"><h4 class="font-semibold">Competitiveness</h4><p class="mt-1 text-sm">Favors districts with less certain election outcomes.</p></div>
+          <div class="rounded-lg border border-line bg-white p-5"><h4 class="font-semibold">Expected Dem Seats</h4><p class="mt-1 text-sm">Moves the expected Democratic seat count up or down, depending on the selected direction.</p></div>
+          <div class="rounded-lg border border-line bg-white p-5"><h4 class="font-semibold">Chance of Majority</h4><p class="mt-1 text-sm">Favors a higher chance that the selected party wins a majority of districts.</p></div>
+          <div class="rounded-lg border border-line bg-white p-5"><h4 class="font-semibold">Supermajority/Hinge</h4><p class="mt-1 text-sm">Favors a higher chance that the selected party reaches a seat threshold you choose.</p></div>
+        </div>
+
+        <h3 class="mt-9 text-xl font-semibold">Demographic priorities</h3>
+        <p class="mt-2 text-sm">These options require a demographic total and at least one compatible group-population column.</p>
+        <div class="mt-4 grid md:grid-cols-3 gap-4">
+          <div class="rounded-lg border border-line bg-white p-5"><h4 class="font-semibold">Electoral Opportunity</h4><p class="mt-1 text-sm">Uses selected demographic shares as a planning proxy for electoral opportunity.</p></div>
+          <div class="rounded-lg border border-line bg-white p-5"><h4 class="font-semibold">Neighborhood Severance</h4><p class="mt-1 text-sm">Discourages boundaries that cut through areas where a demographic group is concentrated.</p></div>
+          <div class="rounded-lg border border-line bg-white p-5"><h4 class="font-semibold">Community Dispersion</h4><p class="mt-1 text-sm">Discourages dividing concentrated communities among more districts than their population requires.</p></div>
+        </div>
+        <p class="mt-6 text-sm">For exact definitions, scales, and formulas, see the <a href="methodology.html#scores">score methodology</a>.</p>
       </section>
 
-      <!-- Metrics ─────────────────────────────────────────────────────────── -->
-      <section id="metrics" class="prose-block mt-16">
-        <h2 class="text-2xl font-bold tracking-tight">Metrics glossary</h2>
-        <p>Each metric appears on a score row in the GUI. Entries below give a definition followed by a meta card listing the unit, optimization direction, contribution to <code>PlanScore.total</code>, and any tunable parameters with their GUI location. Metrics are internally rescaled to comparable magnitudes; weights and formulas appear in the meta card.</p>
-
-        <p>Eight metrics (Efficiency Gap in Robust mode, Expected Dem Seats, Partisan Bias, Partisan Gini, Proportionality, Competitiveness, Chance of Majority, Hinge) model each district's Dem share as a Gaussian variable. Two parameters set the spread and are shared across these metrics: <code>election_win_prob_at_55</code> (anchors per-district noise via <code>σ_district = 0.05 / Φ⁻¹(p)</code>) and <code>election_swing_sigma</code> (standard deviation of a shared partisan-environment draw). They combine as <code>σ_combined = √(σ_swing² + σ_district²)</code>. Both are set in the Partisanship popup; see <a href="#run-config">Run Config &gt; Partisan calibration</a> for details.</p>
-
-        <dl>
-          <dt><strong>Cut Edges</strong></dt>
-          <dd>
-            <p>Number of precinct-pair adjacencies whose endpoints are in different districts. Virtual edges added to reconnect islands are excluded, so on a state with bridged islands this is lower than the raw graph cut.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>integer count</td></tr>
-              <tr><th>Direction</th><td>lower is better</td></tr>
-              <tr><th>Contribution</th><td><code>cut_edges</code> (no internal rescale)</td></tr>
-                          <tr><th>Tunables</th><td>Weight only (<code>weight_cut_edges</code>, the one weight with a non-zero dataclass default of 1.0; the GUI row is off by default).</td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Classic Splitting</strong></dt>
-          <dd>
-            <p>Count-based penalty on splitting counties across districts. Two terms: <em>excess splits</em> beyond the minimum forced by county population, plus the shortfall in <em>single-county districts</em> (districts whose precincts all lie within one county). This is the optional, count-based sibling to <strong>County Congruence</strong> (the default, population- and severity-weighted splitting score); turn it on from the <span class="gui">Scores</span> menu.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>weighted score</td></tr>
-              <tr><th>Direction</th><td>lower is better</td></tr>
-              <tr><th>Contribution</th><td>two separately weighted terms, <code>10 × w_excess × excess_splits</code> and <code>10 × w_unified × (max_clean − single_county_districts)</code></td></tr>
-              <tr><th>Tunables</th><td><span class="gui">Score panel → Classic Splitting row → Excess weight / Single-county weight</span> (<code>weight_county_excess</code> / <code>weight_county_unified</code>, both default 1). Their ratio changes the metric's shape, not just its size. <code>max_clean</code> depends on the run-config Population Tolerance (Population popup &rarr; Population Tolerance).</td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Population Deviation</strong></dt>
-          <dd>
-            <p>Sum-of-squares imbalance penalty. Districts within the safe-harbor band contribute zero. Beyond it, the metric sums each district's squared excess deviation, normalized by district count &mdash; a smoother optimization landscape than the older mean-plus-max form.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>scaled sum of squares</td></tr>
-              <tr><th>Direction</th><td>lower is better; zero indicates all districts inside the safe-harbor</td></tr>
-              <tr><th>Contribution</th><td><code>sum(excess²) × 100,000 / n_districts</code>, where <code>excess = max(0, |dev_frac| − safe_harbor)</code></td></tr>
-              <tr><th>Tunables</th><td><span class="gui">Population popup &rarr; Safe Harbor slider</span> (<code>pop_deviation_safe_harbor</code>, default 0.0%). Clamped at run start to not exceed Population Tolerance.</td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Alignment</strong></dt>
-          <dd>
-            <p>Least-change penalty: how close the plan stays to a loaded <em>reference</em> plan (e.g. the enacted map). District numbering is irrelevant &mdash; only the partition matters. Each reference district is scored by its <em>cohesion</em>: the probability that two of its residents are still in the same proposed district (the sum of its squared overlap fractions). A district kept whole costs nothing; one split apart costs more, and a clean two-way split costs less than a shatter. The score is one-sided by design &mdash; it penalizes breaking old districts apart, not merging them &mdash; so population balance and the other weighted terms are what rule out the degenerate "everything in one district" plan. Load a reference CSV from the <span class="gui">Alignment row &rarr; "..." settings</span> before enabling.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>contribution [0, 100]; chart shows cohesion % in [0, 100]</td></tr>
-              <tr><th>Direction</th><td>lower contribution is better; 0 = identical to the reference plan</td></tr>
-              <tr><th>Contribution</th><td><code>100 × Σ wₐ(1 − cohesionₐ) / Σ wₐ</code>, where <code>cohesionₐ = Σₚ fₐₚ²</code> over reference district <code>a</code>'s share <code>f</code> in each proposed district <code>p</code>, weighted by <code>w</code> (population, or a party's votes)</td></tr>
-              <tr><th>Tunables</th><td>
-                <ul>
-                  <li><span class="gui">Alignment row &rarr; "..." &rarr; Load reference plan</span> (CSV with an id column and a district column; the district count need not match the run, and the reference need not be contiguous or population-balanced. The CSV must have exactly one row per precinct and an ID set matching the shapefile exactly; either mismatch is an error)</li>
-                  <li><span class="gui">Alignment row &rarr; "..." &rarr; Focus</span> (<code>alignment_party_focus</code>): measure retention in all residents (population), or in a party's votes &mdash; so each district scores on how many of <em>its</em> partisans stayed together. Needs election data; falls back to population without it</li>
-                  <li><span class="gui">Alignment row &rarr; "..." &rarr; Only districts that party wins</span> + <span class="gui">win threshold</span> (<code>alignment_restrict_to_party</code>, <code>alignment_win_threshold</code>, default 0.535): score only the reference districts the focus party already holds, to preserve your own seats. Needs a party focus and election data</li>
-                </ul>
-              </td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Compactness</strong></dt>
-          <dd>
-            <p>Mosaic's primary compactness score &mdash; on by default at weight 50 in the GUI (a bare <code>ScoreConfig()</code> has it at 0). One dial that blends mean Polsby-Popper and mean Reock 50/50, each mapped over a fixed band, so you can optimize compactness without juggling the two separate weights. Unclipped by default (Annealing Settings): instead of saturating at the band cap, it tracks the scorecard down to penalty 15 then eases to a flat landing at a realistic ceiling, so the optimizer keeps rounding districts out past &ldquo;compact enough.&rdquo; Off = clipped scorecard form that saturates at the cap.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
-              <tr><th>Direction</th><td>lower contribution is better</td></tr>
-              <tr><th>Contribution</th><td><code>100 − rating</code></td></tr>
-                          <tr><th>Tunables</th><td><span class="gui">Annealing Settings → Unclipped Compactness</span> (<code>compactness_unclipped</code>, default on). The two feeders are blended 50/50 but mapped over different bands — Reock 0.25–0.50, Polsby-Popper 0.10–0.50 — so equal mean PP and mean Reock do not contribute equally.</td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Polsby-Popper</strong></dt>
-          <dd>
-            <p>Compactness penalty. Per-district <code>PP = 4π·area / perimeter²</code> ranges from 0 (elongated) to 1 (circle). The score chart displays <code>mean(PP)</code> directly; the optimizer minimizes <code>(1 − mean(PP)) × 100</code>. Off by default &mdash; the blended <strong>Compactness</strong> score (above) is Mosaic's primary compactness metric; enable Polsby-Popper on its own only when you want to tune it directly.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>contribution [0, 100]; chart shows mean PP in [0, 1]</td></tr>
-              <tr><th>Direction</th><td>lower contribution is better</td></tr>
-              <tr><th>Contribution</th><td><code>(1 − mean(PP)) × 100</code></td></tr>
-                          <tr><th>Tunables</th><td>Weight only.</td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Reock compactness</strong></dt>
-          <dd>
-            <p>Second compactness penalty, complementary to Polsby-Popper. Per-district <code>Reock = area / area(minimum bounding circle)</code> ranges from 0 (elongated) to 1 (circular). Polsby-Popper measures boundary smoothness; Reock measures how round the district is overall. A district can be smooth-edged but stretched thin (high PP, low Reock), or jagged but compact in extent (low PP, high Reock). Optimizing both together usually catches what either misses alone.</p>
-            <p>Mosaic uses a 16-direction approximation rather than the textbook minimum bounding circle, which is too slow to evaluate on every iteration. The approximation caches each precinct's 16 directional extreme vertices once at load, then computes the bounding diameter from those candidate points. Agreement with textbook Reock is within ~0.8 score points on a 0–100 penalty scale. The optimizer treats the approximation as a canonical deterministic score, identical to PP or any other component.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>contribution [0, 100]; chart shows mean Reock in [0, 1]</td></tr>
-              <tr><th>Direction</th><td>lower contribution is better</td></tr>
-              <tr><th>Contribution</th><td><code>(1 − mean(Reock)) × 100</code></td></tr>
-                          <tr><th>Tunables</th><td>Weight only.</td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Mean-Median Difference</strong></dt>
-          <dd>
-            <p><code>mean(district Dem share) − median(district Dem share)</code>. Non-zero values indicate the mean and median districts disagree on partisan balance. Sign: negative = D advantage, positive = R advantage.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>signed share difference (display); contribution [0, 100]</td></tr>
-              <tr><th>Direction</th><td>set by mode: <strong>Fair</strong> drives <code>raw</code> toward 0; <strong>D</strong> / <strong>R</strong> drive it toward a one-party advantage</td></tr>
-              <tr><th>Contribution</th><td><code>d × 100</code> (or <code>d² × 100</code> with the quadratic toggle). Normalized deviation <code>d</code>: Fair <code>= min(1, |raw| / bound)</code>; D/R ramp linearly from 0 to 1 across <code>[−bound, +bound]</code></td></tr>
-              <tr><th>Tunables</th><td>
-                <ul>
-                  <li><span class="gui">Score panel &rarr; Mean-Median row &rarr; Fair / D / R radio</span> (<code>mm_mode</code>, default Fair)</li>
-                  <li><span class="gui">Partisanship popup &rarr; Mean-Median / Efficiency Gap shape &rarr; MM bound</span> (<code>mm_bound</code>, default 0.20 &mdash; the <code>|raw|</code> at which the penalty saturates at 100)</li>
-                  <li><span class="gui">Partisanship popup &rarr; Use quadratic penalty</span> (<code>partisan_quadratic_penalty</code>, default off; shared with Efficiency Gap)</li>
-                </ul>
-              </td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Efficiency Gap</strong></dt>
-          <dd>
-            <p><code>(wasted Dem votes − wasted Rep votes) / total votes</code>. Wasted votes are losing-side votes plus winning-side votes above 50%. Robust mode integrates the gap over a Gaussian swing in closed form; Static mode evaluates at the input shares only. Sign: negative = D bias, positive = R bias.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>signed share (display); contribution [0, 100]</td></tr>
-              <tr><th>Direction</th><td>set by mode: <strong>Fair</strong> drives <code>raw</code> toward 0; <strong>D</strong> / <strong>R</strong> drive it toward a one-party advantage</td></tr>
-              <tr><th>Contribution</th><td><code>d × 100</code> (or <code>d² × 100</code> with the quadratic toggle). Normalized deviation <code>d</code>: Fair <code>= min(1, |raw| / bound)</code>; D/R ramp linearly from 0 to 1 across <code>[−bound, +bound]</code></td></tr>
-              <tr><th>Tunables</th><td>
-                <ul>
-                  <li><span class="gui">Score panel &rarr; Efficiency Gap row &rarr; Fair / D / R radio</span> (<code>eg_mode</code>, default Fair)</li>
-                  <li><span class="gui">Partisanship popup &rarr; Mean-Median / Efficiency Gap shape &rarr; EG bound</span> (<code>eg_bound</code>, default 0.35) and <span class="gui">Use quadratic penalty</span> (shared with Mean-Median)</li>
-                  <li><span class="gui">Partisanship popup &rarr; Efficiency Gap mode radio</span> (<code>use_robust_eg</code>, default Robust). Robust integrates the gap over a Gaussian swing in closed form; Static evaluates at the input shares only</li>
-                  <li>Shared partisan calibration when Robust is selected</li>
-                </ul>
-              </td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Partisan Bias</strong></dt>
-          <dd>
-            <p>Seat-share asymmetry at a hypothetical tied statewide vote: shift every district's share so the statewide vote is exactly 50/50, then ask how far the Dem seat share is from half. Sign: positive = pro-R. Because it is evaluated at a tie, it describes a hypothetical election rather than the current one.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>signed seat-share tilt (display); contribution [0, 100]</td></tr>
-              <tr><th>Direction</th><td>set by mode: <strong>Fair</strong> drives <code>raw</code> toward 0; <strong>D</strong> / <strong>R</strong> drive it toward a one-party tilt</td></tr>
-              <tr><th>Contribution</th><td><code>d × 100</code> (or <code>d² × 100</code> with the quadratic toggle), same shape as Mean-Median and Efficiency Gap. <code>raw = 0.5 − S(0.5)</code>, the Dem seat share at a tied vote</td></tr>
-              <tr><th>Tunables</th><td>
-                <ul>
-                  <li><span class="gui">Score panel → Partisan Bias row → Fair / D / R radio</span> (<code>pbias_mode</code>, default Fair)</li>
-                  <li><span class="gui">Partisanship popup → Partisan Bias bound</span> (<code>pbias_bound</code>, default 0.25)</li>
-                  <li>Shared partisan calibration</li>
-                </ul>
-              </td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Partisan Gini</strong></dt>
-          <dd>
-            <p>Area between the seats-votes curve and its own reflection — a whole-curve symmetry measure rather than a reading at one point. Zero means each party would win the same seat share for the same vote share. Fair-only: there is no D/R mode, because asymmetry has no favoured direction.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>curve area (display); contribution [0, 100]</td></tr>
-              <tr><th>Direction</th><td>lower is better; 0 = perfectly symmetric</td></tr>
-              <tr><th>Contribution</th><td><code>min(1, area / 0.12) × 100</code>, area by trapezoid over a vote-share grid spanning 0.35 to 0.65 in steps of 0.02. The 0.12 bound and the grid are fixed, not user-tunable</td></tr>
-              <tr><th>Tunables</th><td>Weight only, plus the shared partisan calibration</td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Inversion Risk</strong></dt>
-          <dd>
-            <p>Probability that the party losing the statewide popular vote nonetheless controls the chamber, integrated over the swing model. Displayed only — it is not a weighted score. It is the term Proportionality blends toward 100, charted separately because it reads directly as a probability. Seat ties count as nobody in control and add nothing.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>probability [0, 1], charted as %</td></tr>
-              <tr><th>Direction</th><td>display only; lower is better</td></tr>
-              <tr><th>Contribution</th><td>none directly — enters the score through Proportionality's <code>P_inv</code> term</td></tr>
-              <tr><th>Tunables</th><td>Shared partisan calibration</td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Proportionality</strong></dt>
-          <dd>
-            <p>Seat share vs vote share. Unclipped by default (Partisanship Settings): a magnitude term <code>M</code> for the seat/vote gap, blended toward 100 by <code>P_inv</code>, the swing-integrated probability that the popular-vote loser controls the chamber — so antimajoritarian risk builds continuously rather than tripping. Over-seating the statewide winner is charged at a quarter rate up to a bonus allowance, which keeps a gradient there. Off = clipped scorecard: linear-to-cap deviation from the rounded-proportional seat share, winner's bonus forgiven outright, with an instant 100 for an antimajoritarian outcome.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
-              <tr><th>Direction</th><td>lower contribution is better</td></tr>
-              <tr><th>Contribution</th><td>Unclipped: <code>M × (1 − P_inv) + 100 × P_inv</code>, where <code>M = 100 × min(d / 0.42, 1)</code> and <code>d</code> is the seat/vote gap with winner over-seating charged at 0.25× up to an allowance of <code>|V − 0.5|</code> and at full rate beyond. Clipped: <code>100 × min(|adjusted| / 0.20, 1)</code>, or 100 outright when the vote loser holds a seat majority by more than 2pp.</td></tr>
-              <tr><th>Tunables</th><td>
-                <ul>
-                  <li><span class="gui">Partisanship popup → Unclipped Proportionality</span> (<code>proportionality_unclipped</code>, default on)</li>
-                  <li>Shared partisan calibration</li>
-                </ul>
-              </td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Competitiveness</strong></dt>
-          <dd>
-            <p>Soft-Bernoulli competitiveness rating. Per-district kernel <code>1 − 4·(P_win − 0.5)²</code> rewards toss-ups. Unclipped by default (Partisanship Settings): it tracks the clipped scorecard down to penalty 25, then curves off to a flat landing at the near-impossible all-toss-up end instead of clamping to 0, so the optimizer keeps a gradient where clipped saturates. Off = clipped scorecard, which saturates once the mean kernel reaches 0.75 — a threshold on the average across districts, not a count of toss-up seats.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>contribution [0, 100]</td></tr>
-              <tr><th>Direction</th><td>lower contribution is better</td></tr>
-              <tr><th>Contribution</th><td><code>100 − rating</code>, rating derived from <code>cDf = mean(1 − 4·(P_win − 0.5)²)</code></td></tr>
-              <tr><th>Tunables</th><td>
-                <ul>
-                  <li><span class="gui">Partisanship popup → Unclipped Competitiveness</span> (<code>competitiveness_unclipped</code>, default on)</li>
-                  <li>Shared partisan calibration</li>
-                </ul>
-              </td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Expected Dem Seats</strong></dt>
-          <dd>
-            <p>Sum of per-district P(D wins) under the swing model. The penalty is directional: D-toggle pushes the plan toward more Dem seats, R-toggle toward fewer. Linear [0, 100], no target.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>real-valued seat count (display)</td></tr>
-              <tr><th>Direction</th><td>toward the favored party (selected via D/R toggle)</td></tr>
-              <tr><th>Contribution</th><td><code>(n − raw)/n × 100</code> when favoring D; <code>raw/n × 100</code> when favoring R</td></tr>
-              <tr><th>Tunables</th><td>
-                <ul>
-                  <li><span class="gui">Score panel &rarr; Expected Dem Seats row &rarr; D / R radio</span> (selects which party the optimizer pulls toward)</li>
-                  <li>Shared partisan calibration</li>
-                </ul>
-              </td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Chance of Majority</strong></dt>
-          <dd>
-            <p>Probability that the selected party wins at least <code>n//2 + 1</code> districts (a strict majority; for even <var>n</var> this is one more than <code>n/2</code>), integrated over the partisan swing via Gauss-Hermite quadrature. One weight slider is shared; the D and R checkboxes select which terms it applies to.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>probability [0, 1] (display)</td></tr>
-              <tr><th>Direction</th><td>weighted party's probability pushed toward 1</td></tr>
-              <tr><th>Contribution</th><td><code>(1 − p)^1.5 × 100</code> per selected party. With both D and R selected both terms are added, so the contribution is <code>w·(1 − p_D)^1.5·100 + w·(1 − p_R)^1.5·100</code>.</td></tr>
-              <tr><th>Tunables</th><td>
-                <ul>
-                  <li><span class="gui">Score panel &rarr; Chance of Majority row &rarr; D / R checkboxes</span> (selects which party's probability is scored)</li>
-                  <li>Shared partisan calibration</li>
-                </ul>
-                Threshold is fixed at <code>n//2 + 1</code>; use Hinge for custom thresholds.
-              </td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Supermajority/Hinge</strong></dt>
-          <dd>
-            <p>Probability that the selected party wins at least <code>hinge_threshold</code> seats, under the swing model. Penalty curve matches Chance of Majority &mdash; in fact Chance of Majority is exactly Hinge with <code>hinge_threshold = n//2 + 1</code>; Hinge is the generalisation that lets you pick a different seat threshold (supermajority, blocking minority, etc.).</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>probability [0, 1] (display)</td></tr>
-              <tr><th>Direction</th><td>probability pushed toward 1</td></tr>
-              <tr><th>Contribution</th><td><code>(1 − p)^1.5 × 100</code></td></tr>
-              <tr><th>Tunables</th><td>
-                <ul>
-                  <li><span class="gui">Score panel &rarr; Supermajority/Hinge row &rarr; Threshold slider</span> (<code>hinge_threshold</code>, GUI default 8, slider range 1&ndash;14; clipped to <code>[1, n_districts]</code>)</li>
-                  <li><span class="gui">Score panel &rarr; Supermajority/Hinge row &rarr; D / R checkboxes</span> (<code>hinge_dem</code>)</li>
-                  <li>Shared partisan calibration</li>
-                </ul>
-              </td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>County Congruence</strong></dt>
-          <dd>
-            <p>One splitting penalty that blends county-direction and district-direction sub-scores 50/50. Uses a sqrt-of-fractions kernel that rewards lopsided splits over even ones, population-weighted across counties and districts. Unclipped by default (Annealing Settings): the penalty keeps climbing past its cap so the optimizer always has a gradient on heavily-split plans. (Sibling to the count-based <strong>Classic Splitting</strong> score.)</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>penalty (0 = best; uncapped when unclipped)</td></tr>
-              <tr><th>Direction</th><td>lower is better</td></tr>
-              <tr><th>Contribution</th><td>Unclipped: <code>0.5 × 45 × max(0, raw_county − 1) + 0.5 × 45 × max(0, raw_district − 1)</code>. Clipped: <code>0.2 × (0.5 × pen_c + 0.5 × pen_d)</code>, each direction ramping 0 → 100 from a map-derived reference to 1.33× it. The two forms have different zero points, so the toggle changes which plans score 0, not just where the penalty saturates.</td></tr>
-              <tr><th>Tunables</th><td><span class="gui">Annealing Settings → Unclipped County Congruence</span> (<code>holistic_splitting_unclipped</code>, default on)</td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Electoral Opportunity</strong></dt>
-          <dd>
-            <p>Minority opportunity to elect, per group. Each district earns credit on a logistic curve over the group's share, saturating at the solid level &mdash; the climb through 50% is rewarded, packing beyond solid is not. Credit is summed over the top <code>round(T)</code> districts, where <code>T</code> is the group's proportional seat count, which stops a plan being rewarded for cracking a group across many sub-opportunity districts. The sum is rated against <code>f_state</code>, the credit those districts could reach given the state's geography, so maps are graded against realistic possibilities. A group is dropped when <code>round(T) &lt; 1</code> or no opportunity district is drawable anywhere.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>penalty (0 = best); per-group 0&ndash;100 ratings on the chart</td></tr>
-              <tr><th>Direction</th><td>lower is better</td></tr>
-              <tr><th>Contribution</th><td><code>100 &times; (1 &minus; &Sigma; T&middot;frac / &Sigma; T)</code> over applicable groups, where <code>frac = min(O / f_state, 1)</code>, <code>O</code> = sum of the top <code>round(T)</code> district credits, <code>credit = min(x, 1)</code> clipped or <code>(x^&minus;8 + 1)^(&minus;1/8)</code> unclipped, <code>x = P / ref</code>, <code>P = 1 / (1 + exp(&minus;(share &minus; midpoint) / steepness))</code>, <code>ref = P at share = solid</code>. Displayed ratings always use the clipped credit.</td></tr>
-              <tr><th>Tunables</th><td>
-                <ul>
-                  <li><span class="gui">Electoral Opportunity row &rarr; &hellip; &rarr; Midpoint</span> (<code>opportunity_midpoint</code>, default 0.44) &mdash; share at which the chance to elect is 50/50</li>
-                  <li><span class="gui">&hellip; &rarr; Steepness</span> (<code>opportunity_steepness</code>, default 0.05)</li>
-                  <li><span class="gui">&hellip; &rarr; Solid level</span> (<code>opportunity_solid</code>, default 0.55) &mdash; share counting as one full opportunity district</li>
-                  <li><span class="gui">&hellip; &rarr; Smart targets</span> (<code>opportunity_smart_targets</code>, default on) &mdash; limits each hypothetical district to precincts near one anchor. Off, the benchmark ranks every precinct statewide, which can describe a district no map could draw. Costs a few seconds at run start.</li>
-                  <li><span class="gui">&hellip; &rarr; Unclipped</span> (<code>representation_unclipped</code>, default on) &mdash; softens the per-district credit cap. Moves the penalty only.</li>
-                </ul>
-              </td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Neighborhood Severance</strong></dt>
-          <dd>
-            <p>Penalises district lines drawn through the core of a minority community, whether or not it could form an opportunity district. Each adjacency carries, per group, the product of its two endpoints' group shares, so weight is large only where both sides are heavily that group; a boundary between two different groups costs nothing. The severed fraction is measured against what a compact race-blind map of the same size would sever, so 1.0 means cuts fall neutrally and above 1.0 means cores are being fractured. Severity scales with how much of a group's own adjacency is cut. Correlates with Cut Edges, so start the weight low.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>penalty (0 = best); per-group % intact on the chart</td></tr>
-              <tr><th>Direction</th><td>lower is better</td></tr>
-              <tr><th>Contribution</th><td><code>curve(ratio)</code>, where <code>ratio = pooled / expected</code>, <code>pooled = (&Sigma; mass&middot;severed&sup2; / &Sigma; mass)^&frac12;</code> over groups with <code>mass = (&Sigma; w)^0.5</code>, <code>severed = &Sigma; w over cut edges / &Sigma; w</code>, <code>w = share(u) &times; share(v)</code> per real edge, and <code>expected = 0.6972 &times; (k&minus;1)^0.5150 / N^0.4091</code>. The curve is anchored 5 / 55 / 95 at <code>R5 = 1 &minus; 1.1362 &times; (k&minus;1)^&minus;0.2447</code>, <code>1.0</code>, <code>R95 = 1 + 13.9170 &times; (k&minus;1)^&minus;0.6368</code>: <code>5(r/R5)^q</code> below R5, linear between anchors, <code>100 &minus; 5s/(s + r &minus; R95)</code> above R95, with <code>q = min(18&middot;R5/(R95&minus;R5), 12)</code> and <code>s = (R95&minus;1)/18</code>. Island-bridge edges are excluded.</td></tr>
-              <tr><th>Tunables</th><td>Weight only. Needs demographic columns; see <a href="shapefiles.html">Shapefile requirements</a>.</td></tr>
-            </table>
-          </dd>
-
-          <dt><strong>Community Dispersion</strong></dt>
-          <dd>
-            <p>Keeps a community inside as few districts as population equality allows. Where Severance measures where lines fall, this measures how many pieces a community ends up in, which a cut-edge measure cannot see. Per community it compares the effective number of pieces against the number its size forces, so a community too large for one district is not charged for the split it cannot avoid. Communities are built per group at three concentration levels and overlap, so splitting a dense core registers at every level while splitting a diffuse fringe registers only at the lowest.</p>
-            <table class="meta">
-              <tr><th>Unit</th><td>penalty (0 = best); per-group congruence on the chart</td></tr>
-              <tr><th>Direction</th><td>lower is better</td></tr>
-              <tr><th>Contribution</th><td><code>curve(spread)</code>, where <code>spread = (&Sigma; w&middot;(N_eff/m)&sup2; / &Sigma; w)^&frac12;</code> over communities, <code>N_eff = 1 / &Sigma; p&sup2;</code> for population shares <code>p</code> across districts, <code>m = ceil(pop / ideal_pop)</code>, and <code>w = pop^0.5 &times; &lambda;</code> for <code>&lambda; = 1.0 / 0.5 / 0.25</code> at the 50% / 35% / 20% concentration levels. Communities are connected precincts at or above each level holding &ge; 20,000 people. Same 5 / 55 / 95 curve as Neighborhood Severance, anchored at <code>R5 = 1 + 0.000074 &times; (k&minus;1)^1.784031</code>, <code>Rmid = 1 + 0.259077 &times; (k&minus;1)^0.267266</code>, <code>R95 = 3.923603 &minus; 3.232672 &times; (k&minus;1)^&minus;0.688527</code>.</td></tr>
-              <tr><th>Tunables</th><td>Weight only. Needs demographic columns; see <a href="shapefiles.html">Shapefile requirements</a>.</td></tr>
-            </table>
-          </dd>
-        </dl>
-
-        <p>The three demographic scores measure different things and correlate only weakly, so they can carry weight at the same time without double-counting. All three need demographic columns in the shapefile; see <a href="shapefiles.html">Shapefile requirements</a>. Where a state has nothing for one of them to measure &mdash; no group reaching a full district, no minority adjacency, no communities above the size floor &mdash; that score reports as not applicable and disables, rather than reporting a perfect result you did not earn.</p>
+      <section id="run" class="help-section">
+        <h2 class="text-3xl font-bold tracking-tight">Run and inspect</h2>
+        <h3 class="mt-7 text-xl font-semibold">Run controls</h3>
+        <div class="mt-4 overflow-x-auto rounded-xl border border-line bg-white">
+          <table class="setting-table w-full min-w-[620px]"><tbody>
+            <tr><td class="font-semibold text-ink w-40">Start</td><td>Begins a new run using the current data and settings.</td></tr>
+            <tr><td class="font-semibold text-ink">Pause / Resume</td><td>Stops after a clean iteration boundary. The same button changes to Resume so you can continue the existing run.</td></tr>
+            <tr><td class="font-semibold text-ink">Revert to Best</td><td>Returns the map and run state to the best-scoring accepted plan found so far. History after that point is discarded.</td></tr>
+            <tr><td class="font-semibold text-ink">Reset</td><td>Clears the current run while keeping the loaded shapefile and configuration. If Relight is active, Reset also clears it and restores the settings it replaced.</td></tr>
+          </tbody></table>
+        </div>
+        <h3 class="mt-9 text-xl font-semibold">Read the map</h3>
+        <ul class="help-list mt-3">
+          <li>Scroll over the map to zoom, drag to pan, and double-click to return to the full state.</li>
+          <li>Use the controls below the map to change the coloring and add county lines, precinct lines, or labels.</li>
+          <li>Coloring modes replace one another. Line and label overlays can be placed on top.</li>
+          <li>Map-image exports always show the full state, regardless of the current zoom.</li>
+        </ul>
+        <h3 class="mt-9 text-xl font-semibold">Scores and Views are different</h3>
+        <div class="mt-4 grid md:grid-cols-2 gap-4">
+          <div class="rounded-xl border border-line bg-white p-5"><h4 class="font-semibold">Scores</h4><p class="mt-1 text-sm">Controls which priorities appear in the score area and can influence the search. Hiding a score also turns it off; showing it again does not automatically re-enable it.</p></div>
+          <div class="rounded-xl border border-line bg-white p-5"><h4 class="font-semibold">Views</h4><p class="mt-1 text-sm">Controls which charts and information panels are visible. Showing a view does not automatically add that metric to the objective.</p></div>
+        </div>
+        <div class="mt-4 space-y-3">
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Map fills, overlays, and status</summary><div class="px-5 pb-5 space-y-3"><p>The Fill menu offers <strong class="text-ink">None (District)</strong>, election <strong class="text-ink">Results - Precinct</strong> and <strong class="text-ink">Results - District</strong>, <strong class="text-ink">Demographics - Precinct</strong> and <strong class="text-ink">Demographics - District</strong>, <strong class="text-ink">Compactness</strong>, and <strong class="text-ink">Population Deviation</strong>. Results use Democratic two-party share; Demographics use the largest selected group and its share. Compactness runs from less-compact red/orange toward more-compact green. Population Deviation uses blue below ideal and red above it. County, Precinct, Labels, and Splits are additive overlays; Splits highlights counties divided among districts.</p><p><strong class="text-ink">Score</strong> is the current weighted total and <strong class="text-ink">Best</strong> is the lowest accepted total so far. <strong class="text-ink">Worse accepted</strong> is the run-wide share of higher-scoring proposals accepted; <strong class="text-ink">Entropy</strong> shows the rolling rate. <strong class="text-ink">Accepted steps</strong> counts accepted proposals, while <strong class="text-ink">Flip rate</strong> is the current chance of trying a boundary flip. Iter/sec and Est. left report speed and estimated time remaining.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Temperature, Partisanship, Win Chance, Score Contributors, District Info, and Comet Plot</summary><div class="px-5 pb-5 space-y-3"><p><strong class="text-ink">Temperature</strong> charts annealing temperature. <strong class="text-ink">Partisanship</strong> shows loaded two-party district results; <strong class="text-ink">Win Chance</strong> shows modeled Democratic win probabilities. <strong class="text-ink">Score Contributors</strong> shows each enabled metric's share of the current weighted total. <strong class="text-ink">District Info</strong> is a per-district table; Update every (iters) changes only its refresh rate.</p><p><strong class="text-ink">Comet Plot</strong> traces two selected measures against each other. Smooth averages nearby plotted points, Fit all shows the full trail, and Fade makes older points less prominent. These controls change only the chart.</p></div></details>
+        </div>
       </section>
 
-      <!-- Map overlays ────────────────────────────────────────────────────── -->
-      <section id="map-overlays" class="prose-block mt-16">
-        <h2 class="text-2xl font-bold tracking-tight">Map overlays</h2>
-        <p>Checkboxes under the live map switch what the map shows. Only one of the colouring modes can be active at a time; the others (county lines, labels) stack on top.</p>
-        <p><strong>Zoom and pan.</strong> Scroll over the map to zoom in (up to 32x), drag to pan, and double-click to snap back to the whole state. Exports always cover the whole state regardless of zoom.</p>
-        <dl>
-          <dt><strong>County</strong></dt>
-          <dd>Draws grey lines along county boundaries on top of the current colouring. Useful for eyeballing how often district boundaries follow county lines.</dd>
-          <dt><strong>Splits</strong></dt>
-          <dd>Dims counties that lie entirely inside a single district, leaving split counties at full saturation. Quick visual diagnostic for the splitting scores: more colour = more splits.</dd>
-          <dt><strong>Pct. Results</strong> (Precinct Results)</dt>
-          <dd>Colours each precinct by its Dem vs Rep share (Classic Mosaic red &harr; blue palette). Independent of district boundaries; shows the partisan terrain Mosaic is working over. Requires election columns at load.</dd>
-          <dt><strong>Dist. Results</strong> (District Results)</dt>
-          <dd>Colours each district by its aggregate Dem share. The map view of the same data the Mean-Median, Efficiency Gap, and Competitiveness metrics summarise.</dd>
-          <dt><strong>Compactness</strong></dt>
-          <dd>Colours each district by its combined compactness &mdash; the same Polsby-Popper + Reock blend the Compactness score uses (round = greener, elongated = redder). Spot the ugly district at a glance.</dd>
-          <dt><strong>Pop. Dev.</strong> (Population Deviation)</dt>
-          <dd>Colours each district by signed deviation from ideal population. Underpopulated districts in one direction, overpopulated in the other.</dd>
-          <dt><strong>Labels</strong></dt>
-          <dd>Draws the district number at each district's interior. Number matches the labels in the District Info panel and the exported CSVs.</dd>
-          <dt><strong>Precincts</strong></dt>
-          <dd>Draws faint white precinct boundaries on top of the district colouring. Hairline at on-screen resolution; cleans up at high-DPI exports. Useful for previewing how district lines fall relative to precinct lines.</dd>
-        </dl>
+      <section id="save" class="help-section">
+        <h2 class="text-3xl font-bold tracking-tight">Save and export</h2>
+        <p class="mt-3"><strong class="text-ink">Exports use the plan currently shown on the map.</strong> If you want the best plan found during the run, choose <strong class="text-ink">Revert to Best</strong> before exporting.</p>
+        <div class="mt-6 grid md:grid-cols-3 gap-4">
+          <div class="rounded-xl border border-line bg-white p-5"><h3 class="font-semibold">Quick Save / Save Assignments</h3><p class="mt-2 text-sm">Writes an Assignments CSV with one row per source feature and its district number. Quick Save uses a timestamped name in the output folder; File → Save Assignments lets you choose a name and location where supported.</p></div>
+          <div class="rounded-xl border border-line bg-white p-5"><h3 class="font-semibold">Save Metrics / Save District Info</h3><p class="mt-2 text-sm">Writes a District Info CSV with one row per district and the available district-level measures. Save Metrics uses a timestamped name in the output folder.</p></div>
+          <div class="rounded-xl border border-line bg-white p-5"><h3 class="font-semibold">Quick PNG / Save Map Image...</h3><p class="mt-2 text-sm">Saves the full map using the current fill, overlays, and labels. Save Map Image offers an optional title, PNG resolution, vector PDF, and Save As.</p></div>
+        </div>
+        <p class="mt-5 text-sm"><strong class="text-ink">Open output directory...</strong> opens the automatic-save folder. <strong class="text-ink">New</strong> unloads the current shapefile; unlike Reset, it returns Mosaic to its no-file state. Saving assignments marks the current plan as saved; exporting metrics or a photo does not. <strong class="text-ink">Open Recent</strong> reuses the column choices remembered for that file. <strong class="text-ink">Check for updates...</strong> checks for a newer release.</p>
       </section>
 
-      <!-- Charts ──────────────────────────────────────────────────────────── -->
-      <section id="charts" class="prose-block mt-16">
-        <h2 class="text-2xl font-bold tracking-tight">Reading the charts</h2>
-        <p>Two menus control what you see, and they are easy to confuse: the <strong>Scores</strong> menu toggles which score <em>rows</em> appear in the left-hand config column, while the <strong>Views</strong> menu toggles the right-side <em>charts and panels</em> below. The same names (e.g. Mean-Median, Reock) appear in both menus for that reason. The most useful panels during a run:</p>
-        <dl>
-          <dt><strong>Score History</strong></dt>
-          <dd>Total <code>PlanScore.total</code> over iterations (lower is better). Trends down as annealing cools and the search becomes pickier.</dd>
-          <dt><strong>Per-metric panels</strong></dt>
-          <dd>One chart per enabled metric, plotted in its native units. Partisan metrics draw a reference line where relevant.</dd>
-          <dt><strong>Alignment</strong></dt>
-          <dd>When the Alignment metric is active, this panel plots <em>cohesion</em> &mdash; the share of each reference district that stays intact &mdash; as a mean across districts and the single worst-hit district. The axis is inverted relative to the score: higher here means closer to the reference, while the score row reports the penalty (lower is better).</dd>
-          <dt><strong>Score Contributors</strong></dt>
-          <dd>Horizontal bar chart of the share of the total score each enabled metric contributes right now, one bar per metric with the metric named in full. Shares always sum to 100. The quickest way to see which weight is actually driving the optimizer. Only metrics contributing more than zero appear.</dd>
-          <dt><strong>Comet Plot</strong></dt>
-          <dd>Plots any two metrics against each other as a trajectory, showing how the search moves through the trade-off between them &mdash; compactness against efficiency gap, say. The tail cools with age (recent steps run hot, older ones fade toward dark blue) and a bright dot marks the current plan. Choose the axes with the two selectors; <span class="gui">Smooth</span> damps the line, <span class="gui">Fit all</span> keeps the whole trajectory in view while <span class="gui">Follow dot</span> tracks the live head, and <span class="gui">Fade</span> dims older steps. Partisan metrics appear only once election data is loaded.</dd>
-          <dt><strong>District Info</strong></dt>
-          <dd>Per-district table: population, deviation from ideal, and (when election data is loaded) Dem share. District numbers match the map labels and the exported CSVs. Refreshes on an adjustable interval to stay cheap on long runs.</dd>
-          <dt><strong>Win Chance / Partisanship</strong></dt>
-          <dd>Partisan diagnostic panels: per-district win probabilities and the partisan distribution of the current plan. Available once election columns are loaded.</dd>
-          <dt><strong>Temperature</strong></dt>
-          <dd>The annealing temperature over time. In GUIDED mode the curve is non-linear by design; in STATIC mode it's a clean geometric decay.</dd>
-          <dt><strong>Entropy / Acceptance</strong></dt>
-          <dd>Fraction of recent proposals that were accepted. Falls as the temperature drops; useful diagnostic for whether the schedule is too aggressive (drops to near-zero too early) or too gentle (stays high throughout).</dd>
-        </dl>
-        <p>Most charts will downsample the displayed buffer once it exceeds about 10,000 points so the GUI stays responsive across long runs. The underlying data isn't lost — it just isn't all drawn.</p>
+      <section id="troubleshooting" class="help-section">
+        <h2 class="text-3xl font-bold tracking-tight">Troubleshooting</h2>
+        <div class="mt-6 space-y-3">
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Mosaic will not load my shapefile</summary><div class="px-5 pb-5"><p>Check the message in the application, then use the <a href="shapefiles.html#problems">shapefile troubleshooting guide</a>. Common problems include unsupported geometry, a missing population column, invalid values, or disconnected geography that Mosaic cannot repair automatically.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">A score is unavailable</summary><div class="px-5 pb-5"><p>Election scores require election columns. Demographic scores require a demographic total and compatible group columns. Alignment requires a reference assignment. Reload the data and select the missing fields.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">The run will not start</summary><div class="px-5 pb-5"><p>Read the status message. Check the district count, population tolerance, enabled score requirements, and any loaded starting map. A very strict population tolerance can make a valid starting plan difficult or impossible to construct.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">My map includes islands or disconnected pieces</summary><div class="px-5 pb-5"><p>Mosaic normally adds internal connections so the search can reach islands and exclaves. These connections do not alter the shapefile. If Mosaic still reports disconnected geometry, inspect the source data for invalid or degenerate shapes.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">The first run is slow to begin</summary><div class="px-5 pb-5"><p>Some of Mosaic's fast numerical routines are compiled when first used. Later iterations and later runs are usually faster.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">The interface feels slow during a run</summary><div class="px-5 pb-5"><p>In the Appearance menu, increase the Map Render Interval so the map redraws less often. Limit Plots can also reduce the amount of chart data drawn at one time.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Mosaic crashed</summary><div class="px-5 pb-5"><p>Look in the <code>crashes</code> folder for the newest log file. Keep that file with the shapefile and the steps that led to the crash; it contains the error and basic information about the run.</p></div></details>
+        </div>
       </section>
 
-      <!-- Export ──────────────────────────────────────────────────────────── -->
-      <section id="export" class="prose-block mt-16">
-        <h2 class="text-2xl font-bold tracking-tight">Exporting results</h2>
-        <p>Mosaic writes two CSVs from the toolbar buttons in the main panel. Both save the plan currently on the map &mdash; exactly what you see on screen. Controls like <span class="gui">Revert to best</span> change what's on the map; the export just follows.</p>
-        <dl>
-          <dt><strong>Save Assignments &rarr; <code>output/assignments_YYYYMMDD_HHMMSS.csv</code></strong></dt>
-          <dd>One row per precinct: the precinct's ID (from whichever column you picked at load) and the district number. District numbers match the labels shown on the live map — same colours, same labels, no surprises.</dd>
-          <dt><strong>Save Metrics &rarr; <code>output/metrics_YYYYMMDD_HHMMSS.csv</code></strong></dt>
-          <dd>One row per district, same numbering as the assignments CSV. Columns: <code>district</code>, <code>population</code>, <code>pop_dev_pct</code>, <code>pop_dev_pct_abs</code>, <code>cut_edges</code>, <code>counties_touched</code>, <code>dem_votes</code>, <code>rep_votes</code>, <code>dem_pct</code>, <code>rep_pct</code>, <code>dem_margin</code>, <code>win_prob</code>, <code>polsby_popper</code>, <code>reock</code>, <code>holistic_compactness</code>. The partisan columns (<code>dem_votes</code> through <code>win_prob</code>) appear only when election data is loaded; <code>cut_edges</code>, <code>polsby_popper</code>, <code>reock</code>, and <code>holistic_compactness</code> only when the matching compactness data is present, and <code>counties_touched</code> only when a county column is loaded. <code>reock</code> and <code>holistic_compactness</code> here are per-district raw ratings in [0, 1] (higher = more compact), not the penalty form used in the score-history charts.</dd>
-        </dl>
-        <p>Both files load directly into Dave's Redistricting App via its <strong>Color Map from File</strong> feature, or join back to your shapefile in QGIS / ArcGIS using the precinct ID column.</p>
-        <h3 class="text-xl font-semibold tracking-tight mt-8">Map image (PNG / PDF)</h3>
-        <p>Two icons sit at the right end of the map-overlay row, just under the District Map panel.</p>
-        <dl>
-          <dt><strong>Camera icon &rarr; <code>output/map_YYYYMMDD_HHMMSS.png</code></strong></dt>
-          <dd>Quick PNG of the current map. Re-rasterized at native resolution and cropped to the state's bounding box (so vertical states like Mississippi save tall, not letterboxed). Preserves whichever overlays are currently checked.</dd>
-          <dt><strong>"..." (Photo Menu) icon</strong></dt>
-          <dd>Opens an export dialog with an optional title bar and a "Made with Mosaic" caption strip across the bottom. Pick a <strong>Format</strong>:
-            <ul>
-              <li><strong>PNG (raster)</strong> &mdash; re-rasterized at the selected <strong>DPI</strong> (96 / 144 / 192 / 288 / 384 / 576 &mdash; 288 is the default), not upscaled. Border and label thicknesses scale at about half rate so high-DPI exports don't over-emphasize the lines, and a black state-edge outline is added so the boundary reads cleanly.</li>
-              <li><strong>PDF (vector, slower)</strong> &mdash; a true vector PDF on US Letter paper (auto portrait/landscape): precinct fills, district and county borders, and the state outline are real paths, not a raster, so it stays sharp at any zoom. The DPI setting does not apply.</li>
-            </ul>
-            <strong>Save</strong> writes a timestamped file to <code>output/</code>; <strong>Save As...</strong> opens a native file picker to choose the path (on macOS / Linux it falls back to an auto-named file in <code>output/</code>).</dd>
-        </dl>
+      <section id="advanced" class="help-section">
+        <h2 class="text-3xl font-bold tracking-tight">Advanced settings</h2>
+        <p class="mt-3">These controls are useful when you have a specific reason to change the search. You do not need them for a normal first run.</p>
+        <div class="mt-6 space-y-3">
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Fast tree generation</summary><div class="px-5 pb-5 space-y-3"><p>Uses Mosaic's faster method for building the randomized trees behind most ReCom moves. It is on by default.</p><p>Turning it off uses the slower reference method. Both follow the same basic move procedure, but they randomize trees differently, so changing this setting changes the path of the search—even with the same seed. County-Edge Bias uses the reference method automatically.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">n=3 ReCom Mix and Polish Flips</summary><div class="px-5 pb-5 space-y-3"><p><strong class="text-ink">% of iterations</strong> sets the conditional chance of trying n=3 after no flip is selected. These moves take more work but can reach plans that ordinary two-district ReCom misses.</p><p><strong class="text-ink">Enable single-precinct flips</strong> adds small, contiguous boundary adjustments. Flips are rare early and more common late. The <strong class="text-ink">50% crossover (% of run)</strong> chooses when flips reach half of proposal attempts.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Enable simulated annealing, cooling, and Launch Watch</summary><div class="px-5 pb-5 space-y-3"><p><strong class="text-ink">Enable simulated annealing</strong> lets Mosaic sometimes accept a worse-scoring plan so it can move out of local dead ends. Turning it off accepts every valid proposal.</p><p><strong class="text-ink">Initial Temp Factor</strong> controls how permissive the run is at the start. <strong class="text-ink">Guided (recommended)</strong> calculates a schedule that reaches Target Temp at Guide Point. <strong class="text-ink">Static</strong> applies the selected <strong class="text-ink">Cooling Rate / iteration</strong> after each step.</p><p><strong class="text-ink">Launch Watch</strong> can recalculate the Guided schedule once, using the score at that point instead of the original starting score. <strong class="text-ink">Re-anchor after iter</strong> chooses how long Mosaic waits before doing so.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Population Ratchet and Safe Harbor</summary><div class="px-5 pb-5 space-y-3"><p><strong class="text-ink">Tolerance Ratchet</strong> can tighten the allowed population difference as the run progresses. <strong class="text-ink">Standard</strong> considers tightening when Mosaic finds a new best plan; <strong class="text-ink">Strict</strong> considers it at every eligible step. Neither mode loosens the limit or tightens beyond what the current map can satisfy.</p><p><strong class="text-ink">Safe Harbor</strong> sets a band around the ideal population where the Population Deviation score adds no penalty. It does not replace the hard Population Tolerance.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">County-Edge Bias</summary><div class="px-5 pb-5"><p>Changes which proposed boundaries Mosaic is more likely to try by favoring cuts along county borders. It is a move preference, not a weighted score. County Congruence instead evaluates the resulting plan.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Clipped and unclipped scorecards</summary><div class="px-5 pb-5 space-y-3"><p><strong class="text-ink">Unclipped Compactness</strong>, <strong class="text-ink">Unclipped County Congruence</strong>, <strong class="text-ink">Unclipped Competitiveness</strong>, <strong class="text-ink">Unclipped Proportionality</strong>, and <strong class="text-ink">Unclipped Electoral Opportunity</strong> select alternate score shapes.</p><p>Clipped forms stop changing after a defined threshold. The default Unclipped forms keep giving the search useful distinctions beyond that threshold, although each does so differently. These settings change the optimizer penalty, not merely the chart. See the <a href="methodology.html#scores">score methodology</a> for the exact form.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Partisanship Settings</summary><div class="px-5 pb-5 space-y-3"><p><strong class="text-ink">Win Prob at 55% vote share</strong> controls how confidently Mosaic treats a district with 55% of the two-party vote as won. <strong class="text-ink">Swing sigma (shared)</strong> controls the size of the statewide electoral swing shared across districts.</p><p><strong class="text-ink">Efficiency Gap mode</strong> chooses between <strong class="text-ink">Robust (recommended)</strong> and Static. <strong class="text-ink">Use quadratic penalty</strong>, MM bound, EG bound, and Partisan Bias bound change how signed statistics become optimizer penalties; they do not change the raw charted statistics.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Electoral Opportunity settings</summary><div class="px-5 pb-5 space-y-3"><p><strong class="text-ink">Smart Targets</strong> uses nearby precincts to build a geographic reference for each group. Turning it off uses a statewide group-share ranking that can combine distant places.</p><p><strong class="text-ink">Midpoint</strong> is the group share assigned a 50% opportunity value. <strong class="text-ink">Steepness</strong> controls how gradually that value rises. <strong class="text-ink">Solid level</strong> is the reference share for full district credit.</p><p>The chart offers <strong class="text-ink">Overall</strong> penalty, per-group <strong class="text-ink">Rating</strong>, and modeled <strong class="text-ink">Opportunity count</strong>. Smart Targets is a heuristic reference, not proof that a valid district can be drawn. The <a href="methodology.html#smart-targets">technical description</a> explains its limits.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Alignment Settings</summary><div class="px-5 pb-5 space-y-3"><p><strong class="text-ink">Load reference plan...</strong> supplies the comparison assignment; it does not start the search from that plan. Focus chooses All residents, Republican, or Democratic as the overlap weight.</p><p><strong class="text-ink">Only districts that party wins</strong> limits the comparison to reference districts above the selected <strong class="text-ink">District win threshold</strong>.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Random Seed</summary><div class="px-5 pb-5"><p>A nonzero seed is one requirement for replaying a run; it is not enough by itself. For the strongest repeatability, also turn off Fast tree generation, reuse the same Hot Start, and keep the data, settings, Mosaic version, and computing environment unchanged. Exact results are not guaranteed across machines or releases.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Load Hot Start, Clear Hot Start, and Relight</summary><div class="px-5 pb-5 space-y-3"><p><strong class="text-ink">Load Hot Start...</strong> loads a saved Assignments CSV as the starting map. It needs matching Precinct ID and District columns, 1-based district numbers, and the same district count as the current Districts setting. <strong class="text-ink">Clear Hot Start</strong> returns to an automatically generated start.</p><p><strong class="text-ink">Relight</strong> starts another run from the map currently on screen and temporarily applies a polishing preset. <strong class="text-ink">Clear Relight</strong> restores the settings it replaced.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Renumber districts after run and Renumber options</summary><div class="px-5 pb-5 space-y-3"><p><strong class="text-ink">Renumber districts after run</strong> changes labels without changing boundaries, colors, or scores and is on by default. <strong class="text-ink">Renumber options...</strong> offers By proximity, Northwest to Southeast, North to South, None, or—when a reference plan is loaded—Infer from alignment.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Appearance and drawing speed</summary><div class="px-5 pb-5 space-y-3"><p><strong class="text-ink">Map Render Interval</strong> controls how often the map redraws while a run is active. A longer interval can make the interface more responsive without changing the search.</p><p><strong class="text-ink">Limit plots to last 10,000 iterations</strong> changes what is drawn, not what Mosaic calculates.</p></div></details>
+        </div>
       </section>
 
-      <!-- FAQ ─────────────────────────────────────────────────────────────── -->
-      <section id="faq" class="prose-block mt-16">
-        <h2 class="text-2xl font-bold tracking-tight">FAQ &amp; troubleshooting</h2>
-        <dl>
-          <dt><strong>Mosaic crashed during a run. Where's the log?</strong></dt>
-          <dd>Top-level crashes are written to <code>crashes/YYYYMMDD-HHMMSS.log</code> next to where you launched from. The file includes the traceback, Mosaic version, platform, and any context the runner had (current iteration, shapefile path). Attach it when filing an issue.</dd>
-          <dt><strong>Mosaic won't load my shapefile.</strong></dt>
-          <dd>See the <a href="shapefiles.html">shapefile guide</a> &mdash; in particular the <a href="shapefiles.html#problems">"If Mosaic refuses to load"</a> section, which maps each error message to the fix in the source data.</dd>
-          <dt><strong>My state has islands (HI, AK, the Outer Banks…). Do I need to remove them?</strong></dt>
-          <dd>No. When Mosaic builds the adjacency graph it automatically reconnects islands and exclaves to the mainland with <em>virtual</em> bridge edges, so ReCom can reach every precinct. The bridges are chosen deterministically by geography (nearest precinct, same county preferred) and are invisible to scoring &mdash; they never count as cut edges and the file on disk is never changed. The "disconnected components" error now appears only in the rare case where bridging can't find a valid link (e.g. degenerate geometry).</dd>
-          <dt><strong>The launcher fails on first run.</strong></dt>
-          <dd>See the <a href="install.html">install page</a> troubleshooting section &mdash; SmartScreen on Windows, Gatekeeper on Mac, and a few common <code>uv</code> install failure modes.</dd>
-          <dt><strong>Why is the first iteration slow?</strong></dt>
-          <dd>Numba JIT-compiles the hot ReCom path on the first ReCom step (several seconds). Subsequent steps run at hundreds per second. The JIT cache persists across runs, so this only hurts once.</dd>
-          <dt><strong>Can I run multiple chains in parallel?</strong></dt>
-          <dd>Not yet from inside Mosaic. As a workaround, run multiple Mosaic instances in separate folders with different seeds.</dd>
-          <dt><strong>Mosaic feels slow / the GUI is laggy.</strong></dt>
-          <dd>Two knobs in the Appearance menu help. <strong>Limit plots</strong> trims the score-history buffer to keep chart rendering fast on long runs (the underlying score data isn't lost, just downsampled for display). <strong>Map render interval</strong> sets how often the map redraws during a run; raise it from the default to give the algorithm more CPU. The algorithm itself runs at the same speed either way; both knobs only affect rendering.</dd>
-        </dl>
+      <section id="how-it-works" class="help-section">
+        <h2 class="text-3xl font-bold tracking-tight">How Mosaic searches</h2>
+        <p class="mt-4">Mosaic searches for plans that score well under the priorities you choose. Its main move joins neighboring districts, builds a randomized tree of connections within the combined area, and splits that tree into new contiguous districts that meet the population limit. Optional three-district moves and small boundary flips give the search other ways to change a plan.</p>
+        <p class="mt-4">With annealing enabled, Mosaic always accepts a plan that does not worsen the total score. Early in a run it may also accept a worse-scoring plan, which helps it move out of local dead ends. As the run cools, it becomes more selective. Mosaic records the best plan it finds during the run.</p>
+        <p class="mt-4">Mosaic's recombination approach belongs to the family of methods developed by the <a href="https://mggg.org/">MGGG Redistricting Lab</a>. Mosaic has its own implementation built for interactive optimization.</p>
+        <div class="mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm font-medium">
+          <a href="methodology.html" class="text-navy no-underline hover:underline underline-offset-4">Technical methodology →</a>
+          <a href="https://github.com/matt-mohn/mosaic_python" class="text-ink-soft no-underline hover:text-ink transition">Source code →</a>
+        </div>
       </section>
-
-      <!-- About ───────────────────────────────────────────────────────────── -->
-      <section id="about" class="prose-block mt-16">
-        <h2 class="text-2xl font-bold tracking-tight">About &amp; methodology</h2>
-        <p>
-          Mosaic is a Python port of <a href="https://github.com/matt-mohn/Mosaic">Mosaic for R</a>, extended with a live Dear PyGui interface and a simulated-annealing layer on top of the underlying ReCom step.
-        </p>
-        <p>
-          The ReCom (recombination) algorithm itself is derived from the one developed by the
-          <a href="https://mggg.org/">MGGG Redistricting Lab</a>. At each step, Mosaic picks an edge that crosses two districts, merges those districts, draws a random spanning tree on the merged region, and cuts the tree to produce two new districts of balanced population. The simulated-annealing wrapper accepts or rejects each proposed step based on a weighted plan score plus a temperature schedule.
-        </p>
-        <p>
-          <strong>Relationship to canonical ReCom, MergeSplit, and GerryChain.</strong> Mosaic borrows the recombination proposal from ReCom but accepts each proposal under simulated annealing keyed to a weighted plan score, rather than under a Metropolis-Hastings rule designed to produce a known stationary distribution over valid partitions. That distinction matters: canonical ensemble samplers — ReCom in <a href="https://github.com/mggg/GerryChain">GerryChain</a> and the corrected MergeSplit variant in <a href="https://alarm-redist.org/redist/">redist</a> — are designed so that the distribution of accepted plans supports statistical inference (for example, "this enacted plan is an outlier compared to the distribution of valid plans"). Mosaic, with the simulated-annealing layer biasing the chain toward score improvements as it cools, instead produces an <em>optimized</em> plan under the user's weighted objectives. Mosaic runs should not be cited for ensemble-style outlier claims; use redist or GerryChain for that.
-        </p>
-        <p>
-          <strong>Islands and connectivity.</strong> ReCom needs a single connected adjacency graph. When a shapefile has islands or exclaves, Mosaic links each detached component to the mainland with one virtual bridge edge, chosen deterministically from geometry (nearest precinct, same county preferred). Virtual edges keep the graph connected so moves can reach an island, but they are excluded from the cut-edge count and every other score, and the shapefile on disk is never modified.
-        </p>
-        <p>
-          Some features from the R version are implemented differently here, and some are still in progress.
-        </p>
-      </section>
-
-      <!-- License ─────────────────────────────────────────────────────────── -->
-      <section id="license" class="prose-block mt-16">
-        <h2 class="text-2xl font-bold tracking-tight">License &amp; acknowledgments</h2>
-        <p>
-          Mosaic is released under the <a href="https://github.com/matt-mohn/mosaic_python/blob/main/LICENSE">MIT License</a>.
-        </p>
-        <p>
-          The ReCom algorithm is derived from work by the <a href="https://mggg.org/">MGGG Redistricting Lab</a>. The GUI is built on <a href="https://github.com/hoffstadt/DearPyGui">Dear PyGui</a>; graph operations use <a href="https://igraph.org/">igraph</a> and <a href="https://networkx.org/">NetworkX</a>; hot loops are accelerated with <a href="https://numba.pydata.org/">Numba</a>.
-        </p>
-      </section>
-
     </main>
   </div>
 
-  <!-- ── Footer ────────────────────────────────────────────────────────────── -->
-  <footer class="border-t border-line bg-paper-2">
+  <footer class="mt-16 border-t border-line bg-paper-2">
     <div class="max-w-6xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-ink-soft">
-      <div class="flex items-center gap-2">
-        <img src="mosaic_logo.png" alt="" class="w-5 h-5">
-        Mosaic &middot; <a href="https://x.com/mattmxhn" class="hover:text-ink transition">Matt Mohn</a>
-      </div>
+      <div class="flex items-center gap-2"><img src="mosaic_logo.png" alt="" class="w-5 h-5">Mosaic · <a href="about.html" class="hover:text-ink transition">Matt Mohn</a></div>
       <div class="flex items-center gap-5">
+        <a href="methodology.html" class="hover:text-ink transition">Methodology</a>
         <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub</a>
         <a href="https://github.com/matt-mohn/mosaic_python/blob/main/LICENSE" class="hover:text-ink transition">MIT License</a>
       </div>
@@ -735,84 +289,45 @@
   </footer>
 
   <script>
-    // Whole-page filter: hides sections / glossary entries whose text doesn't
-    // contain the query. Glossary <dt>/<dd> pairs are filtered as units;
-    // everything else hides at the section level. TOC links hide when their
-    // target section is hidden.
     (function () {
       const input = document.getElementById('help-search');
       const counter = document.getElementById('help-search-count');
       const noResults = document.getElementById('help-no-results');
-      const clearBtn = document.getElementById('help-search-clear');
-      const sections = Array.from(document.querySelectorAll('main section.prose-block'));
-      const tocLinks = Array.from(document.querySelectorAll('aside nav a[href^="#"]'));
-
-      function filter() {
-        const q = input.value.trim().toLowerCase();
-        let totalVisible = 0;
-
+      const sections = Array.from(document.querySelectorAll('main .help-section'));
+      const links = Array.from(document.querySelectorAll('aside a[href^="#"]'));
+      function filterHelp() {
+        const query = input.value.trim().toLowerCase();
+        let visible = 0;
         for (const section of sections) {
-          let sectionVisible = false;
-          const dls = section.querySelectorAll('dl');
-
-          if (dls.length) {
-            // Filter glossary entries individually across every dl in the
-            // section -- sections like Run Config carry one dl per subsection
-            // (ReCom, Population, Annealing, Seed...), so we must scan them all,
-            // not just the first. Section is visible if any entry matches.
-            for (const dl of dls) {
-              const dts = dl.querySelectorAll(':scope > dt');
-              for (const dt of dts) {
-                const dd = dt.nextElementSibling;
-                const text = (
-                  dt.textContent + ' ' + (dd && dd.tagName === 'DD' ? dd.textContent : '')
-                ).toLowerCase();
-                const match = !q || text.includes(q);
-                dt.style.display = match ? '' : 'none';
-                if (dd && dd.tagName === 'DD') dd.style.display = match ? '' : 'none';
-                if (match) sectionVisible = true;
-              }
+          const details = Array.from(section.querySelectorAll('details'));
+          const direct = section.cloneNode(true);
+          direct.querySelectorAll('details').forEach(detail => detail.remove());
+          const directMatch = !query || direct.textContent.toLowerCase().includes(query);
+          let detailMatch = false;
+          for (const detail of details) {
+            const match = !query || detail.textContent.toLowerCase().includes(query);
+            detail.hidden = Boolean(query && !match && !directMatch);
+            if (query && match) {
+              detail.open = true;
+              detailMatch = true;
+            } else if (!query) {
+              detail.hidden = false;
             }
-            // Section also visible if non-glossary text matches (intro paragraphs).
-            if (!sectionVisible && q) {
-              const nonDlText = Array.from(section.children)
-                .filter(c => c.tagName !== 'DL')
-                .map(c => c.textContent)
-                .join(' ')
-                .toLowerCase();
-              if (nonDlText.includes(q)) sectionVisible = true;
-            }
-            if (!q) sectionVisible = true;
-          } else {
-            sectionVisible = !q || section.textContent.toLowerCase().includes(q);
           }
-
-          section.style.display = sectionVisible ? '' : 'none';
-          if (sectionVisible) totalVisible++;
+          const match = directMatch || detailMatch;
+          section.hidden = !match;
+          if (match) visible += 1;
         }
-
-        // TOC: hide links whose target is hidden.
-        for (const link of tocLinks) {
+        for (const link of links) {
           const target = document.querySelector(link.getAttribute('href'));
-          link.style.display = target && target.style.display !== 'none' ? '' : 'none';
+          link.hidden = Boolean(target && target.hidden);
         }
-
-        // Counter + no-results.
-        if (q) {
-          counter.textContent = totalVisible + ' section' + (totalVisible === 1 ? '' : 's');
-          counter.classList.remove('hidden');
-        } else {
-          counter.classList.add('hidden');
-        }
-        noResults.classList.toggle('hidden', totalVisible > 0 || !q);
+        counter.textContent = visible + (visible === 1 ? ' section' : ' sections');
+        counter.classList.toggle('hidden', !query);
+        noResults.classList.toggle('hidden', !query || visible > 0);
       }
-
-      input.addEventListener('input', filter);
-      if (clearBtn) {
-        clearBtn.addEventListener('click', () => { input.value = ''; filter(); input.focus(); });
-      }
+      input.addEventListener('input', filterHelp);
     })();
   </script>
-
 </body>
 </html>

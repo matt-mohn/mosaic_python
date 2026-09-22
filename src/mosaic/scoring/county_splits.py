@@ -14,9 +14,8 @@ them independently:
       max_unified       = sum_c floor(county_pop[c] / min_district_pop)
       unified_districts = districts whose precincts all live in one county
 
-SCORE_SCALE = 10 keeps each term competitive with PP / Reock at typical
-weights, so weight_county_excess = 5 is the same effective pressure as
-weight_polsby_popper = 5.
+SCORE_SCALE = 10 sets the magnitude of both county terms. Equal numeric weights
+do not guarantee equal optimization pressure relative to other metrics.
 """
 
 from __future__ import annotations

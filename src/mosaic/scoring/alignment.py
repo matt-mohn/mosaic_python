@@ -1,48 +1,17 @@
-"""
-Alignment — how close the proposed plan stays to a reference ("alternative")
-plan loaded from a CSV. This is the least-change / core-retention axis: a real
-legal criterion in several states (keep the new map close to the enacted one).
+"""Alignment penalty against a reference plan loaded from CSV.
 
-District NUMBERING is irrelevant — the score depends only on the partition the
-reference induces, not its labels.
+District labels are irrelevant; the score depends on the two partitions. For
+each reference district ``a``, the scorer measures how its selected weight
+(population or party votes) is distributed across proposed districts:
 
-Direction is one-sided BY DESIGN. It measures how each reference district spreads
-across the proposed districts (splitting), never the reverse (proposed-district
-purity). So merging/coarsening is unpenalized: a reference district absorbed whole
-into a neighbour reads as cohesive, and the degenerate "everything in one proposed
-district" map scores a perfect 0. That is correct for a least-change axis — it
-punishes breaking old communities apart, not collapsing them together — and is
-safe in practice because population balance and the other weighted terms forbid
-the degenerate. If symmetric core-retention were ever wanted, add the reverse
-Herfindahl (proposed-district purity) as a separate term.
-
-How it scores: cohesion (Herfindahl)
-------------------------------------
-For each reference district a, look at how its mass spreads across the proposed
-districts (fractions f_{a,p} summing to 1) and measure how concentrated it stayed:
-
-    cohesion_a = SUM_p f_{a,p}^2          # = probability two of a's residents are
-                                          #   still in the same proposed district
+    cohesion_a = SUM_p f_{a,p}^2          # probability two weighted units remain
+                                          # in the same proposed district
     penalty    = 100 * SUM_a w_a * (1 - cohesion_a) / SUM_a w_a
 
-cohesion is 1.0 when the district survived whole and falls as its residents are
-split across more proposed districts. Because it uses the FULL distribution (not
-just the biggest surviving chunk), it correctly distinguishes a clean split from
-a shatter — a district halved cleanly scores better than one whose second half is
-pulverized. No label matching is needed (it's relabel-invariant by construction).
-
-w_a is the reference district's mass in the chosen weight (population for plain
-alignment; a party's votes for partisan alignment). District NUMBERING and the
-gain/loss of seats fall out naturally: a brand-new proposed district has no
-reference row, and a reference district cleanly absorbed into a neighbour reads
-as cohesive (its people stayed together).
-
-Penalty form: float in [0, 100], 0 = best (every reference district intact).
-Baked x100 puts it in the same band as Polsby-Popper / Reock, so weight_alignment
-is directly comparable to those (default 25).
-
-Per-iteration cost: one numba pass builds the (n_alt x n_prop) overlap matrix +
-a length-k reduction. Same cost class as Reock.
+This is one-sided: it penalizes splitting reference districts but does not score
+the purity of proposed districts. Merging a reference district whole into a
+larger proposed district therefore incurs no alignment penalty. The returned
+penalty is in ``[0, 100]`` with 0 best.
 """
 
 from __future__ import annotations
@@ -75,7 +44,7 @@ class AlignmentData:
     alt_dem_by_district -- (n_alt,) D two-party votes per reference district, or
                            None if no election data was available at load. Used
                            to select which reference districts a party "wins"
-                           (Ask 2) without recomputing per iteration.
+                           without recomputing per iteration.
     alt_gop_by_district -- (n_alt,) R two-party votes per reference district, or None.
     alt_labels          -- (n_alt,) original district numbers from the CSV, indexed
                            by the densified 0..n_alt-1 id. Lets "Infer from
@@ -102,11 +71,9 @@ def precompute_alignment_data(
 ) -> AlignmentData:
     """Load a reference plan CSV and align it to gdf row order.
 
-    Mirrors hot_start's id-matching (GEOID-as-string join + reorder) but
-    deliberately drops the contiguity, population-tolerance, and matching-
-    district-count checks: a reference map is an external artifact and may
-    legitimately have a different district count (that is the whole point of
-    the spread-vs-concentrate behaviour). All we require is a clean join.
+    Precinct identifiers are joined as strings and reordered to match the
+    GeoDataFrame. The reference plan may use a different district count; this
+    loader checks the join but not contiguity or population tolerance.
 
     Raises AlignmentError with a user-facing message on any join failure.
     """
@@ -186,7 +153,7 @@ def precompute_alignment_data(
     n_alt = int(alt.max()) + 1
 
     # Per-reference-district two-party vote totals (if election data is present),
-    # so the GUI can restrict scoring to the districts a party wins (Ask 2)
+    # so the GUI can restrict scoring to the districts a party wins
     # without recomputing per iteration. Votes are in gdf row order, same as alt.
     alt_dem = alt_gop = None
     if dem_votes is not None and gop_votes is not None \
@@ -240,11 +207,11 @@ def score_alignment(
         alt_assignment:   (n,) reference district indices 0..n_alt_districts-1
         weights:          (n,) per-precinct weight cohesion is measured in.
                           Population for plain alignment; a party's votes for
-                          partisan alignment (Ask 1).
+                          partisan alignment.
         n_alt_districts:  number of reference districts
         n_districts:      number of proposed districts
         district_mask:    optional (n_alt,) bool selecting which reference
-                          districts to score (Ask 2). None = all. Unselected
+                          districts to score. None = all. Unselected
                           reference districts simply don't contribute.
         return_components: also return (mean_cohesion_pct, min_cohesion_pct)
 
@@ -264,7 +231,7 @@ def score_alignment(
     )
     pop_a = m.sum(axis=1)                       # (n_alt,) weighted ref-district mass
 
-    # Restrict to the selected reference districts (Ask 2).
+    # Restrict to the selected reference districts.
     if district_mask is not None:
         rows = np.where(district_mask)[0]
     else:

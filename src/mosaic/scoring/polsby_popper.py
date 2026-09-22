@@ -5,10 +5,12 @@ PP per district = 4pi * area / perimeter^2, in (0, 1].
   1.0 = perfect circle (most compact)
   ~0  = very elongated / spiky shape
 
-score_polsby_popper() returns  (1 - mean(PP)) * 100,  matching classic Mosaic's
-polsby_popper_metric scale so that weights are comparable to other metrics:
+score_polsby_popper() returns (1 - mean(PP)) * 100:
   0.0  = all districts are perfect circles
   100.0 = maximally non-compact
+
+This scale does not by itself make a PP weight comparable to weights on metrics
+with different ranges or distributions.
 """
 
 from __future__ import annotations

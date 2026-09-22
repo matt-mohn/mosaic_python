@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mosaic — methodology</title>
+  <meta name="description" content="Technical methodology for Mosaic's recombination search, annealing, constraints, and scoring.">
+  <link rel="icon" href="mosaic_logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] },
+          colors: {
+            ink: '#1a1f2c', 'ink-soft': '#4a5263', 'ink-mute': '#7c8497',
+            paper: '#fafbfc', 'paper-2': '#f1f3f7', navy: '#1d4180',
+            'navy-soft': '#e6ecf6', gold: '#f4b631', line: '#e3e7ef'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    html { scroll-behavior: smooth; }
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .method-section { scroll-margin-top: 6rem; }
+    .method-section p, .method-section li { color: #4a5263; line-height: 1.7; }
+    .method-section a { color: #1d4180; text-decoration: underline; text-underline-offset: 2px; }
+    .method-section ul { list-style: disc; padding-left: 1.25rem; }
+    .method-section ol { list-style: decimal; padding-left: 1.25rem; }
+    .method-section li + li { margin-top: 0.35rem; }
+    details > summary { list-style: none; }
+    details > summary::-webkit-details-marker { display: none; }
+    details > summary::after { content: '+'; margin-left: auto; color: #7c8497; font-size: 1.25rem; }
+    details[open] > summary::after { content: '−'; }
+    code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.88em; background: #f1f3f7; padding: 0.08rem 0.3rem; border-radius: 0.25rem; }
+    .formula { font-family: 'JetBrains Mono', ui-monospace, monospace; color: #1a1f2c; overflow-x: auto; }
+    .metric-grid > details { break-inside: avoid; }
+  </style>
+</head>
+<body class="bg-paper text-ink">
+  <header class="border-b border-line bg-paper/90 backdrop-blur sticky top-0 z-10">
+    <div class="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
+      <a href="index.html" class="flex items-center gap-2.5 font-semibold tracking-tight text-lg"><img src="mosaic_logo.png" alt="" class="w-7 h-7">Mosaic</a>
+      <nav class="text-sm text-ink-soft hidden md:flex items-center gap-7">
+        <a href="index.html" class="hover:text-ink transition">Home</a>
+        <a href="install.html" class="hover:text-ink transition">Install</a>
+        <a href="help.html" class="hover:text-ink transition">Help</a>
+        <a href="methodology.html" class="text-ink font-medium">Methodology</a>
+        <a href="about.html" class="hover:text-ink transition">About</a>
+        <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub →</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="border-b border-line bg-white">
+    <div class="max-w-6xl mx-auto px-6 py-12">
+      <p class="text-sm font-semibold uppercase tracking-wider text-navy">Technical reference</p>
+      <h1 class="mt-2 text-4xl font-bold tracking-tight">Methodology</h1>
+      <p class="mt-3 max-w-3xl text-lg text-ink-soft leading-relaxed">How Mosaic currently constructs proposals, applies constraints, accepts plans, and calculates scores. This page describes Mosaic 0.5.3.</p>
+      <div class="mt-5 rounded-lg bg-navy-soft/60 px-4 py-3 max-w-3xl text-sm text-ink-soft">Looking for instructions? Start with the <a class="text-navy underline" href="help.html">user guide</a>. This page is intentionally more technical.</div>
+      <div class="mt-5 relative max-w-xl">
+        <input id="method-search" type="search" placeholder="Search methodology and formulas"
+               class="w-full px-4 py-2.5 rounded-lg border border-line bg-paper text-ink placeholder:text-ink-mute focus:outline-none focus:border-navy focus:ring-2 focus:ring-navy-soft transition"
+               autocomplete="off">
+        <span id="method-search-count" class="hidden absolute right-3 top-1/2 -translate-y-1/2 text-xs text-ink-mute"></span>
+      </div>
+    </div>
+  </section>
+
+  <div id="method-no-results" class="hidden max-w-6xl mx-auto px-6 py-12 text-center text-ink-soft">No section matches that search. Try a shorter phrase.</div>
+
+  <div class="max-w-6xl mx-auto px-6 py-12 grid lg:grid-cols-[230px_1fr] gap-12">
+    <aside class="hidden lg:block">
+      <nav class="sticky top-24 text-sm text-ink-soft space-y-2.5" aria-label="On this page">
+        <div class="font-semibold text-ink uppercase tracking-wide text-xs mb-4">On this page</div>
+        <a href="#scope" class="block hover:text-ink">About this page</a>
+        <a href="#run" class="block hover:text-ink">The search process</a>
+        <a href="#graph" class="block hover:text-ink">Graph and connectivity</a>
+        <a href="#moves" class="block hover:text-ink">Recombination and moves</a>
+        <a href="#acceptance" class="block hover:text-ink">Acceptance and cooling</a>
+        <a href="#population" class="block hover:text-ink">Population constraints</a>
+        <a href="#best" class="block hover:text-ink">Current and best plans</a>
+        <a href="#scores" class="block hover:text-ink">Score methodology</a>
+        <a href="#reproducibility" class="block hover:text-ink">Reproducibility</a>
+        <a href="#credit" class="block hover:text-ink">Attribution</a>
+      </nav>
+    </aside>
+
+    <main class="min-w-0 space-y-20">
+      <section id="scope" class="method-section">
+        <h2 class="text-3xl font-bold tracking-tight">About this page</h2>
+        <p class="mt-4">This page documents Mosaic's current search, constraints, and scores. ReCom has many implementations; the details below are Mosaic's.</p>
+      </section>
+
+      <section id="run" class="method-section">
+        <h2 class="text-3xl font-bold tracking-tight">The search process</h2>
+        <ol class="mt-5 space-y-2">
+          <li>Build a precinct adjacency graph and connect otherwise disconnected geographic components with virtual edges.</li>
+          <li>Create a population-balanced starting plan, or validate a user-supplied starting assignment.</li>
+          <li>Calculate the starting score and record the plan as both the current and best plan.</li>
+          <li>Propose a two-district recombination, an optional three-district recombination, or an optional one-precinct boundary flip.</li>
+          <li>Reject a proposal that cannot satisfy the active population bound or construction-time connectivity requirements.</li>
+          <li>Score a valid proposal and apply the current acceptance rule.</li>
+          <li>Independently retain the lowest-total-score accepted plan encountered during the run.</li>
+        </ol>
+      </section>
+
+      <section id="graph" class="method-section">
+        <h2 class="text-3xl font-bold tracking-tight">Graph and connectivity</h2>
+        <p class="mt-4">Mosaic represents each input polygon as a node. An edge connects polygons that share positive boundary length or overlap in area; corner-only contact does not create an edge.</p>
+        <h3 class="mt-7 text-xl font-semibold">Islands and exclaves</h3>
+        <p class="mt-2">If the graph has disconnected components, Mosaic adds virtual edges to the working graph. It starts with the component containing the greatest population and attaches the remaining components one at a time. Same-county connections are preferred when county data is available, then polygon distance and node order break ties.</p>
+        <p class="mt-3">Virtual edges can participate in movement and connectivity. They are excluded from Cut Edges and the adjacency inputs for Neighborhood Severance and Community Dispersion. They do not modify the source shapefile.</p>
+        <details class="mt-5 rounded-xl border border-line bg-white">
+          <summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Exact bridge procedure</summary>
+          <div class="px-5 pb-5 space-y-3 text-sm"><p>Candidate bridges are prefiltered by centroid distance and finalized with polygon-to-polygon distance. Bridge construction is deterministic and uses no random-number generator.</p><p>A district may be connected in Mosaic's working graph only because of a virtual edge. This is working connectivity, not a claim of physical land adjacency.</p></div>
+        </details>
+      </section>
+
+      <section id="moves" class="method-section">
+        <h2 class="text-3xl font-bold tracking-tight">Recombination and other moves</h2>
+        <h3 class="mt-7 text-xl font-semibold">Two-district recombination</h3>
+        <p class="mt-2">Mosaic selects an edge that currently crosses a district boundary, combines the two districts on that edge, builds a randomized minimum spanning tree across the combined region, and looks for a tree cut that gives both replacement districts an allowed population.</p>
+        <div class="mt-4 rounded-xl border border-gold/60 bg-amber-50 px-5 py-4 text-sm text-ink-soft"><strong class="text-ink">Tree-sampling note:</strong> randomized minimum-spanning-tree construction does not sample all possible spanning trees uniformly. Mosaic makes no uniform-tree claim.</div>
+        <details class="mt-5 rounded-xl border border-line bg-white">
+          <summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Exact tree and cut procedure</summary>
+          <div class="px-5 pb-5 text-sm">
+            <ol class="space-y-2"><li>Assign a random edge ordering and run a minimum-spanning-tree procedure.</li><li>Choose a root uniformly among tree vertices whose degree is greater than one.</li><li>Calculate the population of every rooted subtree.</li><li>Scan vertices in ascending local node order and take the first parent edge that produces an allowed split.</li><li>Try up to 100 trees before treating the move as unsuccessful.</li></ol>
+            <p class="mt-3">The district pair is also not uniform: selecting a boundary edge gives pairs with longer graph boundaries more opportunities to be selected.</p>
+          </div>
+        </details>
+
+        <h3 class="mt-8 text-xl font-semibold">Fast tree generation</h3>
+        <p class="mt-2">This option changes how Mosaic randomizes the edge order used to build proposal trees. The default fast mode uses a local xorshift64* random generator for its edge shuffle and root choice. Turning it off uses the reference randomization path. County-edge bias uses the reference path in either setting because it needs weighted edges.</p>
+        <p class="mt-3">Both modes apply randomized Kruskal construction, scan for the first population-valid cut in the same node order, and try at most 100 trees. Neither samples spanning trees uniformly. Fast mode uses modulo reduction in its shuffle, which introduces a small sampling bias; it also consumes random values differently, so the same seed does not imply the same proposal sequence across modes.</p>
+
+        <h3 class="mt-8 text-xl font-semibold">Three-district recombination</h3>
+        <p class="mt-2">When enabled, Mosaic sometimes combines three neighboring districts. It first carves one population-balanced district from the combined region, then divides the remainder into two. This is a two-stage procedure, not a single uniform three-way cut.</p>
+        <details class="mt-4 rounded-xl border border-line bg-white">
+          <summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Exact three-district procedure</summary>
+          <div class="px-5 pb-5 text-sm space-y-3">
+            <ol class="space-y-2"><li>Select one current boundary edge to choose districts A and B. As with ordinary ReCom, district pairs with more boundary edges have more chances to be selected.</li><li>Select one boundary edge leaving A or B to choose an adjacent third district C. A candidate C with more edges to A or B is therefore more likely to be chosen.</li><li>Merge A, B, and C. Try up to 20 randomized trees to carve one connected piece inside the active population limit. Only the carved piece must be valid at this first stage.</li><li>Split the remaining area into two population-valid connected pieces. Mosaic first checks whether the successful first-stage tree already supplies that split; if not, it tries up to 20 new randomized trees on the remainder.</li><li>Label the three new pieces A, B, and C. If either stage fails, the entire proposal fails and the assignment is unchanged.</li></ol>
+            <p>Fast tree generation and County-Edge Bias apply to these tree cuts in the same way they apply to ordinary ReCom.</p>
+          </div>
+        </details>
+
+        <h3 class="mt-8 text-xl font-semibold">Polish flips</h3>
+        <p class="mt-2">A polish flip moves one boundary precinct into a neighboring district. Mosaic checks that the source district remains connected and that both affected districts stay within the active population bound. The default dispatch rate rises later in the run while preserving some recombination moves through the end.</p>
+        <details class="mt-4 rounded-xl border border-line bg-white">
+          <summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Exact flip procedure and timing</summary>
+          <div class="px-5 pb-5 text-sm space-y-3">
+            <p>When flips are enabled, Mosaic checks for a flip before either kind of ReCom. The flip probability is 5% at the start, reaches 50% at the selected <strong class="text-ink">50% crossover</strong>, and reaches 85% at the end.</p>
+            <ol class="space-y-2"><li>Select a current district-boundary edge and randomly choose which direction to move across it. County-Edge Bias, when active, makes cross-county edges less likely to be selected.</li><li>Reject the attempt if moving the selected precinct would empty its source district.</li><li>Require the new source and destination populations to remain inside the active population limit.</li><li>Require the source district to remain connected after removal. The destination remains connected because the precinct crosses an existing boundary edge into it.</li><li>Try at most 100 boundary-edge and direction choices. If none passes, the iteration has no proposal to score.</li></ol>
+            <p>A valid flip is scored and accepted or rejected by the same annealing rule as a ReCom proposal.</p>
+          </div>
+        </details>
+
+        <details class="mt-4 rounded-xl border border-line bg-white">
+          <summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">How the move settings combine</summary>
+          <div class="px-5 pb-5 text-sm space-y-3"><p>Each iteration first tests the current flip probability. Only when no flip is selected does Mosaic test the <strong class="text-ink">n=3 ReCom Mix</strong> percentage; otherwise it uses ordinary two-district ReCom.</p><p>The n=3 percentage is therefore conditional, not the share of all iterations. With flips enabled, its approximate overall chance is <code>(1 − flip probability) × n=3 percentage</code>.</p></div>
+        </details>
+
+        <h3 class="mt-8 text-xl font-semibold">County-edge bias</h3>
+        <p class="mt-2">County-edge bias changes proposal probabilities rather than adding a score. It makes cross-county graph edges less likely to enter the proposal tree and less likely to be selected for a flip. It steers the search but does not prevent county splits.</p>
+      </section>
+
+      <section id="acceptance" class="method-section">
+        <h2 class="text-3xl font-bold tracking-tight">Acceptance and cooling</h2>
+        <p class="mt-4">Mosaic minimizes a weighted total. With annealing enabled, a proposal that does not increase the total is always accepted. A worse proposal may still be accepted according to:</p>
+        <div class="formula mt-4 rounded-xl border border-line bg-white px-5 py-4">P(accept) = exp(−Δ / T)</div>
+        <p class="mt-4">Here <code>Δ</code> is the increase in total score and <code>T</code> is the current temperature. This is a Metropolis acceptance criterion used with a changing temperature. If annealing is disabled, Mosaic accepts every valid proposal, not only improvements.</p>
+
+        <h3 class="mt-8 text-xl font-semibold">Guided cooling</h3>
+        <p class="mt-2">Guided mode calculates one geometric cooling rate intended to move from the initial temperature to the target temperature at the selected guide point in the run. It does not continuously adapt to the observed acceptance rate.</p>
+        <details class="mt-4 rounded-xl border border-line bg-white">
+          <summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Formula and Launch Watch</summary>
+          <div class="px-5 pb-5 text-sm space-y-3"><div class="formula rounded-lg bg-paper-2 px-4 py-3">initial temperature = factor × initial score</div><div class="formula rounded-lg bg-paper-2 px-4 py-3">cooling rate = (target / initial)^(1 / guide iteration)</div><p>Launch Watch can re-anchor the proportional temperature once after the opening portion of the run and recalculate the remaining Guided rate. This is a one-time adjustment, not acceptance-rate tuning.</p></div>
+        </details>
+        <h3 class="mt-8 text-xl font-semibold">Static cooling</h3>
+        <p class="mt-2">Static mode multiplies the temperature by the user-selected cooling rate after every numbered iteration. Cooling also occurs after an unsuccessful move attempt or a rejected valid proposal.</p>
+      </section>
+
+      <section id="population" class="method-section">
+        <h2 class="text-3xl font-bold tracking-tight">Population constraints</h2>
+        <p class="mt-4">For ideal population <code>P</code> and active tolerance <code>t</code>, a changed district must fall inside the inclusive interval:</p>
+        <div class="formula mt-4 rounded-xl border border-line bg-white px-5 py-4">P(1 − t) ≤ district population ≤ P(1 + t)</div>
+        <p class="mt-4">This hard rule is separate from the optional Population Deviation score. A plan can satisfy the hard limit even when the soft score assigns a penalty within that range.</p>
+        <p class="mt-3">The optional tolerance ratchet tightens the hard proposal limit during the latter portion of a run. It never loosens the current bound and does not tighten past the deviation the current map has already achieved.</p>
+      </section>
+
+      <section id="best" class="method-section">
+        <h2 class="text-3xl font-bold tracking-tight">Current and best plans</h2>
+        <p class="mt-4">The current plan is the state from which Mosaic proposes the next move. Because annealing can accept a worse plan, it may not be the best plan encountered. Mosaic separately records an accepted plan only when its total score is strictly lower than the previous best.</p>
+        <p class="mt-3">Revert to Best rewinds the assignment, score, iteration, temperature, and chart histories to that recorded point. Exports use the current plan on the map; they do not silently substitute the best plan.</p>
+        <details class="mt-5 rounded-xl border border-line bg-white">
+          <summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Relight and Hot Start</summary>
+          <div class="px-5 pb-5 text-sm space-y-3">
+            <p><strong class="text-ink">Hot Start</strong> uses one loaded assignment as the starting plan. <strong class="text-ink">Relight</strong> instead uses the map currently on screen each time Start is pressed, so successive runs can continue from one another. They cannot be active together.</p>
+            <p>Arming Relight saves the current search settings, then applies a refinement preset: annealing on; Guided cooling; Initial Temp Factor <code>0.01</code>; Guide Point <code>0.80</code>; Launch Watch off; n=3 ReCom Mix <code>50%</code>; flips on; and the flip 50% crossover at <code>75%</code> of the run. It also shows the full plot history instead of limiting plots to the latest 10,000 iterations. It does not replace the selected score weights, iteration count, or population tolerance.</p>
+            <p>Clear Relight restores the saved search settings and removes the current-map start. Reset, loading a new shapefile, or changing the district count also clears it. At Start, the displayed map must still match the selected district count and population tolerance.</p>
+          </div>
+        </details>
+      </section>
+
+      <section id="scores" class="method-section">
+        <h2 class="text-3xl font-bold tracking-tight">Score methodology</h2>
+        <p class="mt-4">The optimizer minimizes a weighted sum:</p>
+        <div class="formula mt-4 rounded-xl border border-line bg-white px-5 py-4">total = Σ (enabled weight × optimizer penalty)</div>
+        <p class="mt-4">Most optimizer penalties use <code>0 = best</code>, but they do not share a common natural scale. Charts often show a friendlier rating, signed statistic, probability, or count instead of the penalty. Equal numeric weights therefore do not guarantee equal practical influence.</p>
+        <div class="mt-5 rounded-xl border border-gold/60 bg-amber-50 px-5 py-4 text-sm text-ink-soft"><strong class="text-ink">Display rule:</strong> values labeled <em>rating</em> are good-high; values labeled <em>penalty</em> are good-low. Natural statistics keep their own units and direction.</div>
+
+        <details class="mt-5 rounded-xl border border-line bg-white">
+          <summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Notation, input rules, and rounding</summary>
+          <div class="px-5 pb-5 text-sm space-y-3">
+            <p><code>k</code> is the number of districts, <code>aᵢ</code> is precinct <code>i</code>'s zero-based district assignment, <code>Popᵢ</code> is general population, and <code>I = ΣPopᵢ/k</code> is ideal population. Unless stated otherwise, plan-level means weight districts equally.</p>
+            <p>Election fractions remain in 0–1 units. Demographic scores use <code>Uᵢ</code> for the selected demographic total and <code>Gᵢ</code> for a compatible group count in the same universe. The source columns may be CVAP, VAP, total population, or another coherent basis; Mosaic's formulas do not inherently require VAP.</p>
+            <p>Mosaic scores Black, Latino, and Asian groups separately. White may be selected for the demographic map fill but is not a scored group. The formulas do not require the selected group columns to be mutually exclusive or exhaustive.</p>
+            <p>Where this page says <code>round</code>, Mosaic uses ties-to-even rounding.</p>
+          </div>
+        </details>
+
+        <h3 class="mt-9 text-xl font-semibold">Geography and population</h3>
+        <div class="metric-grid mt-4 space-y-3">
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Polsby-Popper, approximate Reock, and Compactness</summary><div class="px-5 pb-5 text-sm space-y-3">
+            <p>All geometry is measured in the shapefile's current coordinate reference system; the scorer does not reproject it. For district <code>d</code>, Mosaic reconstructs its area and perimeter from precinct areas, exterior edges, and shared boundaries, then calculates:</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">PP_d = clip(4π × area_d / perimeter_d², 0, 1)
+PP penalty = 100 × (1 − mean_d(PP_d))</pre></div>
+            <p>Approximate Reock selects each precinct's extreme point in 16 evenly spaced directions. For each district it finds the farthest pair among the retained directional extremes and treats half that distance as a radius:</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">radius_d = max pairwise distance among 16 directional extremes / 2
+Reock_d = min(area_d / (π × radius_d²), 1)   when radius_d &gt; 0; otherwise 0
+Reock penalty = 100 × (1 − mean_d(Reock_d))</pre></div>
+            <p>This is deterministic but is not a minimum-enclosing-circle calculation and does not verify that the implied circle encloses the district.</p>
+            <p>Combined Compactness applies a scorecard to the two mean ratings and averages the resulting penalties. In clipped mode, a rating <code>x</code> maps linearly from penalty 100 at <code>lo</code> to 0 at <code>hi</code>. The bands are PP <code>[0.10, 0.50]</code> and Reock <code>[0.25, 0.50]</code>.</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">B_clipped(x; lo, hi) = 100 − 100 × (clip(x,lo,hi) − lo)/(hi − lo)
+Compactness penalty = 0.5 × B(PP) + 0.5 × B(Reock)</pre></div>
+            <p>Default “unclipped” mode is still bounded. It follows the same line until PP <code>0.44</code> or Reock <code>0.4625</code>, then eases from penalty 15 to penalty 0 at raw rating <code>0.65</code>, using exponents <code>3.5</code> and <code>5.0</code> respectively. The chart shows <code>100 − penalty</code>.</p>
+          </div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Cut Edges</summary><div class="px-5 pb-5 text-sm"><p>The objective is the raw number of real adjacency edges whose endpoints fall in different districts. Virtual bridge edges are excluded. This is an unnormalized graph count, so its scale depends on the input geography.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">County Congruence</summary><div class="px-5 pb-5 text-sm space-y-3">
+            <p>Let <code>M_cd</code> be the population shared by county <code>c</code> and district <code>d</code>, <code>P_c = Σ_d M_cd</code>, <code>Q_d = Σ_c M_cd</code>, and <code>P = Σ_c P_c</code>. For each county, wholly contained districts are combined before taking one square root; partial pieces receive separate square roots:</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">S_c = Σ_partial d √(M_cd/P_c) + √(Σ_whole d M_cd/P_c)
+raw_county = Σ_c (P_c/P) × S_c</pre></div>
+            <p>The district direction is symmetric: exchange counties and districts to obtain <code>raw_district</code>. The ordinary no-split reference is 1 in either direction. Default mode uses:</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">penalty = 0.5 × 45 × max(0, raw_county − 1)
+        + 0.5 × 45 × max(0, raw_district − 1)</pre></div>
+            <p>This default penalty is not capped at 100. The optional clipped scorecard maps each direction between a problem-size reference and <code>1.33 × reference</code>, averages the two 0–100 results, then multiplies by <code>0.20</code>; its actual range is therefore 0–20. County-Edge Bias is a proposal preference, not part of this score.</p>
+          </div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Classic Splitting</summary><div class="px-5 pb-5 text-sm space-y-3">
+            <p>Classic Splitting has two independent weighted components, not one combined objective. If <code>touches_c</code> is the number of districts containing any population from county <code>c</code>:</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">allowance_c = ceil(P_c / max(I,1))
+ExcessCount = Σ_c max(0, touches_c − allowance_c)
+Excess penalty = 10 × ExcessCount</pre></div>
+            <p>For the single-county component, with population tolerance <code>t</code>:</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">min district population = max(I × (1−t), 1)
+population-only bound = Σ_c floor(P_c / min district population)
+actual clean = number of districts touching exactly one county
+Single-county penalty = 10 × (population-only bound − actual clean)</pre></div>
+            <p>The displayed “maximum feasible” line is only a population arithmetic bound. It does not prove contiguity or simultaneous drawability. The chart shows raw ExcessCount and actual clean districts, not the two optimizer penalties.</p>
+          </div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Population Deviation</summary><div class="px-5 pb-5 text-sm space-y-2"><p>For each district, Mosaic measures the absolute fractional difference from ideal population, subtracts the optional safe-harbor band, squares the remaining excess, and sums across districts.</p><div class="formula rounded-lg bg-paper-2 px-4 py-3">penalty = (100000 / districts) × Σ max(0, |deviation| − safe harbor)²</div><p>The chart shows maximum and mean absolute deviation in percent, not this penalty.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Alignment</summary><div class="px-5 pb-5 text-sm space-y-3">
+            <p>Alignment is a one-sided reference-district cohesion measure. Let <code>M_ad</code> be the selected weight from reference district <code>a</code> that lies in proposed district <code>d</code>, <code>G_a = Σ_d M_ad</code>, and <code>f_ad = M_ad/G_a</code>. Then:</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">cohesion_a = Σ_d f_ad²
+penalty = 100 × Σ_a G_a × (1 − cohesion_a) / Σ_a G_a</pre></div>
+            <p>The weight basis is general population by default, or the selected party's votes when party focus is available. An optional restriction includes only reference districts where that party's two-party share is strictly above the threshold (default <code>0.535</code>). The chart shows <code>100 − penalty</code> and the minimum reference-district cohesion.</p>
+            <p>Because the measure is one-sided, merging several intact reference districts into one proposed district is not itself penalized.</p>
+          </div></details>
+        </div>
+
+        <h3 class="mt-9 text-xl font-semibold">Election model and partisan scores</h3>
+        <p class="mt-2">Election-based scores use the selected Democratic and Republican vote columns. For district <code>i</code>, <code>sᵢ = Dᵢ/(Dᵢ+Rᵢ)</code>; a zero-turnout district is assigned <code>sᵢ=0.5</code>. Statewide share <code>V</code> is turnout-weighted.</p>
+        <div class="formula mt-4 rounded-xl border border-line bg-white px-5 py-4"><pre class="whitespace-pre-wrap">p = clip(user P(win at 55%), 0.501, 0.9999)
+σdistrict = 0.05 / Φ⁻¹(p)
+σcombined = √(σswing² + σdistrict²)
+P(D wins district i) = Φ((sᵢ − 0.5) / σcombined)</pre></div>
+        <p class="mt-3">Defaults are <code>P(win at 55%)=0.9</code> and <code>σswing=0.03</code>, giving <code>σdistrict≈0.0390152</code> and <code>σcombined≈0.0492157</code>. Chamber probabilities preserve correlated statewide swing with 17-point Gauss-Hermite quadrature and a Poisson-binomial seat-count calculation.</p>
+        <details class="mt-4 rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Shared directional penalty mapping</summary><div class="px-5 pb-5 text-sm space-y-3">
+          <p>Mean-Median, Efficiency Gap, and Partisan Bias convert a signed statistic <code>x</code> and positive bound <code>B</code> to distance <code>d</code>:</p>
+          <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">Fair:       d = min(1, |x|/B)
+Favor Dem:  d = clip((x+B)/(2B), 0, 1)
+Favor Rep:  d = clip((B−x)/(2B), 0, 1)
+
+linear penalty = 100d
+quadratic penalty = 100d²</pre></div>
+          <p>The quadratic toggle applies to all three metrics. Charts still show the untransformed signed statistic.</p>
+        </div></details>
+        <div class="metric-grid mt-4 space-y-3">
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Mean-Median Difference</summary><div class="px-5 pb-5 text-sm space-y-2"><div class="formula rounded-lg bg-paper-2 px-4 py-3">raw = arithmetic mean(sᵢ) − median(sᵢ)</div><p>Districts are equally weighted. The default directional bound is <code>B=0.20</code>. The chart shows the signed raw fraction rather than a percent or penalty.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Efficiency Gap</summary><div class="px-5 pb-5 text-sm space-y-3">
+            <p>Static mode uses strict <code>sᵢ&gt;0.5</code> for a Democratic win. Democratic wasted votes are <code>(sᵢ−0.5)Tᵢ</code> when Democrats win and <code>sᵢTᵢ</code> otherwise; Republican wasted votes are the complementary losing or surplus votes. The raw gap is <code>Σ(wasted D − wasted R)/ΣTᵢ</code>.</p>
+            <p>Default Robust mode uses a closed-form expectation:</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">σEG = √(0.03² + σdistrict²)
+qᵢ = Φ((sᵢ−0.5)/σEG)
+raw = Σ Tᵢ × ((2sᵢ−0.5) − qᵢ) / ΣTᵢ</pre></div>
+            <p>Robust EG always uses <code>0.03</code> for its statewide swing term; the shared Swing setting does not change it. The default directional bound is <code>B=0.35</code>. The chart shows the signed raw fraction.</p>
+          </div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Partisan Bias and Partisan Gini</summary><div class="px-5 pb-5 text-sm space-y-3">
+            <p>Let <code>S(v)=meanᵢ Φ((sᵢ+(v−V)−0.5)/σcombined)</code> be the smoothed Democratic seat-share curve under uniform swing.</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">Partisan Bias raw = 0.5 − S(0.5)
+Bias default bound B = 0.25</pre></div>
+            <p>Positive Bias favors Republicans under Mosaic's sign convention. Partisan Gini evaluates <code>|S(v) − (1−S(1−v))|</code> on the grid <code>0.35, 0.37, …, 0.65</code>, integrates it by the trapezoid rule, and uses:</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3">Gini penalty = 100 × min(1, area/0.12)</div>
+            <p>The Gini chart shows this good-low penalty, not the raw area and not a reversed rating.</p>
+          </div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Proportionality and inversion risk</summary><div class="px-5 pb-5 text-sm space-y-3">
+            <p>Default mode compares expected Democratic seat share <code>E_S=mean(pᵢ)</code> with statewide vote share <code>V</code>. It discounts a winner's bonus within <code>|V−0.5|</code> and scales the remaining magnitude against <code>0.42</code>; the within-bonus multiplier is <code>0.25</code>.</p>
+            <p>Inversion risk is the quadrature-integrated probability that the statewide popular-vote loser wins a strict chamber majority. The popular-vote winner switch is smoothed with a normal CDF of scale <code>0.005</code>. Tied chambers count for neither party.</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3">penalty = mismatch magnitude × (1 − inversion risk) + 100 × inversion risk</div>
+            <p>The chart shows good-high <code>100−penalty</code> and bad-high <code>100×inversion risk</code> on the same panel.</p>
+          </div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Competitiveness</summary><div class="px-5 pb-5 text-sm space-y-3">
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">kernelᵢ = 1 − 4(pᵢ−0.5)²
+cDf = mean(kernelᵢ)</pre></div>
+            <p>Clipped mode maps <code>cDf=0</code> to rating 0 and <code>cDf≥0.75</code> to rating 100. Default mode follows that line through <code>cDf=0.5625</code> (penalty 25), then eases to penalty 0 only at <code>cDf=1</code> with exponent <code>7/3</code>. The chart shows <code>100−penalty</code>.</p>
+          </div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Expected seats, Majority, and Hinge</summary><div class="px-5 pb-5 text-sm space-y-3">
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">Expected Democratic seats E_D = Σᵢ pᵢ
+Favor Dem penalty = 100 × (k−E_D)/k
+Favor Rep penalty = 100 × E_D/k</pre></div>
+            <p>Chance of Majority uses a strict majority. For even-sized chambers, a tie belongs to neither party, so Democratic and Republican majority chances need not sum to 1.</p>
+            <p>Hinge uses the selected party's probability of reaching at least the selected threshold. Both probability objectives use <code>penalty=100×(1−probability)^1.5</code>; charts show <code>100×probability</code>.</p>
+          </div></details>
+        </div>
+
+        <h3 class="mt-9 text-xl font-semibold">Demographic scores</h3>
+        <p class="mt-2">These scores use the demographic total and group-population columns selected at load time. Every group numerator must use the same universe as its denominator. A group can be not applicable when the input does not provide enough population, adjacency, or geographic concentration for that score to measure.</p>
+        <div class="mt-4 rounded-xl border border-gold/60 bg-amber-50 px-5 py-4 text-sm text-ink-soft"><strong class="text-ink">Use a consistent basis:</strong> whether you use CVAP, VAP, total population, or another demographic universe, use that same basis for the total and every group column.</div>
+        <div class="metric-grid mt-4 space-y-3">
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Electoral Opportunity</summary><div class="px-5 pb-5 text-sm space-y-3">
+            <p>For group <code>g</code> in district <code>d</code>, aggregate selected-universe total <code>U_d</code> and group count <code>G_gd</code>. Defaults are midpoint <code>m=0.44</code>, steepness <code>τ=0.05</code>, and solid reference <code>s=0.55</code>.</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">share_gd = G_gd / max(U_d,1)
+P_gd = 1 / (1 + exp(−(share_gd−m)/τ))
+ref_g = max(sigmoid((s−m)/τ), 10⁻⁹)
+T_g = (statewide G_g / statewide U) × k
+target_g = round(T_g)</pre></div>
+            <p>Let <code>x=P_gd/ref_g</code>. Hard district credit is <code>min(x,1)</code>. Default soft credit is <code>(x⁻⁸+1)⁻¹⁄⁸</code>. Mosaic sums only the largest <code>target_g</code> credits. Displayed Seats and per-group Rating always use hard credit; the optimizer uses soft credit when “Unclipped” is on.</p>
+            <p>Smart Targets supplies a greedy reference credit <code>D_g</code> and applicability signal. Hard credit is displayed as <strong class="text-ink">Opportunity count</strong>. An applicable group's rating is <code>100×min(hard credit/D_g,1)</code>. The overall penalty is <code>100×(1−weighted success)</code>, weighting groups by unrounded <code>T_g</code>. It is not the simple average of the displayed group ratings.</p>
+          </div></details>
+          <details id="smart-targets" class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Smart Targets</summary><div class="px-5 pb-5 text-sm space-y-3">
+            <p>Smart Targets is the optional geographic reference used by Electoral Opportunity. Before scoring a plan, it greedily assembles nearby high-share precincts into hypothetical district-sized bundles. The resulting credits determine whether a group is included and what reference its opportunity rating uses.</p>
+            <p>Mosaic ranks distance between representative points inside precincts. It does not use adjacency, shared boundary, road access, or travel time. Longitude/latitude-like coordinates are flattened by multiplying x by <code>cos(mean latitude)</code>; projected coordinates are used as supplied.</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">ideal = ΣU/k
+rounds = max(round(statewide group share × k), 1)
+queried neighbors = min(N, max(32, 4 × ideal/mean(U)))
+candidate centers = min(N, 600, max(100, 1200 // rounds))</pre></div>
+            <ol class="space-y-2">
+              <li>Choose the highest-share available precincts as candidate centers.</li>
+              <li>For each center, take the nearest available precincts up to twice ideal population; skip a pool holding less than <code>0.999 × ideal</code>.</li>
+              <li>Within the pool, add precincts in descending group-share order until group count reaches <code>solid × ideal</code> or total count reaches ideal.</li>
+              <li>Keep the highest-credit bundle, remove its precincts, and repeat through the proportional target.</li>
+            </ol>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">candidate denominator = max(bundle total, ideal)
+candidate share = bundle group count / candidate denominator
+candidate credit = min(sigmoid((share−midpoint)/steepness) / solid reference, 1)
+
+applicable when first credit ≥ 0.10
+reference credit = sum of greedy credits through the proportional target</pre></div>
+            <p>When Smart Targets is off or coordinates are unavailable, Mosaic instead bundles precincts from a statewide descending group-share ranking. That fallback may combine distant places.</p>
+            <p><strong class="text-ink">Limit:</strong> neither method enforces contiguity, the run's population tolerance, compactness, county boundaries, complete-plan construction, or legal constraints. Smart Targets is a heuristic comparison reference, not proof that a valid district can be drawn and not a maximum number of drawable districts.</p>
+          </div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Neighborhood Severance</summary><div class="px-5 pb-5 text-sm space-y-3">
+            <p>For each real adjacency edge <code>e=(u,v)</code>, group weight is the product of the endpoint group shares. Virtual edges receive weight zero.</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">q_gi = G_gi/max(U_i,1)
+w_ge = q_gu × q_gv
+A_g = Σ_real edges w_ge
+f_g = Σ_cut edges w_ge / A_g
+E(k,N) = 0.6972 × (k−1)^0.5150 / N^0.4091
+r_g = f_g / E(k,N)</pre></div>
+            <p>Applicable groups are pooled before calibration with mass <code>√A_g</code> and a weighted root-mean-square of <code>r_g</code>. The calibration is a monotone four-piece map anchored at penalties 5, 55, and 95; its district-count anchors are:</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">x = max(k−1,10⁻⁹)
+R5 = max(1 − 1.1362 × x^(-0.2447), 0.02)
+R95 = min(1 + 13.9170 × x^(-0.6368), 20)
+Rs = clamp(1, R5+0.05, R95−0.05)</pre></div>
+            <p>The optimizer uses the calibrated pooled penalty. Each group chart shows <code>100−calibrated group penalty</code>, so the overall line cannot be reconstructed by averaging group lines.</p>
+          </div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Community Dispersion</summary><div class="px-5 pb-5 text-sm space-y-3">
+            <p>Mosaic identifies connected group-concentration cores at share thresholds <code>0.50</code>, <code>0.35</code>, and <code>0.20</code>, using only real adjacency. Their multipliers are <code>1</code>, <code>0.5</code>, and <code>0.25</code>. Cores with general population below 20,000 are discarded; qualifying nested cores remain separate records.</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">P_cd = general population of core c placed in district d
+effective pieces N_eff,c = core_pop_c² / Σ_d P_cd²
+forced pieces m_c = max(1, ceil(core_pop_c/ideal_pop − 10⁻⁹))
+r_c = N_eff,c / m_c
+core weight = √core_pop_c × layer multiplier
+r_pool = weighted root-mean-square of r_c</pre></div>
+            <p>The same four-piece calibration shape is used, with district-count anchors:</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">x = max(k−1,10⁻⁹)
+R5 = clamp(1 + 0.000074 × x^1.784031, 0.02, 3)
+Rs = max(1 + 0.259077 × x^0.267266, R5+0.05)
+R95 = min(max(3.923603 − 3.232672 × x^(-0.688527), Rs+0.05), 20)</pre></div>
+            <p>The overall calibrated penalty is optimized; group charts show <code>100−group penalty</code>. This calibration is provisional.</p>
+          </div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center px-5 py-4 font-semibold">Shared demographic calibration function</summary><div class="px-5 pb-5 text-sm space-y-3">
+            <p>Neighborhood Severance and Community Dispersion use the same map <code>F(r)</code> after calculating metric-specific anchors <code>R5 &lt; Rs &lt; R95</code>:</p>
+            <div class="formula rounded-lg bg-paper-2 px-4 py-3"><pre class="whitespace-pre-wrap">r ≤ 0:    F = 0
+r ≤ R5:   q = min(18R5/max(R95−R5,10⁻⁹),12)
+           F = 5(r/R5)^q
+r ≤ Rs:   F = 5 + 50(r−R5)/(Rs−R5)
+r ≤ R95:  F = 55 + 40(r−Rs)/(R95−Rs)
+r &gt; R95:  tail = (R95−Rs)/18
+           F = 100 − 5tail/(tail+r−R95)</pre></div>
+            <p>Therefore <code>F(R5)=5</code>, <code>F(Rs)=55</code>, and <code>F(R95)=95</code>; the upper tail approaches but never reaches 100.</p>
+          </div></details>
+        </div>
+        <div class="mt-5 rounded-xl border border-line bg-navy-soft/50 px-5 py-4 text-sm text-ink-soft"><strong class="text-ink">Applicability:</strong> Electoral Opportunity excludes a group when its rounded proportional target is below one district or its targeting heuristic finds no qualifying bundle. Neighborhood Severance excludes a group with no positive weighted adjacency. Community Dispersion excludes a group with no qualifying connected core.</div>
+      </section>
+
+      <section id="reproducibility" class="method-section">
+        <h2 class="text-3xl font-bold tracking-tight">Reproducibility</h2>
+        <p class="mt-4"><strong class="text-ink">A seed alone is not enough.</strong> To attempt an exact replay, set a nonzero seed, turn off <strong class="text-ink">Fast tree generation</strong>, and keep the input file and row order, every run setting and score weight, the starting plan, the Mosaic version, and the computing environment unchanged.</p>
+        <p class="mt-3">For the strongest control over the starting point, reuse the same Hot Start. Mosaic's automatic starting-map builder has a wall-clock cutoff and may restart at a different point on a faster or slower machine.</p>
+        <p class="mt-3">Fast tree generation uses a different randomization path and is not Mosaic's exact-replay mode. Changing a move type also changes how random values are consumed. Even with the reference tree method and the same Hot Start, a seed is not a portable identifier for a plan and does not guarantee bit-for-bit equality across releases or machines.</p>
+      </section>
+
+      <section id="credit" class="method-section">
+        <h2 class="text-3xl font-bold tracking-tight">Attribution</h2>
+        <p class="mt-4">Mosaic's recombination approach is derived from the family of methods developed by the Metric Geometry and Gerrymandering Group (MGGG). See Daryl DeFord, Moon Duchin, and Justin Solomon, <a href="https://doi.org/10.1162/99608f92.eb30390f">“Recombination: A Family of Markov Chains for Redistricting”</a>, and the MGGG <a href="https://mggg.org/samplers">sampler overview</a>.</p>
+        <p class="mt-3">Mosaic makes its own implementation choices within that broader family. Attribution does not imply that Mosaic inherits every algorithm, guarantee, or recommended use described in the research literature.</p>
+      </section>
+    </main>
+  </div>
+
+  <footer class="mt-16 border-t border-line bg-paper-2">
+    <div class="max-w-6xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-ink-soft">
+      <div class="flex items-center gap-2"><img src="mosaic_logo.png" alt="" class="w-5 h-5">Mosaic · <a href="about.html" class="hover:text-ink">Matt Mohn</a></div>
+      <div class="flex items-center gap-5"><a href="help.html" class="hover:text-ink">Help</a><a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink">GitHub</a><a href="https://github.com/matt-mohn/mosaic_python/blob/main/LICENSE" class="hover:text-ink">MIT License</a></div>
+    </div>
+  </footer>
+  <script>
+    (function () {
+      const input = document.getElementById('method-search');
+      const counter = document.getElementById('method-search-count');
+      const noResults = document.getElementById('method-no-results');
+      const sections = Array.from(document.querySelectorAll('main .method-section'));
+      const links = Array.from(document.querySelectorAll('aside a[href^="#"]'));
+
+      function filterMethodology() {
+        const query = input.value.trim().toLowerCase();
+        let visible = 0;
+
+        for (const section of sections) {
+          const details = Array.from(section.querySelectorAll('details'));
+          const directText = Array.from(section.children)
+            .filter(child => child.tagName !== 'DETAILS')
+            .map(child => child.textContent)
+            .join(' ')
+            .toLowerCase();
+          const directMatch = !query || directText.includes(query);
+          let detailMatch = false;
+
+          for (const detail of details) {
+            const match = !query || detail.textContent.toLowerCase().includes(query);
+            detail.hidden = Boolean(query && !match && !directMatch);
+            if (query && match) {
+              detailMatch = true;
+              if (!detail.open) {
+                detail.open = true;
+                detail.dataset.searchOpened = 'true';
+              }
+            } else if (!query && detail.dataset.searchOpened === 'true') {
+              detail.open = false;
+              delete detail.dataset.searchOpened;
+            }
+          }
+
+          const match = !query || directMatch || detailMatch;
+          section.hidden = !match;
+          if (match) visible += 1;
+        }
+
+        for (const link of links) {
+          const target = document.querySelector(link.getAttribute('href'));
+          link.hidden = Boolean(target && target.hidden);
+        }
+        counter.textContent = visible + (visible === 1 ? ' section' : ' sections');
+        counter.classList.toggle('hidden', !query);
+        noResults.classList.toggle('hidden', !query || visible > 0);
+      }
+
+      input.addEventListener('input', filterMethodology);
+    })();
+  </script>
+</body>
+</html>

@@ -12,11 +12,11 @@ penalty two ways:
 
   - unclipped (DEFAULT): ride the clipped slope down to penalty _DIVERGE_PEN,
     then a power ease-out that curves to a flat (slope-0) landing at raw _LANDING
-    (a realistic excellence ceiling, not a perfect circle). Each component's
+    (the fixed saturation point for this mapping). Each component's
     exponent is chosen so the tail leaves the divergence point at the clipped
     slope (no kink), so it tracks the scorecard down to penalty _DIVERGE_PEN and
     then keeps a gradient across [0.50, _LANDING] where clipped saturates at 0.
-    The bottom clamp (pinned at 100 below the band floor) is kept.
+    Values below the band floor remain clamped at penalty 100.
 
 This is a *derived* score — both inputs are already produced by
 score_polsby_popper and score_reock; we invert their penalty-form outputs back
@@ -40,7 +40,7 @@ _LANDING     = 0.65   # raw value where the ease-out lands flat (new saturation)
 def _band_penalty(raw: float, lo: float, hi: float, unclipped: bool) -> float:
     """One component's penalty in [0, 100] (lower = more compact)."""
     if unclipped:
-        if raw <= lo:                       # bottom clamp (kept)
+        if raw <= lo:                       # bottom clamp
             return 100.0
         knee = lo + (1.0 - _DIVERGE_PEN / 100.0) * (hi - lo)   # rating-85 point
         if raw <= knee:

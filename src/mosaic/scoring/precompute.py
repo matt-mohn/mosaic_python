@@ -76,10 +76,9 @@ def build_county_district_matrix(
 ) -> np.ndarray:
     """CxD population matrix: out[c, d] = total pop of (county c ∩ district d).
 
-    Both county_splits and holistic_splitting need this exact matrix every
-    iteration; building it once in score_plan and sharing it avoids a second
-    full-precinct aggregation per step. The compiled loop visits precincts in
-    the same order as the original bincount, so results are bit-identical.
+    Both county_splits and holistic_splitting use this matrix. Building it once
+    in score_plan allows the scorers to share a single precinct-order
+    aggregation.
     """
     return _county_district_matrix(
         assignment, county_ids, county_data.pops_f, county_data.n_counties, n_districts,

@@ -22,15 +22,15 @@ log = logging.getLogger("mosaic")
 _W = 580
 _H = 880
 
-# Demographics dropdowns: (internal group key, display label). "latino" is keyed
-# internally but shown as "Hispanic". "white" is selectable but never scored -- it
+# Demographics dropdowns: (internal group key, display label). "white" is
+# selectable but never scored -- it
 # feeds the map's demographic overlay, where leaving it derived mislabels a
 # precinct's plurality (a 30%-white/15%-other precinct read as 45% white).
 _DEMO_FIELDS: tuple[tuple[str, str], ...] = (
     ("total", "Total"),
     ("white", "White"),
     ("black", "Black"),
-    ("latino", "Hispanic"),
+    ("latino", "Latino"),
     ("asian", "Asian"),
 )
 
@@ -65,8 +65,7 @@ class ShapefileDialog:
         self._id_info: int | str = ""
         self._county_combo: int | str = ""
         self._county_info: int | str = ""
-        # Demographics: group -> combo tag (labels Total/Black/Hispanic/Asian;
-        # "latino" is the internal key for the Hispanic dropdown).
+        # Demographics: group -> combo tag (labels Total/White/Black/Latino/Asian).
         self._demo_combos: dict[str, int | str] = {}
         self._demo_info: int | str = ""
         self._confirm_err: int | str = ""
@@ -353,7 +352,7 @@ class ShapefileDialog:
         n = self._inspection.n_precincts
         if info.n_unique == n:
             dpg.set_value(self._id_info,
-                          f"  {info.n_unique:,} unique values (all unique)")
+                          f"  {info.n_unique:,} unique IDs")
             self.theme.retoken(self._id_info, "ok")
         else:
             dupes = n - info.n_unique
@@ -460,7 +459,7 @@ class ShapefileDialog:
             gop_sum = int(gdf[gop_col].sum())
             total = dem_sum + gop_sum
             dpg.set_value(info_tag,
-                          f"  DEM: {dem_sum:,}  |  GOP: {gop_sum:,}  |  "
+                          f"  Dem: {dem_sum:,}  |  Rep: {gop_sum:,}  |  "
                           f"Total: {total:,}")
 
     # ── Demographics ──────────────────────────────────────────────────────────
@@ -490,7 +489,7 @@ class ShapefileDialog:
         if "total" not in sel or gdf is None or sel["total"] not in gdf.columns:
             dpg.set_value(
                 self._demo_info,
-                "  Pick a Total column + >=1 group to enable the demographic scores.",
+                "  Choose Total and at least one scored group.",
             )
             self.theme.retoken(self._demo_info, "dialog_muted")
             return
@@ -525,7 +524,7 @@ class ShapefileDialog:
                 parts.append(f"{label} {v / tot:.1%}")
         if tot > 0 and named > 0.0:
             # Residual: everyone in no named group (Native, multiracial, other).
-            # Floored at 0 because Hispanic is an ethnicity crossing racial lines,
+            # Floored at 0 because Latino ethnicity can cross racial categories,
             # so the named columns overlap and can sum past the total.
             parts.append(f"Other {max(tot - named, 0.0) / tot:.1%}")
         summary = "  " + "  |  ".join(parts)

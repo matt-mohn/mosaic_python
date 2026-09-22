@@ -38,8 +38,9 @@ def build_adjacency_graph(gdf: gpd.GeoDataFrame) -> nx.Graph:
     """
     Build a precinct adjacency graph from geometries.
 
-    Two precincts are adjacent if their geometries touch or intersect
-    (excluding point-only contacts).
+    A real edge joins two precincts whose geometries touch or intersect
+    through positive length or area. Point-only contacts are excluded.
+    Disconnected components may later receive non-geographic virtual edges.
 
     Args:
         gdf: GeoDataFrame with geometry column. Index should be 0..N-1.
@@ -48,7 +49,8 @@ def build_adjacency_graph(gdf: gpd.GeoDataFrame) -> nx.Graph:
         networkx.Graph where:
         - Nodes are precinct indices (0 to N-1)
         - Node attributes: 'population', 'geometry'
-        - Edges connect adjacent precincts
+        - Real edges connect geometry-adjacent precincts
+        - Virtual edges connect otherwise disconnected components
     """
     G = nx.Graph()
 
@@ -86,8 +88,8 @@ def build_adjacency_graph(gdf: gpd.GeoDataFrame) -> nx.Graph:
                     elif hasattr(intersection, "area") and intersection.area > 0:
                         G.add_edge(i, j)
 
-    # Restore single-component connectivity: link islands/exclaves to the
-    # mainland with virtual edges (invisible to scoring; see bridge_components).
+    # Link disconnected components with virtual edges. Their metadata lets
+    # edge-derived scorers exclude them where required.
     try:
         from mosaic.scoring.precompute import find_county_array
         county_ids = find_county_array(gdf)
@@ -111,9 +113,9 @@ def _best_bridge(comp, s_arr, s_cents, geoms, cents, county_ids, k):
     """Best (tier, distance, o, s) virtual edge from a component to the set S.
 
     tier 0 = the S endpoint shares the island node's county, tier 1 = any.
-    Within a tier the minimum exact polygon-to-polygon distance wins (centroids
-    only prefilter candidates — they mislead for large/concave precincts). Ties
-    are broken later by node id. Returns None when S is empty.
+    Tier 0 checks every same-county endpoint in S. Tier 1 computes exact
+    polygon distance only for up to `k` endpoints prefiltered by centroid
+    distance. Ties are broken later by node id. Returns None when S is empty.
     """
     if len(s_arr) == 0:
         return None
@@ -123,9 +125,8 @@ def _best_bridge(comp, s_arr, s_cents, geoms, cents, county_ids, k):
         oc = cents[o]
         og = geoms[o]
         d2 = (s_cents[:, 0] - oc[0]) ** 2 + (s_cents[:, 1] - oc[1]) ** 2
-        # Exact polygon distance is the cost; cap it to the k nearest S
-        # candidates by centroid. The chosen set is deterministic (k smallest
-        # d2) even though argpartition's internal order is not.
+        # Exact polygon distance is the cost within a candidate set prefiltered
+        # to at most k endpoints by centroid distance.
         if len(s_arr) > k:
             near = np.argpartition(d2, k)[:k]
         else:
@@ -157,24 +158,23 @@ def bridge_components(
     county_ids: np.ndarray | None = None,
     k_prefilter: int = 64,
 ) -> list[tuple[int, int]]:
-    """Add virtual edges so the graph is a single connected component.
+    """Add virtual edges between disconnected graph components when possible.
 
     A degree-0 precinct (lone island) and an N-precinct island are the same
     case: each is a connected component that isn't the mainland. The mainland
     is the component with the largest population; every other component is
-    linked into the growing connected set by exactly one virtual edge — an
-    N-precinct island needs only one bridge because its members are already
-    mutually adjacent.
+    linked into the growing connected set by one virtual edge. An N-precinct
+    component needs one bridge because its members are already connected.
 
     Bridge selection (Prim-style growth over components):
       * tier 0 — an endpoint in the same county as the island, if one exists;
-      * tier 1 — otherwise nearest overall;
-      * minimum exact polygon-to-polygon distance within the tier;
+      * tier 1 — otherwise choose from up to `k_prefilter` endpoints nearest
+        by centroid distance;
+      * minimum exact polygon-to-polygon distance among the tier's candidates;
       * deterministic id tie-break.
 
-    The result is a pure function of geometry + county column — no RNG, stable
-    tie-breaks — so every machine derives the identical bridged graph. The
-    shapefile on disk is never touched. Added edges carry ``virtual=True``.
+    Bridge selection uses no RNG. The shapefile on disk is not modified. Added
+    edges carry ``virtual=True``.
 
     Returns the list of (u, v) virtual edges added (empty if already connected).
     """

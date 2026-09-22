@@ -1,4 +1,4 @@
-"""Spanning tree operations for ReCom algorithm using igraph."""
+"""Randomized spanning-tree construction and balanced cuts for ReCom."""
 
 import time
 from dataclasses import dataclass
@@ -68,9 +68,9 @@ try:
     def _nb_cut_edges(eu, ev, assignment, out):
         """Emit indices of edges whose endpoints differ in district, ascending.
 
-        Bit-identical to np.where(assignment[eu] != assignment[ev])[0] (both
-        scan edges in ascending index order), but a single branchy pass with no
-        7529-wide fancy-gather / boolean temporaries. `out` must hold n_edges.
+        The result has the same ascending index order as
+        ``np.where(assignment[eu] != assignment[ev])[0]``. `out` must hold at
+        least one entry per input edge.
         """
         cnt = 0
         for i in range(eu.shape[0]):
@@ -165,7 +165,7 @@ try:
     @_njit(cache=True)
     def _nb_prepare_region(nodes, populations, parent_eu, parent_ev,
                            in_merged, local_idx, out_eu, out_ev):
-        """Mark nodes, gather populations and extract edges in canonical order."""
+        """Mark nodes, gather populations, and extract edges in parent-edge order."""
         sub_pops = np.empty(len(nodes), dtype=np.float64)
         for i in range(len(nodes)):
             node = nodes[i]
@@ -182,10 +182,12 @@ try:
         """Kruskal MST with union-by-rank + path compression.
 
         sorted_idx is a permutation of edge indices -- ascending-weight (county
-        bias) or uniform-random (no bias) -- yielding a random spanning tree.
+        bias) or uniformly shuffled (no bias) -- yielding the spanning tree
+        selected by that Kruskal ordering. This is not a uniform spanning-tree
+        sampler.
         Returns the MST edge count (== n_nodes-1 iff connected; merged regions
         are connected by construction). A disconnected input returns a partial
-        forest and the caller's BFS drops the attempt.
+        forest.
         """
         for i in range(n_nodes):
             uf_parent[i] = i
@@ -254,7 +256,7 @@ try:
 
     @_njit(cache=True)
     def _nb_fast_draw(state):
-        """xorshift64* step for the explicitly non-academic fast shuffle mode."""
+        """Return one xorshift64* step for the opt-in fast shuffle mode."""
         state ^= state >> np.uint64(12)
         state ^= state << np.uint64(25)
         state ^= state >> np.uint64(27)
@@ -265,9 +267,9 @@ try:
                               one_sided, max_attempts, seed, work, fast=False):
         """Compiled randomized-Kruskal retry loop with a per-region RNG seed.
 
-        Retains random edge permutations; not a uniform-spanning-tree claim.
-        Numba's RNG is separate from Python NumPy's RNG. This mode intentionally
-        changes seeded trajectories, while reference mode remains untouched.
+        The compiled mode seeds Numba's RNG from one caller-supplied NumPy draw.
+        Fast mode instead uses the local xorshift64* state. Neither mode samples
+        spanning trees uniformly.
         """
         if not fast:
             np.random.seed(seed)
@@ -279,8 +281,8 @@ try:
             for i in range(len(order)):
                 order[i] = i
             if fast:
-                # Modulo reduction intentionally accepts sampling bias. Keep
-                # this opt-in; never silently substitute it for reference RNG.
+                # Modulo reduction introduces sampling bias and is confined to
+                # the explicitly selected fast mode.
                 for i in range(len(order) - 1, 0, -1):
                     state, value = _nb_fast_draw(state)
                     j = int(value % np.uint64(i + 1))
@@ -309,10 +311,7 @@ try:
         """True if precincts assigned to `district`, minus `exclude`, form one
         connected component under the edges internal to that set.
 
-        Replaces igraph subgraph().is_connected() in the flip contiguity check:
-        a union-find over a single edge scan, no graph object or list build.
-        Scans all edges (incl. virtual bridges), matching the igraph path which
-        ran on the full graph.
+        Uses union-find over one edge scan and includes virtual bridge edges.
         """
         n = assignment.shape[0]
         parent = np.empty(n, dtype=np.int32)
@@ -367,7 +366,7 @@ def find_balanced_cut_ig(
     timeout: float | None = None,
     out_state: dict | None = None,
 ) -> list | None:
-    """Find a balanced bipartition of the graph using random spanning trees.
+    """Find a balanced bipartition using randomized minimum spanning trees.
 
     If `out_state` is provided (an empty dict), it is populated on success with
     the data needed to attempt a follow-up cut in the residual tree without
@@ -613,13 +612,14 @@ def find_balanced_cut_fast(
     out_state: dict | None = None,
     _nodes_sorted: bool = False,
 ) -> list | None:
-    """Numba fast path for balanced bipartition. Equivalent to find_balanced_cut_ig
-    but bypasses igraph entirely on the hot loop:
+    """Numba implementation of the balanced-cut interface.
+
+    It bypasses igraph in the proposal loop:
 
       * No igraph.subgraph() — local edge list is extracted from the parent's
         edge_u/edge_v arrays via a single O(m) Numba scan.
-      * No igraph.spanning_tree() — random-weight MST via Numba Kruskal directly
-        on the local edges.
+      * No igraph.spanning_tree() — randomized Kruskal runs directly on the
+        local edges.
 
     `merged_nodes` is a 1-D int32 array of GLOBAL precinct IDs for the region
     being split. Caller is responsible for ensuring those nodes induce a
@@ -627,11 +627,11 @@ def find_balanced_cut_fast(
     A∪B and A∪B∪C are joined through the picked cut edge).
 
     `_nodes_sorted` is an internal shortcut for ReCom's ascending, unique node
-    arrays. Other callers retain sorting so local IDs and RNG behavior agree.
+    arrays. Other callers are sorted here to make local-index tie-breaks stable.
 
-    On success, returns the carved district's nodes as a list of GLOBAL IDs —
-    same shape as find_balanced_cut_ig — and (if `out_state` is supplied)
-    populates the same dict schema, so try_residual_balanced_cut works unchanged.
+    On success, returns the carved district's nodes as a list of global IDs and,
+    if `out_state` is supplied, populates the state required by
+    `try_residual_balanced_cut`.
 
     Numba is required. Caller should check `_NUMBA_OK` and fall back to
     find_balanced_cut_ig + igraph subgraph if Numba is unavailable.
@@ -655,10 +655,8 @@ def find_balanced_cut_fast(
 
     start_time = time.perf_counter() if timeout else None
 
-    # Sort ascending to match ig.Graph.subgraph()'s vertex reordering, so this
-    # path and find_balanced_cut_ig share one local-index space. Without it the
-    # deterministic first-pick acquires an A-side bias (concat puts A nodes in
-    # the low index range) that strands districts.
+    # Ascending order makes the deterministic local-index tie-break independent
+    # of the caller's district concatenation order.
     merged_nodes = (merged_nodes.astype(np.int32, copy=False) if _nodes_sorted
                     else np.sort(merged_nodes).astype(np.int32, copy=False))
 
@@ -693,8 +691,8 @@ def find_balanced_cut_fast(
          _nb_vis, _nb_stp, _nb_insub, _nb_res, _nb_cand,
          _uf_par, _uf_rank, _mst_eu, _mst_ev) = scratch.tree_buffers()
 
-        # Preserve weighted county ordering and timeout checks on the reference
-        # path. The optional compiled mode only changes unbiased, untimed cuts.
+        # County weighting and timeout checks use the reference loop. Compiled
+        # modes apply only to unbiased, untimed cuts.
         if scratch.tree_mode != "reference" and cross_county_mask is None and timeout is None:
             v, root, tail, cnt = _nb_balanced_attempts(
                 local_eu, local_ev, n, sub_pops, total_pop, min_pop, max_pop,
@@ -728,10 +726,8 @@ def find_balanced_cut_fast(
                 _uf_par, _uf_rank, _mst_eu, _mst_ev,
             ))
 
-            # Isolated vertices (e.g. island precincts) break the connected-
-            # region invariant, so Kruskal returns a partial forest. Mirror
-            # find_balanced_cut_ig: build CSR on whatever edges it returned and
-            # let the BFS cover the component containing `root`.
+            # A disconnected region yields a partial forest. Callers are
+            # expected to supply connected merged regions.
             _nb_build_csr(_mst_eu[:k], _mst_ev[:k], n,
                           _nb_ptr, _nb_idx, _nb_deg, _nb_cur)
 
@@ -844,11 +840,9 @@ def try_residual_balanced_cut(
 
     x = int(valid_indices[0])
 
-    # Collect subtree(x) in T (not residual) via the existing kernel, then mask
-    # carved nodes. Case A (x ancestor of v_cut): subtree(x) in T strictly
-    # contains the carved subtree, post-filter removes it. Case B and
-    # non-ancestor x in Case A: post-filter is a no-op (subtree disjoint from
-    # carved). Either way, result matches the explicit-skip Python loop.
+    # Collect subtree(x) in T (not residual), then mask carved nodes. In Case A,
+    # an ancestor of v_cut includes the carved subtree and the mask removes it;
+    # in Case B and for non-ancestors in Case A, the subtree is already disjoint.
     if _NUMBA_OK:
         in_sub = np.zeros(n, dtype=np.bool_)
         result_buf = np.zeros(n, dtype=np.int32)

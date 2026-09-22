@@ -15,8 +15,8 @@ Two forms (both PENALTY form, lower = better, 0 = fair):
 
   - unclipped (DEFAULT): fully probabilistic and smooth. Two terms:
       M      -- magnitude: expected seat/vote gap, winner's-bonus forgiven on a
-                gentle slope (no flat basin), mapped linearly to [0, 100] over the
-                realistic gap range.
+                gentle slope (no flat basin), mapped linearly to [0, 100] over a
+                fixed gap range.
       P_inv  -- swing-integrated probability the popular-vote LOSER controls the
                 chamber (the antimajoritarian "hammer" as a probability, not a
                 binary trip).
@@ -45,7 +45,7 @@ from mosaic.scoring.partisan import (
     build_p_wins_matrix,
 )
 
-# ── clipped scorecard form (unchanged behaviour) ─────────────────────────────
+# ── clipped scorecard form ───────────────────────────────────────────────────
 _AVG_SV_ERROR = 0.02   # slack on the antimajoritarian check
 _WINNER_BONUS = 2.0    # 1pp extra seat share per pp of statewide vote share above 50
 _CLIP_MAX_DEV = 0.20   # |adjusted| above this saturates at 100 penalty
@@ -58,8 +58,8 @@ _VOTE_BLUR = 0.005  # smooths the vote-winner flip so P_inv is continuous throug
 
 def _clipped_proportionality(shares, total_d, sigma_comb,
                              vote_share=None, p_district=None):
-    """Original point-estimate form: linear-to-cap deviation with a binary
-    antimajoritarian short-circuit. Kept as the clipped fallback."""
+    """Point-estimate form with a linear-to-cap deviation and a binary
+    antimajoritarian short-circuit."""
     n = len(shares)
     Vf = (float((shares * total_d).sum() / total_d.sum())
           if vote_share is None else vote_share)

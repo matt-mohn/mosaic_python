@@ -107,8 +107,8 @@ class ExportMixin:
     # ── File menu: New / recent files / named saves ───────────────────────────
 
     def _on_file_save_assignments(self) -> None:
-        """File > Save Assignments: native OS save dialog into output/, with an
-        assignments_<timestamp>.csv default name."""
+        """Save assignments with a native dialog on Windows or an automatic
+        timestamped path in ``output/`` on other platforms."""
         if self.state.best_assignment is None:
             return
         import os
@@ -157,8 +157,8 @@ class ExportMixin:
             return ""
 
     def _on_file_save_metrics(self) -> None:
-        """File > Save District Info: native OS save dialog into output/, with a
-        metrics_<timestamp>.csv default name."""
+        """Save district metrics with a native dialog on Windows or an automatic
+        timestamped path in ``output/`` on other platforms."""
         if self.state.best_assignment is None:
             return
         import os
@@ -571,7 +571,7 @@ class ExportMixin:
             # Per-precinct vertex count is the dominant size driver and the
             # precinct grid reuses these same paths, so simplifying here shrinks
             # both the fills and the grid. The district/county dissolve below
-            # keeps the original geometry (see note there). Raise _SIMPLIFY_PX to
+            # keeps unsimplified geometry (see note there). Raise _SIMPLIFY_PX to
             # shrink more aggressively (watch for hairline gaps between precincts).
             _SIMPLIFY_PX = 0.5
             _data_per_px = (gw / map_w) / 300.0 if map_w > 0 else 0.0
@@ -602,7 +602,7 @@ class ExportMixin:
 
             # ── Pre-dissolve district & county geometries (fast, avoids
             #    looping n_dist × unary_union over all precincts) ───────────────
-            # Dissolve from ORIGINAL geometry: independently-simplified precincts
+            # Dissolve from unsimplified geometry: independently simplified precincts
             # no longer share exact edges, so their union leaves interior slivers
             # that the district/county borders would trace as jagged lines.
             have_county = (mv._county_array is not None
@@ -674,7 +674,7 @@ class ExportMixin:
                 # Cascade per label: BASE_PT if it fits, else shrink to the
                 # district's inscribed circle, else drop it (below MIN_PT it is
                 # too small to place without overlapping a neighbour). Never
-                # grows past BASE_PT, so the common case is unchanged.
+                # grows past BASE_PT, which is the normal label size.
                 BASE_PT, MIN_PT = 7.0, 3.5
                 pts_per_data = 72.0 * map_w / gw if gw > 0 else 0.0
                 # Pole of inaccessibility (deepest interior point) rather than

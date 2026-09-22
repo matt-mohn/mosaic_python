@@ -25,8 +25,8 @@ class MapMixin:
 
     def _init_map_navigation(self):
         self._map_viewport = MapViewport()
-        # Keep the established Windows/Linux drawlist input path unchanged.
-        # macOS trackpads need ImPlot's fractional native wheel handling.
+        # Windows/Linux use drawlist input; macOS trackpads use ImPlot's
+        # fractional native wheel handling.
         self._map_native_input = sys.platform == "darwin"
         self._map_nav_events = SimpleQueue()
         self._map_plot_reset = True
@@ -90,7 +90,7 @@ class MapMixin:
         dpg.configure_item("map_image", bounds_min=(x0, -y1), bounds_max=(x1, -y0))
 
     def _read_map_mouse(self, ready):
-        """Existing wheel/drag behavior for Windows and Linux."""
+        """Process drawlist wheel and drag input on Windows and Linux."""
         changed = False
         while True:
             try:
@@ -292,12 +292,9 @@ class MapMixin:
         dpg.set_value("map_texture", rgba)
 
     def _rerender_map(self) -> None:
-        """Re-compose and upload the current map frame with the latest overlay flags.
+        """Upload current overlay flags immediately when an assignment exists.
 
-        Overlay toggle callbacks call this instead of queuing map_needs_update so
-        the response is immediate rather than deferred to the next render-loop tick
-        (which can silently drop the update if current_assignment is transiently None).
-        Falls back to queuing when no assignment is available yet.
+        Queue an update when no assignment is available.
         """
         if self.map_view is None:
             return
@@ -329,10 +326,9 @@ class MapMixin:
         """Combo items for the current data availability, unavailable entries
         suffixed rather than dropped.
 
-        Deliberately a flat list. Separator rows were tried and reverted: a DPG
-        combo's value IS the item string, so three identical divider strings are
-        ambiguous, and items carry no per-item styling to grey or colour them.
-        The "Results - " / "Demographics - " prefixes carry the grouping instead.
+        This is a flat list because a DPG combo identifies a selection by its
+        item string and cannot disable or style individual entries. The
+        "Results - " and "Demographics - " prefixes provide grouping.
         """
         avail = getattr(self, "_fill_avail", {})
         out = [_FILL_NONE]
@@ -378,9 +374,7 @@ class MapMixin:
 
     def _sync_fill_availability(self, *, elections: bool, race: bool,
                                 compact: bool, pops: bool):
-        """Refresh the combo's labels for what data is loaded, and drop the
-        current selection if it just became unavailable. Replaces the per-
-        checkbox enable/disable bookkeeping the old toolbar needed."""
+        """Refresh labels for loaded data and clear an unavailable selection."""
         if getattr(self, "_fill_combo", None) is None:
             return
         avail = {"elections": elections, "race": race,

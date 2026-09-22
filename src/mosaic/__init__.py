@@ -1,8 +1,8 @@
 """
-Mosaic - Redistricting toolkit for Python
+Mosaic - Redistricting toolkit
 
-A port of the original R-based Mosaic redistricting toolkit.
-Uses recombination (ReCom) to generate and optimize district maps.
+Uses recombination (ReCom) and related moves to generate and optimize district
+maps.
 """
 
 import sys

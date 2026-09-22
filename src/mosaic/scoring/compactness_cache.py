@@ -1,8 +1,8 @@
 """Exact per-proposal compactness cache; changed districts are rebuilt in order.
 
-No periodic rescoring: every proposal rebuilds every affected district before
-acceptance. Floating-point geometry uses original precinct/edge summation
-order, never add/subtract deltas. Snapshots' internal arrays must not be mutated.
+Every proposal rebuilds every affected district before acceptance.
+Floating-point geometry uses the full scorers' precinct/edge summation order,
+never add/subtract deltas. Snapshots' internal arrays must not be mutated.
 """
 
 from dataclasses import dataclass
@@ -37,7 +37,7 @@ def _pp_update(assignment, areas, ext, eu, ev, elen, dirty, previous, nodes):
         d = assignment[i]
         values[0, d] += areas[i]
         values[1, d] += ext[i]
-    # Preserve original edge order and separate u/v accumulators. No deltas
+    # Preserve full-scorer edge order and separate u/v accumulators. No deltas
     # are applied to floating-point geometry, so rounding cannot accumulate.
     for i in range(len(eu)):
         du, dv = assignment[eu[i]], assignment[ev[i]]
@@ -73,7 +73,7 @@ def _reock_update(points, projections, assignment, areas, dirty,
             for ki in range(k):
                 max_proj[d, ki] = -1e30
                 max_idx[d, ki] = -1
-    # Ascending precinct order preserves area sums and the original argmax
+    # Ascending precinct order preserves full-scorer area sums and argmax
     # tie-breaking. Rebuild all extrema of changed districts, including removals.
     for i in nodes:
         d = assignment[i]

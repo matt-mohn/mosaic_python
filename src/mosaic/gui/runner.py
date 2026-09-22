@@ -337,7 +337,7 @@ class AlgorithmRunner:
                     log.info(f"Election: {dem_col}/{gop_col} - "
                              f"D:{dem.sum():,}  R:{gop.sum():,}")
 
-            # Race VAP arrays for the demographic scores, built from the user's
+            # Demographic-universe arrays for the demographic scores, built from the user's
             # confirmed selection (config.demographics = {group: col}). Needs
             # "total" + >=1 group, else the scores stay unavailable. Unselected
             # groups are zero-filled -- they auto-resolve to N/A in the scores.
@@ -354,7 +354,7 @@ class AlgorithmRunner:
                 def _col(c):
                     s = gdf[c]
                     if s.isna().any():
-                        log.warning(f"VAP column '{c}' has {int(s.isna().sum())} "
+                        log.warning(f"Demographic column '{c}' has {int(s.isna().sum())} "
                                     f"null value(s) - converted to 0")
                     return s.fillna(0).values.astype(np.int64)
                 total = _col(demo["total"])
@@ -371,7 +371,7 @@ class AlgorithmRunner:
                 # "no data" from "too few people here".
                 self.state.race_groups_provided = list(races)
                 log.info(f"Demographics: total={demo['total']} races={'/'.join(races)} - "
-                         f"total VAP {int(total.sum()):,}")
+                         f"demographic total {int(total.sum()):,}")
                 _, _demo_warn = check_demographics(
                     inspection, demo, pop_col=config.pop_col,
                     vote_cols=config.elections)
@@ -381,8 +381,8 @@ class AlgorithmRunner:
 
             n = len(gdf)
             log.info(f"Loaded {n} precincts, total pop: {self.populations.sum():,}")
-            # Opening from Recent skips the column dialog, so the demographics
-            # complaints have nowhere else to surface.
+            # Opening from Recent skips the column dialog, so surface any
+            # demographic warning in the status message.
             _msg = f"Loaded {n:,} precincts"
             if self.state.race_warnings:
                 _msg += f" - {self.state.race_warnings[0]}"
@@ -633,7 +633,7 @@ class AlgorithmRunner:
             _t0 = time.perf_counter()
             warm_opportunity_geo(self.vap_data, num_districts, **_geo_kw)
             if _smart:
-                log.info("Smart targets computed in "
+                log.info("Smart Targets computed in "
                          f"{time.perf_counter() - _t0:.1f}s")
             # Run-constant; the settings popup reads this instead of tracking
             # per-iteration ratings.
@@ -755,10 +755,9 @@ class AlgorithmRunner:
             self.state.update(initial_assignment=assignment.copy())
 
             # ── Initial score ────────────────────────────────────────────────
-            # Neighborhood Severance is a pure function of the map (an enrichment ratio
-            # against the plan's own cut fraction), so there is no per-run anchor
-            # to set here -- the same map always scores the same, including a
-            # relight reseeded from the last map.
+            # Neighborhood Severance compares weighted cuts with an expectation
+            # fixed by district and precinct counts. It has no starting-plan
+            # baseline to initialize here.
             cut_edge_indices = ctx.compute_cut_edges(assignment)
             # Both compactness components share one ordered affected-region
             # scan. A proposal owns its new buffers; rejection leaves the

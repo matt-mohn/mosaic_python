@@ -1,53 +1,18 @@
-"""
-Neighborhood Severance -- a boundary-placement penalty that resists cutting
-district boundaries through the heart of a minority neighborhood, whether or not
-that neighborhood can form an opportunity district.
-(Internal id stays `minority_cohesion` throughout; user-facing name is
-"Neighborhood Severance".)
+"""Neighborhood Severance boundary-placement penalty.
 
-The complement to Electoral Opportunity, which asks "can this group ELECT?" and
-so is silent on a community that can never clear the opportunity curve. This
-score asks whether the plan needlessly FRACTURED a cohesive minority community,
-everywhere, at any concentration.
+Each real adjacency edge carries, for each scored group, the product of the
+group's shares of the selected demographic universe at its endpoints. For each
+group, the scorer divides the
+weight on cut edges by that group's total adjacency weight. Group ratios are
+pooled with a mass-weighted power mean, then divided by a fixed race-blind
+expectation based on district count ``k`` and precinct count ``N``:
 
-Mechanism: a minority-weighted cut-edge penalty. Each adjacency edge (u, v)
-carries, per group, share_g[u] * share_g[v] -- large only when both endpoints are
-heavily that group, so the edge runs through the group's core. A cross-race seam
-is free by construction; only within-race cores cost.
+    expected = C * (k - 1) ** a / N ** b
 
-The statistic is an enrichment ratio against a compact race-blind map:
-
-    severed_frac_g = severed adjacency / total adjacency, for group g
-    pooled         = power mean of severed_frac over groups, weights mass_g^ALPHA
-    expected       = C * (k-1)^a / N^b     race-blind rate at this k and N
-    ratio          = pooled / expected     1 = race-neutral, >1 = fracturing
-    penalty        = curve(ratio, R5, 1.0, R95)
-
-Each group's statistic is a fraction of its OWN adjacency, so cutting a group's
-only cluster registers heavily while nicking 1 of its 100 neighborhoods registers
-~1% -- severity graded by the mechanism, not a threshold.
-
-The denominator is frozen rather than the map's own cut fraction, which is
-gameable: fractally cracking a low-minority area adds near-zero-minority cut
-edges that inflate a live cut_frac while barely moving severed_frac, rewarding
-the optimizer for shredding white areas. C*(k-1)^a/N^b depends only on the
-district and precinct counts, so fragmenting is cohesion-neutral.
-
-The ratio is a pure function of (assignment, adjacency, VAP) plus k, N and frozen
-constants -- no run- or seed-relative anchor, so the same map always scores the
-same. (k-1)^a/N^b tracks how a compact map's cut fraction grows with k, fitted to
-within 5.3% worst case across 13 states at k = 4..59, and vanishes at k=1.
-
-CALIBRATION
-    Fitted offline across 13 states x k = 4..59 and frozen; scoring samples
-    nothing. Floor and ceiling were measured with the real engine rather than a
-    reduced dev chain, which as a weaker optimizer biased floors ~30% high and put
-    R5 above where good plans land. On the corpus: cohesion-first ~5, random
-    ReCom seed 33-59, adversarial 88-99, nothing pinned (0 of 44).
-
-Per-edge weights are precomputed once; the per-iteration scorer is a
-gather-and-sum over the cut set. Virtual bridge edges are zeroed via
-real_edge_mask. VAP basis, not CVAP (see opportunity.py).
+The resulting enrichment ratio is mapped monotonically to a penalty using
+district-count-dependent anchors. The denominator does not depend on the current
+plan's total cut fraction. Virtual bridge edges receive zero weight. Inputs are
+a demographic total and group counts from one consistent universe.
 """
 
 from __future__ import annotations
@@ -78,24 +43,16 @@ def _severed_sums(cut_indices, w3):
         s2 += w3[e, 2]
     return s0, s1, s2
 
-# ── Calibration constants ────────────────────────────────────────────────────
-# Fitted offline across 13 states x k = 4..59 and frozen (dev/cohesion/).
-#
-# Race-blind expected severed fraction. The implied C in a C*sqrt(k/N) form is not
-# constant -- it climbs with k and flattens (1.16 at k=4 to ~1.50 by k=38 in MS) --
-# so both exponents float, cutting worst-case error from 31.9% to 5.3%. (k-1) so
-# the expectation vanishes at k=1, where nothing is cut.
+# ── Ratio-scaling constants ──────────────────────────────────────────────────
+# Race-blind expected severed fraction. Using (k - 1) makes the expectation zero
+# when a one-district plan has no district boundary.
 _DEN_C, _DEN_A, _DEN_B = 0.6972, 0.5150, 0.4091
 
-# Achievable band on the enrichment ratio, measured with the real engine
-# (cohesion-first for the floor, adversarial for the ceiling). A function of k
-# alone: what constrains a plan is how many boundaries it must draw, not how
-# finely the map is diced, and N cancels in the ratio.
+# District-count-dependent lower and upper anchors for the enrichment-ratio map.
 _R5_A, _R5_Q = 1.1362, 0.2447      # R5  = 1 - A*(k-1)^-Q
 _R95_A, _R95_Q = 13.9170, 0.6368   # R95 = 1 + A*(k-1)^-Q
 
-# The middle anchor is the race-blind expectation itself, where a random ReCom
-# seed lands by construction (measured 0.977-1.017 across all 44 cases).
+# The middle anchor is the race-blind expectation itself.
 _R_SEED = 1.0
 _SEED_PEN = 55.0
 
@@ -108,7 +65,8 @@ _MIN_GAP = 0.05    # keeps R5 < R_SEED < R95 strictly ordered
 # Per-group pooling: w_g = mass_g^_ALPHA, combined by a power mean of _POWER.
 # Raw mass (_ALPHA=1) made Mississippi's asian population 0.1% of the score, so
 # destroying its only cluster moved less than nicking the 100th black
-# neighborhood. 0.5 gives it 2.1% against a 1.4% VAP share; 0.25 overshoots.
+# neighborhood. 0.5 gives it 2.1% against a 1.4% share of the selected
+# demographic universe; 0.25 overshoots.
 _ALPHA = 0.5
 _POWER = 2.0
 
@@ -118,9 +76,8 @@ _Q_MAX = 12.0
 def _band(n_districts: int) -> tuple[float, float, float]:
     """(R5, R_seed, R95) -- the three anchors at this district count.
 
-    Closed forms in the integer k alone; see the constants above for why N is
-    absent. Widest at low k, narrowing as k rises, mirroring how much freedom a
-    plan actually has.
+    These closed forms depend only on integer district count ``k``. Precinct
+    count is already part of the expected severed-fraction denominator.
     """
     km1 = max(float(n_districts) - 1.0, 1e-9)
     r5 = max(1.0 - _R5_A * km1 ** (-_R5_Q), _R5_MIN)
@@ -141,21 +98,9 @@ def _rescale_ratio(r: float, r5: float, rs: float, r95: float) -> float:
         R_seed..R95  55 + 40*(r-R_seed)/(R95-R_seed)     bad side
         r >= R95     100 - 5*s/(s + (r-R95))             rational tail
 
-    Three anchors rather than two, because a single linear span cannot both let a
-    cohesion-first run reach 5 and stop a random seed reading like a good plan. A
-    seed sits only ~22% of the way up the achievable range (k=38: floor 0.523,
-    seed 0.897, ceiling 2.217), so a linear interior forces either seeds to ~25 or
-    the floor to 15-25. Pinning ratio 1.0 at 55 satisfies both (0/44 fail).
-
-    Accepted cost: the slope breaks at R_seed, 3-10x steeper on the good side
-    (k=38: 112 vs 28). Equal slopes would drag the seed penalty back to 15-29, so
-    the kink is the mechanism.
-
-    Both tails stay asymptotic so the annealer never loses signal: the upper tail
-    is rational rather than exponential, which keeps a usable derivative several
-    multiples past R95 where exp decays into float noise, and the lower bend
-    reaches 0 only as r -> 0. _Q_MAX caps q, since a narrow band drives the exact
-    slope-matching exponent high enough that (r/R5)^q underflows just below R5.
+    The two interior spans have different slopes at ``R_seed``. The lower tail
+    reaches zero only at ratio zero, and the rational upper tail approaches 100
+    without reaching it. ``_Q_MAX`` limits the lower-tail exponent.
     """
     if r <= 0.0:
         return 0.0
@@ -181,7 +126,7 @@ class MinorityCohesionData:
                  for display and analysis; no copy.
     total_adj:   {group: sum of edge_weight over real edges} -- the total minority
                  adjacency (denominator of severed_frac).
-    n_precincts: precinct (node) count N, for the race-blind expectation and band.
+    n_precincts: precinct (node) count N, for the race-blind expectation.
     pool_weight: {group: normalised power-mean weight mass_g^_ALPHA}, precomputed
                  because it depends only on the frozen per-group adjacency mass.
     """
@@ -199,9 +144,9 @@ def precompute_minority_cohesion_data(
     edge_v: Optional[np.ndarray],
     real_edge_mask: Optional[np.ndarray] = None,
 ) -> Optional[MinorityCohesionData]:
-    """Build per-edge minority-adjacency weights from VAP + the adjacency graph.
+    """Build per-edge group-adjacency weights from demographic shares and the graph.
 
-    Returns None (score cleanly disabled) when VAP or the edge list is absent.
+    Returns None when demographic data or the edge list is absent.
     """
     if vap is None or edge_u is None or edge_v is None or len(edge_u) == 0:
         return None
@@ -247,20 +192,19 @@ def score_minority_cohesion(
     result is measured against the race-blind expectation for this k and N.
 
         n_districts   -- k, for the expected severed fraction and the band.
-        penalty       -- pooled 0-100 penalty; the optimizer term.
+        penalty       -- pooled penalty in [0, 100); the optimizer term.
         retention[g]  -- that group's community-preservation %, 100 - its own
                          rescaled ratio (higher = more intact), or -1.0 if the
                          group has no adjacency (not applicable); display only.
 
-    A pure function of (assignment, adjacency, VAP, k, N) -- no seed, no random
-    partition, no state carried from a previous run -- so the same map always
-    scores the same on any machine, and the optimizer cannot inflate the
-    denominator by fragmenting low-minority areas.
+    The calculation is deterministic for fixed assignment, adjacency, demographic data,
+    district-count, and precinct-count inputs. Its denominator is fixed by the
+    district and precinct counts rather than by the plan's cut pattern.
     """
     retention: dict[str, float] = {g: -1.0 for g in GROUPS}
     if data is None or data.n_precincts <= 0 or not n_districts or n_districts < 1:
         return 0.0, retention
-    # Expected race-blind severed fraction, and the achievable band at this k, N.
+    # Expected race-blind severed fraction (k and N), plus the ratio band (k).
     expected = (_DEN_C * max(float(n_districts) - 1.0, 0.0) ** _DEN_A
                 / float(data.n_precincts) ** _DEN_B)
     if expected <= 0.0:      # k == 1: nothing is cut, nothing to penalise

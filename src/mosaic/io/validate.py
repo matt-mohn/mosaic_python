@@ -127,7 +127,7 @@ def check_columns(
 
 
 SCORED_GROUPS: tuple[tuple[str, str], ...] = (
-    ("black", "Black"), ("latino", "Hispanic"), ("asian", "Asian"),
+    ("black", "Black"), ("latino", "Latino"), ("asian", "Asian"),
 )
 
 # Any population basis is valid -- voting-age, citizen voting-age, or
@@ -135,7 +135,7 @@ SCORED_GROUPS: tuple[tuple[str, str], ...] = (
 # population is not checked from above. Far below it, the column is not a head
 # count at all: a share encoded 0-1, a subgroup, or a count in thousands.
 _TOTAL_MIN_SHARE = 0.25
-# Named groups overlap (Hispanic is an ethnicity), so they can sum slightly
+# Named groups overlap (Latino ethnicity can cross racial categories), so they can sum slightly
 # past the total legitimately; well past it means the wrong column.
 _NAMED_OVER_TOTAL = 1.25
 
@@ -165,7 +165,7 @@ def check_demographics(
         return errors, warnings
     if not scored:
         errors.append(
-            "Demographics: select at least one scored group (Black, Hispanic, "
+            "Demographics: select at least one scored group (Black, Latino, "
             "Asian).")
         return errors, warnings
 

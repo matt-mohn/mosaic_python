@@ -82,12 +82,15 @@ class PhaseMixin:
                               width=200, tag="phase_y_combo",
                               callback=self._on_phase_y_change)
             with dpg.group(horizontal=True):            # options row (all on by default)
-                dpg.add_checkbox(label="Smooth", default_value=True,
-                                 callback=self._on_phase_smooth_change)
-                dpg.add_checkbox(label="Fit all", default_value=True,
-                                 callback=self._on_phase_fit_change)
-                dpg.add_checkbox(label="Fade", default_value=True,
-                                 callback=self._on_phase_fade_change)
+                smooth = dpg.add_checkbox(label="Smooth", default_value=True,
+                                          callback=self._on_phase_smooth_change)
+                fit_all = dpg.add_checkbox(label="Fit all", default_value=True,
+                                           callback=self._on_phase_fit_change)
+                fade = dpg.add_checkbox(label="Fade", default_value=True,
+                                        callback=self._on_phase_fade_change)
+            self._tooltip(smooth, "Average nearby points to reduce visual noise.")
+            self._tooltip(fit_all, "Show the full run instead of only recent points.")
+            self._tooltip(fade, "Use color intensity to show which points are newer.")
             dpg.add_spacer(height=4)
             # Empty-state note shown (with the plot hidden) when a selected axis
             # points at a weighted-off score, which score_plan skips computing.
@@ -203,7 +206,7 @@ class PhaseMixin:
             if cfg.weight_hinge:
                 active.add("hinge_history")
         # Demographic overall penalties: populated only when their score is
-        # weighted (score.py gates them), and only with VAP data loaded.
+        # weighted (score.py gates them), and only with demographic data loaded.
         if getattr(self, "_has_race", False):
             if cfg.weight_representation:
                 active.add("representation_overall_history")
@@ -216,11 +219,13 @@ class PhaseMixin:
                 if _PHASE_ATTR[lbl] in always or _PHASE_ATTR[lbl] in active]
 
     def _phase_available_labels(self) -> list:
-        """Metrics offered in the picker: those whose DATA SOURCE exists, whether
-        or not the score is currently weighted. A weighted-off metric stays
-        selectable but the comet shows an 'enable the score' note rather than an
-        empty trajectory (see _update_phase_plot). Partisan metrics need election
-        data to exist at all; everything else is always drawable from the map."""
+        """Metrics offered by the current data-dependent picker filters.
+
+        Partisan metrics require elections and demographic metrics require a
+        selected demographic total plus compatible group columns.
+        Other entries remain selectable; when their run history is gated off,
+        the Comet Plot asks the user to enable the corresponding score.
+        """
         has = getattr(self, "_has_elections", False)
         has_race = getattr(self, "_has_race", False)
         partisan = {
@@ -250,10 +255,12 @@ class PhaseMixin:
                 if _PHASE_ATTR[lbl] not in populated}
 
     def _phase_sync_available_metrics(self) -> None:
-        """Rebuild the axis pickers to the metrics available for this run (data
-        source present), keeping weighted-off metrics selectable so the user can
-        discover them; bump only a now-unavailable axis to a safe intrinsic. A
-        selected-but-gated axis is handled by the note in _update_phase_plot."""
+        """Apply election/demographic filters to the axis pickers.
+
+        Keep weighted-off metrics selectable for discovery and move only a
+        filtered-out axis to a safe intrinsic. The plot note handles selected
+        metrics whose run history is gated off.
+        """
         labels = self._phase_available_labels()
         sig = tuple(labels)
         if self._phase_metric_sig == sig:
@@ -281,8 +288,8 @@ class PhaseMixin:
             which = ([f"'{self._phase_x_label}' (X)"] if gx else []) \
                 + ([f"'{self._phase_y_label}' (Y)"] if gy else [])
             dpg.set_value("phase_note",
-                          f"Give {' and '.join(which)} a weight in the Scores "
-                          f"panel to populate this view.")
+                          f"Turn on {' and '.join(which)} in Scores to chart the "
+                          f"selected measures.")
             dpg.configure_item("phase_note", show=True)
             dpg.configure_item("phase_plot", show=False)
             return

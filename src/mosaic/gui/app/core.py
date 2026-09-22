@@ -1,9 +1,7 @@
-"""MosaicApp -- the Dear PyGui application, assembled from focused mixins.
+"""MosaicApp, the Dear PyGui application composed from focused mixins.
 
-The class was split across sibling ``*_mixin.py`` modules purely for
-navigability; at runtime it is one class with shared ``self`` state, so any
-method may call any other via ``self``. Private-only extensions attach through
-the optional ``_internal`` seam below and never ship to the public repo.
+The sibling ``*_mixin.py`` modules form one runtime class with shared ``self``
+state. Private extensions may attach through the optional ``_internal`` seam.
 """
 from ._common import (
     _DIALOG_BTN_W,
@@ -80,14 +78,12 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         # When set, the next inspection-complete event skips the column picker
         # and uses this config directly (one-click recent-file open).
         self._pending_recent_config: Optional[ShapefileConfig] = None
-        # If True, auto-enable partisan overlay after the next Recent load completes.
+        # One-shot marker for a Recent load configured with election columns;
+        # consumed after map-fill availability is synchronized.
         self._restore_partisan_on_load: bool = False
 
-        # Map background-load tracking (app-local, no SharedState).
-        # Tracking by (path, gdf id) so a re-import of the same path with
-        # edited content still triggers a fresh MapView load — otherwise the
-        # map keeps stale dimensions and render_assignment indexes past the
-        # new assignment array.
+        # Map background-load tracking (app-local, no SharedState). Path and
+        # GeoDataFrame identity jointly distinguish reloads of edited files.
         self._map_loading: bool = False
         self._map_ready: bool = False
         self._map_loaded_path: str = ""

@@ -217,6 +217,10 @@ class SetupMixin:
                         label="Limit plots to last 10,000 iterations",
                         default_value=True,
                     )
+                    self._tooltip(
+                        self._limit_plots,
+                        "Draw only recent chart history. This does not change the search.",
+                    )
                     dpg.add_separator()
                     dpg.add_text("Map Render Interval:")
                     self._map_interval = dpg.add_slider_float(
@@ -226,11 +230,15 @@ class SetupMixin:
                         callback=lambda s, d: self.state.update(
                             map_render_interval=d),
                     )
-                # Scores and Views are kept 1:1 and in the SAME group order:
-                # geography | misc (county, pop dev, alignment) | partisanship |
-                # demographics. Views then appends the panels that have no score
-                # behind them (Temperature, District Info, ...). Keep the two in
-                # sync when adding a metric.
+                    self._tooltip(
+                        self._map_interval,
+                        "How often the map redraws during a run. This does not "
+                        "change the search.",
+                    )
+                # Score rows and corresponding metric views use the same group
+                # order: geography | misc | partisanship | demographics. Views
+                # omits County-Edge Bias (not a score chart) and appends panels
+                # with no score row, such as Temperature and District Info.
                 with dpg.menu(label="Scores", tag="menu_scores"):
                     # ── Geography ──
                     self._svis_cuts = dpg.add_menu_item(
@@ -466,7 +474,7 @@ class SetupMixin:
                     )
                     dpg.add_separator()
                     # ── Views-only: panels with no score behind them. Everything
-                    # above this line matches the Scores menu item-for-item.
+                    # Above this line are panels backed by score metrics.
                     self._panel_temp_item = dpg.add_menu_item(
                         label="Temperature", check=True, default_value=False,
                         callback=self._on_panel_temp_toggle,
@@ -505,10 +513,8 @@ class SetupMixin:
                     )
                     self._tooltip(
                         self._hot_start_load_item,
-                        "Start from an existing plan instead of a random seed: "
-                        "a CSV with a precinct id and a 1-indexed district "
-                        "column, the format Save Assignments exports. District "
-                        "count must match Districts.",
+                        "Start from assignments in a CSV instead of generating a "
+                        "starting map. The district count must match Districts.",
                     )
                     self._hot_start_clear_item = dpg.add_menu_item(
                         label="Clear Hot Start",
@@ -517,8 +523,8 @@ class SetupMixin:
                     )
                     self._tooltip(
                         self._hot_start_clear_item,
-                        "Discard the loaded hot start and go back to a random "
-                        "seed on the next run.",
+                        "Clear the loaded plan. Mosaic will generate a starting "
+                        "map for the next run.",
                     )
 
                     dpg.add_separator()
@@ -529,11 +535,8 @@ class SetupMixin:
                     )
                     self._tooltip(
                         self._relight_item,
-                        "Continue refining from the current map: each Start "
-                        "reseeds from what's on screen (so runs chain), and a "
-                        "polish preset is applied (low initial heat, long guide, "
-                        "heavy n=3 mix, late flips; Launch Watch off). Needs a "
-                        "paused or finished run, and no Hot Start loaded.",
+                        "Start each new run from the map on screen and apply "
+                        "refinement settings. Cannot be used with Hot Start.",
                     )
                     self._relight_clear_item = dpg.add_menu_item(
                         label="Clear Relight",
@@ -542,8 +545,7 @@ class SetupMixin:
                     )
                     self._tooltip(
                         self._relight_clear_item,
-                        "Turn Relight off and restore the annealing settings to "
-                        "what they were before Relight was armed.",
+                        "Turn off Relight and restore the previous search settings.",
                     )
 
                     dpg.add_separator()
@@ -554,9 +556,8 @@ class SetupMixin:
                     )
                     self._tooltip(
                         self._renumber_after_run,
-                        "When a run finishes, renumber districts by geography "
-                        "(numbers only -- colors stay put). Choose the sweep in "
-                        "Renumber options. On by default.",
+                        "After a run, reorder district numbers geographically. "
+                        "Boundaries and colors do not change.",
                     )
                     self._renumber_options_item = dpg.add_menu_item(
                         label="Renumber options...",
@@ -564,8 +565,7 @@ class SetupMixin:
                     )
                     self._tooltip(
                         self._renumber_options_item,
-                        "Pick how districts are renumbered: None (off), "
-                        "Northwest to Southeast, or North to South.",
+                        "Choose the rule used to assign district numbers.",
                     )
 
             with dpg.child_window(height=_TOP_H, border=False,
@@ -614,10 +614,7 @@ class SetupMixin:
                                 )
                                 self._tooltip(
                                     self._num_districts,
-                                    "Number of districts to draw (default 5, "
-                                    "range 2 to 500). Match the chamber size "
-                                    "you're mapping; a hot start with a "
-                                    "different count is rejected.",
+                                    "Number of districts in the plan.",
                                 )
                             with dpg.group():
                                 self.theme.text("Iterations", "subheading")
@@ -629,11 +626,8 @@ class SetupMixin:
                                 )
                                 self._tooltip(
                                     self._iterations,
-                                    "How many annealing steps to run (default "
-                                    "5000, max 1,000,000). The cooling "
-                                    "schedule is sized against this number, so "
-                                    "more iterations means slower, more "
-                                    "thorough cooling.",
+                                    "Maximum number of proposed map changes. More "
+                                    "iterations take longer but do not guarantee a better map.",
                                 )
 
                         dpg.add_spacer(height=6)
@@ -659,6 +653,15 @@ class SetupMixin:
                                 callback=self._on_revert_to_best,
                                 width=_btn_w, enabled=False,
                             )
+                        self._tooltip(
+                            self._reset_btn,
+                            "Clear the current run and charts but keep the loaded "
+                            "shapefile and settings.",
+                        )
+                        self._tooltip(
+                            self._revert_btn,
+                            "Return to the lowest-score accepted map and its run state.",
+                        )
                         with dpg.group(horizontal=True):
                             self._export_btn = dpg.add_button(
                                 label="Quick Save",
@@ -670,6 +673,14 @@ class SetupMixin:
                                 callback=self._on_export_metrics,
                                 width=_btn_w, enabled=False,
                             )
+                        self._tooltip(
+                            self._export_btn,
+                            "Save current map-unit assignments as a CSV in output.",
+                        )
+                        self._tooltip(
+                            self._metrics_btn,
+                            "Save current district-level metrics as a CSV in output.",
+                        )
 
                         dpg.add_spacer(height=6)
                         self.theme.text("Status", "heading")
@@ -726,7 +737,7 @@ class SetupMixin:
                             dpg.add_table_column()
                             with dpg.table_row():
                                 self._score_txt = dpg.add_text("Score: --")
-                                self._acc_txt   = dpg.add_text("Entropy: --")
+                                self._acc_txt   = dpg.add_text("Worse accepted: --")
                             with dpg.table_row():
                                 self._best_txt  = dpg.add_text(
                                     "Best:  --   (iter. --)")
@@ -745,8 +756,7 @@ class SetupMixin:
                             "District Map", "heading", tag="map_heading")
                         self._tooltip(
                             map_heading,
-                            "Scroll to zoom in or out. Drag to pan.\n"
-                            "Double-click the map to zoom out to the full state.",
+                            "Scroll to zoom. Drag to pan. Double-click to show the full map.",
                         )
                         with dpg.child_window(
                             height=_MAP_H, width=-1, border=True,
@@ -754,11 +764,9 @@ class SetupMixin:
                             no_scroll_with_mouse=True,
                         ):
                             self._build_map_canvas()
-                        # Map toolbar, one row. The six body fills are mutually
-                        # exclusive (see _FILL_OPTIONS), so they live in a single
-                        # combo instead of six checkboxes that looked additive;
-                        # that also gave a whole toolbar row back to the map.
-                        # Remaining checkboxes are genuinely additive decorations.
+                        # Map toolbar, one row. The six mutually exclusive body
+                        # fills use one combo; the checkboxes are additive
+                        # decorations.
                         #
                         # A table, not a plain group: the stretch column is what
                         # pins the photo controls to the right edge. A spacer with
@@ -791,12 +799,8 @@ class SetupMixin:
                                     )
                                     self._tooltip(
                                         self._fill_combo,
-                                        "Colour the map body by one metric. "
-                                        "Results and Demographics each offer a "
-                                        "precinct-level and a district-level "
-                                        "version. Entries marked 'needs ...' "
-                                        "become selectable once that data is "
-                                        "loaded.",
+                                        "Color the map by one measure. Unavailable "
+                                        "choices show which data they require.",
                                     )
                                 with dpg.group(horizontal=True):
                                     self.theme.text("Overlay:", "muted")
@@ -820,7 +824,7 @@ class SetupMixin:
                                     )
                                     self._tooltip(
                                         self._show_labels,
-                                        "Number each district on the map.")
+                                        "Show district numbers.")
                                     self._splits_view = dpg.add_checkbox(
                                         label="Splits", default_value=False,
                                         enabled=False,
@@ -828,9 +832,8 @@ class SetupMixin:
                                     )
                                     self._tooltip(
                                         self._splits_view,
-                                        "Highlight counties split across "
-                                        "districts. Needs a county column to be "
-                                        "loaded.",
+                                        "Highlight counties assigned to more than "
+                                        "one district. Requires a county column.",
                                     )
                                 dpg.add_spacer(width=1)
                                 with dpg.group(horizontal=True):
@@ -841,21 +844,20 @@ class SetupMixin:
                                     )
                                     with dpg.tooltip(cam_btn):
                                         dpg.add_text(
-                                            "Quick PNG: whole state, regardless of zoom.")
+                                            "Save a PNG of the full map.")
                                     self._more_btn = more_btn = dpg.add_button(
-                                        label="Export Photo...",
+                                        label="Save Map Image...",
                                         callback=self._on_advanced_save_open,
                                     )
                                     with dpg.tooltip(more_btn):
                                         dpg.add_text(
-                                            "Export PNG or PDF of the whole state,\n"
-                                            "regardless of zoom.")
+                                            "Save the full map as PNG or PDF.")
                                     self._save_spinner = dpg.add_loading_indicator(
                                         style=0, radius=2.0, show=False,
                                         color=self.theme.color("body"),
                                         secondary_color=self.theme.color("muted"),
                                     )
-                                    # Breathing room so Export Photo... isn't
+                                    # Breathing room so Save Map Image... isn't
                                     # flush against the map's right border.
                                     dpg.add_spacer(width=4)
                         dpg.bind_item_theme(map_toolbar, _toolbar_theme)
@@ -880,7 +882,8 @@ class SetupMixin:
                                             [], [], label="Score",
                                             tag="score_series")
                             with dpg.group():
-                                self._hint(self.theme.text("Entropy", "heading"), "entropy")
+                                self._hint(self.theme.text(
+                                    "Entropy", "heading"), "entropy")
                                 with dpg.plot(height=_HALF_PLOT_H, width=-1, no_menus=True):
                                     dpg.add_plot_legend()
                                     dpg.add_plot_axis(dpg.mvXAxis,
@@ -890,13 +893,13 @@ class SetupMixin:
                                                        label="Rate (%)",
                                                        tag="acc_y"):
                                         dpg.add_line_series(
-                                            [], [], label="Entropy",
+                                            [], [], label="Accepted",
                                             tag="acc_series")
 
             # ── Score panel (bottom) ──────────────────────────────────────────
             with dpg.child_window(height=_SCORE_H, border=True, tag="score_panel"):
                 with dpg.group(horizontal=True):
-                    self.theme.text("Full list of scores available in toolbar", "muted")
+                    self.theme.text("Choose visible scores from the Scores menu", "muted")
                     dpg.add_spacer(width=12)
                     dpg.add_button(
                         label="Score Contributors >>",
@@ -1203,6 +1206,11 @@ class SetupMixin:
                                     items=["Fair", "D", "R"],
                                     default_value="Fair", horizontal=True,
                                 )
+                                self._tooltip(
+                                    self._mm_dir,
+                                    "Fair moves toward zero. D and R favor the "
+                                    "selected party's direction.",
+                                )
                             dpg.add_spacer(height=4)
 
                         with dpg.group(tag="score_row_eg", show=False):
@@ -1233,6 +1241,11 @@ class SetupMixin:
                                     items=["Fair", "D", "R"],
                                     default_value="Fair", horizontal=True,
                                 )
+                                self._tooltip(
+                                    self._eg_dir,
+                                    "Fair moves toward zero. D and R favor the "
+                                    "selected party's direction.",
+                                )
                             dpg.add_spacer(height=4)
 
                         with dpg.group(tag="score_row_pb", show=False):
@@ -1262,6 +1275,11 @@ class SetupMixin:
                                 self._pb_dir = dpg.add_radio_button(
                                     items=["Fair", "D", "R"],
                                     default_value="Fair", horizontal=True,
+                                )
+                                self._tooltip(
+                                    self._pb_dir,
+                                    "Fair moves toward zero. D and R favor the "
+                                    "selected party's direction.",
                                 )
                             dpg.add_spacer(height=4)
 
@@ -1384,6 +1402,10 @@ class SetupMixin:
                                     items=["D", "R"],
                                     default_value="D", horizontal=True,
                                 )
+                                self._tooltip(
+                                    self._dem_seats_dir,
+                                    "D seeks more expected Democratic seats; R seeks fewer.",
+                                )
                             dpg.add_spacer(height=4)
 
                         with dpg.group(tag="score_row_majority", show=False):
@@ -1416,6 +1438,14 @@ class SetupMixin:
                                         label="R", default_value=False,
                                         callback=self._on_majority_rep_chk,
                                     )
+                                self._tooltip(
+                                    self._majority_dem_chk,
+                                    "Choose the party whose majority chance to favor.",
+                                )
+                                self._tooltip(
+                                    self._majority_rep_chk,
+                                    "Choose the party whose majority chance to favor.",
+                                )
 
                         with dpg.group(tag="score_row_hinge", show=False):
                             with dpg.group(horizontal=True):
@@ -1442,6 +1472,10 @@ class SetupMixin:
                                     default_value=8, min_value=1, max_value=14,
                                     width=_SCORE_COL_W - 100,
                                 )
+                                self._tooltip(
+                                    self._hinge_threshold,
+                                    "Minimum seats the selected party must win.",
+                                )
                                 with dpg.group(horizontal=True):
                                     self._hinge_dem_chk = dpg.add_checkbox(
                                         label="D", default_value=True,
@@ -1452,6 +1486,14 @@ class SetupMixin:
                                         label="R", default_value=False,
                                         callback=self._on_hinge_rep_chk,
                                     )
+                                self._tooltip(
+                                    self._hinge_dem_chk,
+                                    "Choose the party whose seat-target chance to favor.",
+                                )
+                                self._tooltip(
+                                    self._hinge_rep_chk,
+                                    "Choose the party whose seat-target chance to favor.",
+                                )
 
 
         dpg.set_primary_window("main_window", True)
@@ -1459,10 +1501,8 @@ class SetupMixin:
         dpg.setup_dearpygui()
 
         self.map_view = MapView("map_texture", _MAP_DW, _MAP_DH)
-        # The earlier _sync_map_bg_to_theme() at __init__ time ran before
-        # MapView existed, so MapView._bg_color is still the module default.
-        # Re-sync now that the view is constructed, otherwise the first
-        # shapefile load builds its LUT against a stale dark background.
+        # MapView is constructed after the initial theme application, so copy
+        # the active background into it before a shapefile builds its LUT.
         self._sync_map_bg_to_theme()
 
     def _build_map_canvas(self):
@@ -1474,8 +1514,8 @@ class SetupMixin:
                 dpg.add_mouse_wheel_handler(callback=self._on_map_wheel)
             return
 
-        # macOS only: ImPlot reads the original fractional wheel input instead
-        # of DPG's integer-only mouse-wheel callback. No axes/chrome are shown.
+        # macOS only: ImPlot supplies fractional wheel input; DPG's standalone
+        # mouse-wheel callback is integer-only. No axes/chrome are shown.
         with dpg.theme() as map_theme:
             with dpg.theme_component(dpg.mvPlot):
                 for style in (dpg.mvPlotStyleVar_PlotPadding, dpg.mvPlotStyleVar_FitPadding):
@@ -1502,7 +1542,7 @@ class SetupMixin:
 
     def _update_window_layout(self):
         # Keep score controls usable when the page is shorter than its content.
-        # In tall windows, retain the original fill-the-remaining-space layout.
+        # Tall windows let the score panel fill the remaining space.
         height = -1 if dpg.get_viewport_client_height() >= _VP_H - 40 else _SCORE_H
         if dpg.get_item_configuration("score_panel")["height"] != height:
             dpg.configure_item("score_panel", height=height)

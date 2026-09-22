@@ -419,7 +419,7 @@ class RunnerMixin:
         dpg.set_value(self._score_txt,  "Score: --")
         dpg.set_value(self._best_txt,   "Best:  --   (iter. --)")
         dpg.set_value(self._temp_txt,   "Temperature: --")
-        dpg.set_value(self._acc_txt,    "Entropy: --")
+        dpg.set_value(self._acc_txt,    "Worse accepted: --")
         dpg.set_value(self._succ_txt,   "Accepted steps: --")
         dpg.set_value(self._flip_txt,   "Flip rate: 0.0%")
         self._clear_all_series()

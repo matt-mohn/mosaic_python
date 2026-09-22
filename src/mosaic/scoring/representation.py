@@ -1,41 +1,16 @@
-"""
-Electoral Opportunity -- per-group 0-100 ratings of electoral opportunity vs a
-proportional benchmark, plus a benchmark-weighted aggregate penalty for the
-optimizer. Built on the shared opportunity engine (opportunity.py).
-(Internal ids stay `representation` / `weight_representation` throughout;
-user-facing name is "Electoral Opportunity".)
+"""Electoral Opportunity ratings and aggregate optimizer penalty.
 
-Per group the score sums opportunity credit over the top `target` = round(T)
-districts (T = proportional seats) and normalises it against f(state), the max
-credit those districts could reach given the geography (opp.ceiling). Each
-district contributes up to 1.0, saturating at a solid majority (via opp.ref), so
-the climb through 50% is rewarded and over-packing earns nothing. Scoring only
-the top `target` removes the reward for cracking a group across many
-sub-opportunity districts. So:
+For each group, the scorer sums opportunity credit over the top
+``round(proportional_seats)`` districts and divides by the heuristic credit
+reference in ``OpportunityResult``. A per-group rating of 100 means that the
+selected districts meet or exceed that reference. Groups whose proportional
+target rounds below one district, or whose heuristic feasibility flag is zero,
+are marked not applicable and excluded from the aggregate.
 
-    100 = arranged the top `target` districts as well as the geography allows
-
-Normalising against f(state) rather than the raw count matters because the count
-can be unreachable as credit: NC black is 2.99 proportional seats, so target
-rounds to 3, but the geography supports only ~1.93 districts' worth of solid
-credit, so a count-based 100 is a phantom capping even the best map near 64. The
-population-vs-geography gap is not lost -- it lives in f(state)/round(T), where NC
-black ~0.64 under smart targets (~0.76 under the statewide sweeps) means the
-geography allows that share of proportional representation.
-
-A group is not applicable (rating None, dropped from the aggregate) when its
-proportional share rounds below one district or the geography cannot yield one
-opportunity district. Without that gate, a state whose precincts top out below
-the curve would score 100 for a map of junk districts, since achievable-
-normalisation alone rewards matching a near-zero ceiling.
-
-Per-group ratings are the primary read. The aggregate the optimizer minimises is
-the T-weighted mean of per-group shortfalls in penalty form.
-
-`unclipped` softens the per-district cap for the PENALTY only, giving a
-differentiable surface near the solid level; per-group ratings stay hard-capped.
-
-VAP basis, not CVAP: see opportunity.py.
+The optimizer penalty is the proportional-seat-weighted mean shortfall. In
+``unclipped`` mode, a soft per-district cap is used for the penalty while the
+display ratings remain hard-capped. Inputs are a demographic total and group
+counts from one consistent universe.
 """
 
 from __future__ import annotations
@@ -58,9 +33,8 @@ def _top_credit(P, ref, target, soft_k, want_soft):
     for min(x, 1) so annealing keeps a gradient there. Taking only the top
     `target` removes the reward for cracking a group across extra districts.
 
-    Fused into one kernel because the arrays are k long, where a dozen NumPy
-    calls cost more in overhead than the arithmetic. The caller reduces the
-    returned slices, whose pairwise order differs from a sequential add.
+    The hard and soft paths are evaluated in one compiled kernel. The caller
+    reduces the returned top-credit slices.
     """
     n = P.shape[0]
     t = target
@@ -93,12 +67,17 @@ def representation_from_opportunity(
     mode: str = "proportional",
     unclipped: bool = True,
 ) -> tuple[float, float, dict, dict]:
-    """
+    """Compute per-group ratings and the aggregate opportunity penalty.
+
+    ``mode`` is accepted for configuration compatibility but currently does not
+    select a different calculation.
+
     Returns:
         agg_rating -- T-weighted 0-100 (display only).
         penalty    -- 0-100, lower = better; the value the optimizer minimises.
-        ratings    -- {group: 0-100 or None}; None = <1 proportional seat or no
-                      drawable opportunity district; 100 = at the geography's ceiling.
+        ratings    -- {group: 0-100 or None}; None = <1 proportional seat or a
+                      zero heuristic feasibility flag; 100 = at or above the
+                      heuristic credit reference.
         eff        -- {group: effective opportunity districts (top-target credit)}.
     """
     ratings: dict[str, float | None] = {}
@@ -111,7 +90,7 @@ def representation_from_opportunity(
         target = int(round(T))
         feas = opp.feasible.get(g)
         # N/A gate first (both conditions are run-constant): a group below one
-        # proportional seat or with no drawable opportunity district contributes
+        # proportional seat or with a zero heuristic feasibility flag contributes
         # nothing, so skip its per-district credit + sort entirely. eff (display
         # only) is 0 -- an N/A group has no counted opportunity districts.
         if target < 1 or feas == 0:
@@ -127,9 +106,8 @@ def representation_from_opportunity(
                 _SOFT_K, unclipped)
         O_hard = float(top_hard.sum())
         eff[g] = O_hard
-        # normalise against f(state), the achievable credit ceiling, so a
-        # geographically-best map reaches 100 (see module docstring). Fall back to
-        # the raw count if no ceiling was supplied (e.g. a hand-built opp).
+        # Normalize against the supplied heuristic credit reference. Fall back
+        # to the raw target count when no reference was supplied.
         denom = opp.ceiling.get(g, 0.0)
         if denom <= 1e-9:
             denom = float(target)

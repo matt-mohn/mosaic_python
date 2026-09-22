@@ -2,7 +2,7 @@
 Simulated annealing acceptance and temperature schedule.
 
 Cooling modes (user-facing labels):
-  Guided  — rate auto-calculated so temperature reaches target_temp at
+  Guided  — rate calculated from the start and target temperatures over
              guide_fraction x max_iterations  (default, recommended)
   Static  — user supplies a fixed per-iteration multiplier
 
@@ -30,7 +30,8 @@ class AnnealingConfig:
     # Cooling schedule
     cooling_mode: str = "GUIDED"      # "GUIDED" | "STATIC"
 
-    # Guided mode: reach target_temp (absolute) at guide_fraction of total iterations.
+    # Guided mode derives its rate from target_temp when the target is below
+    # the starting temperature. Otherwise it uses the fixed 0.9999 rate.
     guide_fraction: float = 0.9       # e.g. 0.9 -> cool to target_temp at 90% of run
     target_temp: float = 1.0          # absolute temperature at the guide point
 
@@ -38,10 +39,7 @@ class AnnealingConfig:
     cooling_rate: float = 0.9995
 
     # Launch Watch: after N iterations, re-anchor temperature to factor x
-    # current score (rather than initial score). Helps when the score drops
-    # precipitously in the first few hundred iters (e.g. with county_splits
-    # and county-edge bias) and the initial-anchored temp becomes too hot
-    # to be useful by the time the score has stabilized.
+    # current score and recompute Guided cooling over the remaining iterations.
     launch_watch: bool = True
     launch_watch_iter: int = 250
 
@@ -142,8 +140,9 @@ def accept_proposal(
     """
     Metropolis acceptance criterion.
 
-    Always accepts improvements.  Accepts degradations with probability
-    exp(-delta / temperature), updating accepted/rejected counters in-place.
+    Always accepts non-worsening proposals. Accepts degradations with
+    probability exp(-delta / temperature), updating accepted/rejected counters
+    in-place.
     """
     if proposed_score <= current_score:
         return True

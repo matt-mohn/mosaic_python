@@ -1,4 +1,4 @@
-"""Core ReCom step implementation using igraph for performance."""
+"""Core two- and three-district ReCom proposal implementations."""
 
 from typing import Optional
 
@@ -40,8 +40,8 @@ class GraphContext:
         else:
             self.edge_u = np.empty(0, dtype=np.int32)
             self.edge_v = np.empty(0, dtype=np.int32)
-        # Virtual bridge edges keep islands reachable for moves but must not be
-        # counted as cut edges. real_edge_mask[i] is False for a virtual edge.
+        # Virtual bridge edges remain available to moves but do not contribute
+        # to the scored cut-edge count. real_edge_mask[i] is False for them.
         if "virtual" in graph.edge_attributes():
             virt = np.asarray(graph.es["virtual"], dtype=bool)
         else:
@@ -106,8 +106,7 @@ def recom_step_ig(
     district_a = int(assignment[u])
     district_b = int(assignment[v])
 
-    # One index extraction instead of separate district arrays + concatenation.
-    # Ascending IDs match the tree builder's canonical local-node order.
+    # One index extraction gives the tree builder ascending local-node order.
     merged_nodes = np.flatnonzero(
         (assignment == district_a) | (assignment == district_b)).astype(np.int32)
 
@@ -136,8 +135,8 @@ def recom_step_ig(
     subset_arr = np.array(subset, dtype=np.int32)
     new_assignment[subset_arr] = district_a
 
-    # Spanning-tree bipartition always yields two connected subtrees in the
-    # original graph — contiguity checks are provably redundant and skipped.
+    # Cutting a spanning tree yields two pieces connected in the working graph,
+    # so this function does not run a separate contiguity check.
     new_cut_edge_indices = ctx.compute_cut_edges(new_assignment)
 
     return new_assignment, True, new_cut_edge_indices
@@ -155,10 +154,8 @@ def _pick_third_district(
 ) -> Optional[int]:
     """Return a district C adjacent to A or B (C != A, C != B), or None.
 
-    Choice is weighted by the count of cut edges bridging {A,B} ↔ C. This is
-    naturally ergodic (every triple with a connected merged region has positive
-    probability) and biases toward triples with more shared boundary, which is
-    desirable for swap potential.
+    Mosaic samples one cut edge leaving {A, B}; therefore a candidate district's
+    probability is proportional to its number of cut edges to A or B.
     """
     if len(cut_edge_indices) == 0:
         return None
@@ -208,9 +205,8 @@ def recom_step_ig_n3(
       • Stage 2 exceeds max_attempts_per_stage without finding a balanced cut
 
     Args:
-        max_attempts_per_stage: Cap per stage. Smaller than the n=2 default (100)
-            because n=3 fails more often — better to bail early than burn time on
-            hopeless merged regions.
+        max_attempts_per_stage: Tree-attempt cap for each stage. The default is
+            20, compared with 100 attempts in the two-district proposal.
 
     Returns:
         (new_assignment, success, new_cut_edge_indices)

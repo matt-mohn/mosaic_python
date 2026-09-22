@@ -2,9 +2,8 @@
 Reock compactness — 16-direction approximation of the Reock score.
 
 Reock = district_area / area(min_bounding_circle), in (0, 1]. 1.0 = circular,
-lower = elongated. Textbook Reock requires computing the true minimum bounding
-circle each iteration, which is ~100x slower than PP because shapely's MBC is a
-Python-level wrapper around Welzl.
+lower = elongated. This module approximates the bounding circle from cached
+directional extrema rather than computing the textbook minimum bounding circle.
 
 Reock approximates the MBC by:
   - Caching K=16 directional extreme vertices per precinct (one per direction).
@@ -12,14 +11,9 @@ Reock approximates the MBC by:
     each district -> K candidate boundary points per district.
   - Bounding circle diameter ~= pairwise diameter of those K points.
 
-The diameter from K=16 directional extremes converges to within ~0.8 score
-points (on a 0-100 penalty scale) of textbook Reock, with the remaining gap
-intrinsic to caching only K vertices per precinct. See Workshop/reock_bench
-for the K-sweep that motivated the K=16 choice.
-
-This is NOT textbook Reock — call it Reock when surfacing to users.
-The score is a canonical deterministic function of the plan, so simulated
-annealing treats it identically to any other component.
+This is a deterministic 16-direction approximation, not the textbook minimum-
+bounding-circle calculation. The approximation error is not estimated at run
+time.
 
 Cached arrays (per shapefile, computed once at load):
   - dir_ext_pts: (K, n, 2) extreme vertex coords per (direction, precinct)
@@ -32,12 +26,12 @@ lines, where (K, n) strides n floats per direction and takes K misses per
 precinct. dir_ext_pts keeps direction-major layout — it is read only in the
 short per-district loop, K*k times, not once per precinct.
 
-Per-iteration cost (numba-compiled): one fused pass over precincts builds a
-per-(direction, district) max-projection table; a short district loop computes
-pairwise diameters from K cached points. ~25 us full plan on N=2700.
+At scoring time, one compiled pass over precincts builds a per-(direction,
+district) max-projection table; a district loop then computes pairwise diameters
+from the cached points.
 
-score_reock() returns (1 - mean(reock)) * 100, matching the PP penalty
-scale so weight_reock is directly comparable to weight_polsby_popper.
+score_reock() returns (1 - mean(reock)) * 100. PP uses the same algebraic
+0-100 penalty orientation, but the distributions of the two metrics can differ.
 """
 
 from __future__ import annotations
@@ -55,8 +49,6 @@ log = logging.getLogger("mosaic")
 
 
 # K=16 directions evenly spaced around the circle, starting at angle 0.
-# Picked as the knee of the accuracy/cost curve: K=24 buys only ~0.02 score
-# points over K=16 at 50% more compute. See reock_bench K-sweep.
 K_DIRS = 16
 _ANGLES = np.linspace(0.0, 2.0 * np.pi, K_DIRS, endpoint=False)
 DIRS = np.stack([np.cos(_ANGLES), np.sin(_ANGLES)], axis=1)
@@ -79,9 +71,8 @@ class ReockData:
 def precompute_reock_data(gdf: gpd.GeoDataFrame) -> Optional[ReockData]:
     """Compute per-precinct K-direction extrema and projections.
 
-    For each precinct, the K extreme vertices are taken from its convex hull
-    (small per-precinct point set, fast to scan). The full extraction is
-    one-shot work at load — same cost class as PP precompute.
+    For each precinct, the K extreme vertices are taken from its convex hull.
+    The extraction is performed when scoring data is prepared.
 
     Returns None on failure; the scoring slot then stays disabled in the GUI.
     """

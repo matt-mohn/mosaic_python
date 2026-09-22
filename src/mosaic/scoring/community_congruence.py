@@ -1,61 +1,18 @@
-"""
-Community Dispersion -- does the plan keep a community inside as few districts
-as population equality allows?
-(Internal id stays `community_congruence` throughout; user-facing name is
-"Community Dispersion".)
+"""Community Dispersion partition penalty.
 
-The partition complement to Neighborhood Severance, which measures cut edges --
-a perimeter quantity, structurally blind to how many PIECES a community ends up
-in, since a compact core has O(n) internal edges but a tidy split severs only
-O(sqrt n). On Texas at k=38, a Severance-only run scored 1.0/100 while spreading
-Houston's black community across five districts, none holding a third of it.
+The scorer builds connected demographic cores at nested 50%, 35%, and 20%
+group-share thresholds within the selected demographic universe. For each core
+``c`` it computes:
 
-Mechanism, per core c:
+    p_i     = core population share in district i
+    N_eff   = 1 / sum(p_i ** 2)
+    m_c     = ceil(core_population / ideal_district_population)
+    ratio_c = N_eff / m_c
 
-    p_i     = core c's population share in district i
-    N_eff   = 1 / sum(p_i^2)            effective pieces (inverse Simpson)
-    m_c     = ceil(pop_c / ideal_pop)   pieces population equality FORCES
-    ratio_c = N_eff / m_c               1 = split only as much as required
-
-    pooled  = power mean of ratio_c over cores, weights w_c = pop_c^ALPHA * lambda(T)
-    penalty = _rescale_ratio(pooled, R5, R_seed, R95)
-
-A ratio, not a 0-floored excess: max(0, N_eff - m_c) hits exactly 0 whenever every
-core is feasibly split, which happens in any small state, leaving no gradient. A
-ratio cannot reach 0 (N_eff >= 1, m_c finite), so the ease-in approaches it
-without arriving, per the [0, 5, 55, 95, 100] convention.
-
-Feasibility is the crux. m_c exonerates a core that cannot be kept whole: the San
-Antonio-RGV Latino belt is 4.68 districts' worth of people, so it must span five
-and spanning six is nearly free (ratio 1.12), while Fort Worth's 0.54-district
-core spanning four is not (ratio 3.34). Under a statewide denominator that
-ordering inverts.
-
-Cores are layered per group at nested concentration thresholds, so splitting a
-majority-black core registers at every layer while splitting a 20% penumbra
-registers only at the lowest -- severity graded by concentration, inside a
-partition measure. Low layers are self-limiting: at T=20% a core swells to several
-districts' worth of population, so m_c grows with it and forced splitting goes
-uncharged (Bexar at T=20% is m=17, ratio 1.24).
-
-Cores overlap by design, per group rather than first-past-the-post: a precinct 45%
-black and 30% Latino belongs to both. Houston's black community reads ratio 3.79
-per-group and washes out to 0.52 if groups are merged before coring. POWER=2
-super-weights the worst core, so one intact metro cannot buy forgiveness for a
-cracked one.
-
-A third axis, not a proxy: over random ReCom seeds on Texas k=38, corr with
-Representation +0.219 and with Neighborhood Severance +0.279, so all three can
-carry weight without double-counting.
-
-Most cores are small and m=1, many already whole in a plan that never optimised
-for this (164 of 172 at k=38, carrying 79% of the pooling weight), so expect a
-fast early drop then a long shallow tail driven by the few big metro cores.
-
-CALIBRATION. Fitted offline across 13 states x k = 4..59 (88 real-engine runs) and
-frozen; scoring samples nothing. Congruence-first reaches ~5, a random ReCom seed
-~55, adversarial ~95, nothing pinned (0 of 132). See the band constants for why
-the per-state residual is looser than Neighborhood Severance's.
+Core ratios are combined with a population- and layer-weighted power mean. The
+pooled ratio is mapped monotonically to a penalty using district-count-dependent
+anchors. A precinct can belong to cores for more than one group and layer.
+Virtual bridge edges are excluded when connected cores are built.
 """
 from __future__ import annotations
 
@@ -76,9 +33,8 @@ log = logging.getLogger(__name__)
 # 50% layer is also in the 35% and 20% layers.
 LAYERS: tuple[float, ...] = (0.50, 0.35, 0.20)
 
-# A heart split registers at every layer it belongs to, so its severity is the
-# sum -- the reason cores are nested rather than ring-decomposed. Ring accounting
-# discriminated between plans roughly 3x more weakly.
+# A core contributes at every concentration layer it belongs to, with denser
+# layers receiving larger multipliers.
 _LAMBDA: dict[float, float] = {0.50: 1.0, 0.35: 0.5, 0.20: 0.25}
 
 # Absolute, because cores are built without reference to k (m_c is computed at
@@ -86,31 +42,16 @@ _LAMBDA: dict[float, float] = {0.50: 1.0, 0.35: 0.5, 0.20: 0.25}
 _MIN_CORE_POP = 20_000.0
 
 # ── Pooling ──────────────────────────────────────────────────────────────────
-# _ALPHA mirrors Neighborhood Severance's mass^0.5, where "a rare group must not
-# round to zero" was already solved. _POWER is not a useful lever -- plan-vs-seed
-# separation is flat from 2 through top-10-cores-only -- so it stays consistent
-# with the cut-edge score.
+# Core weights use the square root of population; the weighted power mean uses
+# exponent 2.
 _ALPHA = 0.5
 _POWER = 2.0
 
-# ── Band ─────────────────────────────────────────────────────────────────────
-# Fitted offline across 13 states x k = 4..59 (88 real-engine runs) and frozen;
-# closed forms in k alone, so the band applies to an unmeasured state.
-# dev/community_congruence/.
-#
-# Measured medians:  k=4  floor 1.009  seed 1.353  ceiling 2.486
-#                    k=38       1.048       1.655          3.644
-#                    k=59       1.113       1.719          3.722
+# ── District-count-dependent ratio band ─────────────────────────────────────
 _R5_A, _R5_Q = 0.000074, 1.784031        # R5    = 1 + A*(k-1)^Q
 _RSEED_A, _RSEED_Q = 0.259077, 0.267266  # Rseed = 1 + A*(k-1)^Q
 _R95_C, _R95_A, _R95_Q = 3.923603, 3.232672, 0.688527   # R95 = C - A*(k-1)^-Q
 
-# Residuals are looser than Neighborhood Severance's 5.3% (floor 1.07-1.15x
-# across states, ceiling 1.40-1.48x) because that variance is core geography, not
-# k, so no k-form absorbs it. Accepted rather than fixed by a state lookup, which
-# would generalise worse: the floor is the tight end and the one that matters,
-# while the ceiling only positions 95. Judged on consequence -- across all 88
-# ratios, floors median 5.1, seeds 54.5, ceilings 94.8, 0 of 132 pinned.
 _SEED_PEN = 55.0
 _MIN_GAP = 0.05
 _Q_MAX = 12.0
@@ -140,9 +81,6 @@ def _rescale_ratio(r: float, r5: float, rs: float, r95: float) -> float:
     """Ratio -> 0-100 penalty. Same four-piece shape as Neighborhood Severance's:
     power ease-in below R5, linear either side of the seed anchor, rational tail
     above R95, asymptotic at both ends so the annealer never loses signal.
-
-    A local copy rather than an import: the two bands differ, and factoring the
-    curve into shared machinery waits until both are final.
     """
     if r <= 0.0:
         return 0.0
@@ -246,7 +184,7 @@ def precompute_community_congruence_data(
         pops = np.asarray(populations, dtype=np.float64)
         total = np.asarray(vap["total"], dtype=np.float64)
         if pops.shape[0] != total.shape[0]:
-            log.warning("Community Dispersion: pop/VAP length mismatch "
+            log.warning("Community Dispersion: population/demographic length mismatch "
                         f"({pops.shape[0]} vs {total.shape[0]}); disabled")
             return None
         n = int(total.shape[0])
@@ -303,10 +241,7 @@ def _pool(assignment, core_prec, core_prec_pop, core_off, core_pop, core_weight,
     N_eff is tot^2 / sum(pop_d^2) rather than 1 / sum(p_d^2), so no per-district
     division is needed.
 
-    The two full 0..k-1 loops vectorise, which beats visiting only the occupied
-    districts even though the median core spans 2 at k=38: a stamp-plus-touched-
-    list variant measured the same at k=38 and slower at k=14, since the scalar
-    bookkeeping costs more than the SIMD clear and scan it saves.
+    The two full 0..k-1 loops allow contiguous scratch clearing and scanning.
     """
     n_cores = core_pop.shape[0]
     scratch = np.zeros(n_districts, dtype=np.float64)
@@ -350,14 +285,14 @@ def score_community_congruence(
 ) -> tuple[float, dict[str, float]]:
     """Return (penalty, congruence) for this assignment.
 
-        penalty         -- 0-100, lower = better; the optimizer term.
+        penalty         -- [0, 100), lower = better; the optimizer term.
         congruence[g]   -- that group's 0-100 congruence, 100 - its own rescaled
                            pooled ratio (higher = more intact), or -1.0 when the
                            group has no cores (not applicable). Display only.
 
-    ideal_pop defaults to (total population) / n_districts. A pure function of
-    (assignment, cores, population, k): no seed, no random partition, no state
-    from a previous run, so the same map always scores the same.
+    ideal_pop defaults to (total population) / n_districts. The calculation is
+    deterministic for fixed assignment, core, population, and district-count
+    inputs; it has no run-relative denominator.
     """
     congruence: dict[str, float] = {g: -1.0 for g in GROUPS}
     if (data is None or data.n_cores == 0 or not n_districts

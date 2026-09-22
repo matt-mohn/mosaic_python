@@ -1,24 +1,15 @@
-"""
-Partisan scoring metrics for redistricting plans.
+"""Partisan scoring metrics for redistricting plans.
 
-Metrics
--------
-Mean-Median Difference  (MM)  -- exponent 2
-Efficiency Gap          (EG)  -- exponent 2
-  Static:  vote-weighted EG at current election environment
-  Robust:  single closed-form call with sigma_combined = sqrt(sigma_swing^2 + sigma_district^2)
-Expected Dem Seats      (DS)  -- linear directional penalty (no target)
-Competitiveness         (CP)  -- exponent 1  (no target)
-Chance of Majority      (CoM) -- exponent 1.5
+Mean-Median, Efficiency Gap, and Partisan Bias return a raw signed statistic
+plus a configurable fair/D/Republican penalty. The normalized penalty is linear
+by default and quadratic when ``quadratic_penalty`` is enabled. Expected
+Democratic Seats uses a linear directional penalty. Majority and hinge targets
+use ``(1 - probability) ** 1.5 * 100``.
 
-Unified probability model (EG Robust, DS, CP, CoM):
-
-    P(D wins district i) = Phi((share[i] - 0.5) / sigma_combined)
-    sigma_combined = sqrt(sigma_swing^2 + sigma_district^2)
-    sigma_district = 0.05 / Phi^-1(win_prob_at_55)
-
-CoM integrates the Poisson Binomial over the swing via Gauss-Hermite quadrature (M=17).
-EG is vote-weighted: (total_wasted_dem - total_wasted_rep) / total_votes.
+Probabilistic metrics use district win probabilities derived from a Gaussian
+model. Majority and hinge probabilities integrate a Poisson-binomial seat-count
+distribution over 17 Gauss-Hermite swing nodes. Robust Efficiency Gap uses a
+closed-form expectation with its module-level statewide swing sigma.
 """
 
 from __future__ import annotations
@@ -473,8 +464,8 @@ def score_partisan_bias(
     """Partisan bias: D seat-share surplus at a hypothetical 50/50 statewide vote.
 
     raw = 0.5 - S(0.5); raw > 0 means the map favors R (R holds a seat majority at
-    a tied vote), raw < 0 favors D. Same fair/favor_dem/favor_rep + bound +
-    optional-square mapping as EG, so weights are comparable.
+    a tied vote), raw < 0 favors D. Uses the same fair/favor_dem/favor_rep,
+    bound, and optional-square mapping as EG.
 
     Returns (raw, penalty in [0, 100]).
     """

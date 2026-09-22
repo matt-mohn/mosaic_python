@@ -1,4 +1,4 @@
-"""Initial partition generation via sequential balanced bisection."""
+"""Initial partition generation via sequential balanced tree cuts."""
 
 import logging
 from typing import Callable
@@ -16,13 +16,11 @@ _MAX_RESTARTS = 10
 
 
 def _ramp_tolerance(k: int, num_districts: int, start: float, cap: float) -> float:
-    """
-    Harmonic ramp: tol_min ∝ 1/(N-k), normalised to [start, cap] over k∈[0,N-2].
+    """Return the configured harmonic ramp from ``start`` to ``cap``.
 
-    Derived from the observation that in sequential bisection the number of valid
-    spanning-tree cuts scales as (N-k), so the minimum viable tolerance to maintain
-    constant expected valid cuts grows as 1/(N-k).  Mapping that curve onto [start,
-    cap] gives: tol(k) = start + (cap-start) * 2k / ((N-2)(N-k)).
+    For cut index ``k`` in ``[0, N-2]``, the formula is
+    ``start + (cap-start) * 2k / ((N-2)(N-k))``. For at most two
+    districts, the cap applies directly.
     """
     if num_districts <= 2:
         return cap
@@ -59,9 +57,8 @@ def create_initial_partition(
         num_districts: Number of districts to create
         tolerance: Population deviation cap (e.g., 0.05 for 5%)
         tolerance_start: Starting tolerance for the harmonic ramp (default 0.5%).
-            Early cuts — made on large pools where tight balance is cheap — begin
-            here and ramp up to `tolerance` by the final cut.
-        seed: Random seed for reproducibility
+            Cuts begin here and ramp to `tolerance` at the final cut.
+        seed: Optional seed for NumPy draws made while partitioning.
         on_progress: Callback(district_num, num_districts) for progress updates
         should_cancel: Optional callable; if it returns True partitioning stops
                        and None is returned immediately.
@@ -72,10 +69,8 @@ def create_initial_partition(
     """
     if seed is not None:
         np.random.seed(seed)
-        # NOTE: runner.run_algorithm() seeds both np.random and Python's
-        # random before calling this. The dual-seed path is the source of
-        # truth; this fallback only fires when partition is invoked directly
-        # outside the GUI (tests, scripts).
+        # Partitioning uses NumPy randomness. The run-level acceptance code
+        # separately seeds Python's random module.
 
     for restart in range(_MAX_RESTARTS):
         if should_cancel and should_cancel():
@@ -106,12 +101,12 @@ def _try_partition(
     should_cancel: Callable[[], bool] | None = None,
 ) -> np.ndarray | None:
     """
-    Attempt a sequential partition. Returns None if any cut times out.
+    Attempt a sequential partition. Return None when a cut finds no result
+    before its attempt or time limit.
 
-    Carves districts 0..N-2 one at a time using one_sided=True cuts, so only
-    the carved district needs to be within tolerance. The very last cut uses
-    one_sided=False to ensure both remaining districts are valid (prevents the
-    last district from drifting out of tolerance and never recovering in annealing).
+    Districts 0 through N-3 use one_sided=True, so only the carved district
+    must be within tolerance. The final cut creates districts N-2 and N-1 with
+    one_sided=False, requiring both to be valid.
     Tolerance is ramped harmonically from tolerance_start to tolerance.
     """
     n = graph.number_of_nodes()

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>About Matt Mohn — Mosaic</title>
+  <meta name="description" content="A short introduction to Matt Mohn, creator of Mosaic.">
+  <link rel="icon" href="mosaic_logo.png">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="About Matt Mohn — Mosaic">
+  <meta property="og:description" content="A short introduction to the creator of Mosaic.">
+  <meta property="og:url" content="https://matt-mohn.github.io/mosaic_python/about.html">
+  <meta property="og:image" content="https://matt-mohn.github.io/mosaic_python/mosaic_logo.png">
+  <meta name="twitter:card" content="summary">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+          colors: {
+            ink: '#1a1f2c', 'ink-soft': '#4a5263', 'ink-mute': '#7c8497',
+            paper: '#fafbfc', 'paper-2': '#f1f3f7', navy: '#1d4180',
+            'navy-soft': '#e6ecf6', gold: '#f4b631', line: '#e3e7ef'
+          },
+          boxShadow: { card: '0 1px 2px rgba(20, 28, 48, 0.04), 0 8px 24px rgba(20, 28, 48, 0.06)' }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  </style>
+</head>
+<body class="bg-paper text-ink min-h-screen flex flex-col">
+  <header class="border-b border-line bg-paper/90 backdrop-blur sticky top-0 z-10">
+    <div class="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between w-full">
+      <a href="index.html" class="flex items-center gap-2.5 font-semibold tracking-tight text-lg">
+        <img src="mosaic_logo.png" alt="" class="w-7 h-7">Mosaic
+      </a>
+      <nav class="text-sm text-ink-soft hidden md:flex items-center gap-7">
+        <a href="index.html" class="hover:text-ink transition">Home</a>
+        <a href="install.html" class="hover:text-ink transition">Install</a>
+        <a href="help.html" class="hover:text-ink transition">Help</a>
+        <a href="methodology.html" class="hover:text-ink transition">Methodology</a>
+        <a href="about.html" class="text-ink font-medium">About</a>
+        <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub →</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="border-b border-line bg-white">
+    <div class="max-w-6xl mx-auto px-6 py-12 w-full">
+      <p class="text-sm font-semibold uppercase tracking-wider text-navy">About</p>
+      <h1 class="mt-2 text-4xl font-bold tracking-tight">Matt Mohn</h1>
+    </div>
+  </section>
+
+  <main class="max-w-3xl mx-auto px-6 py-14 w-full flex-1">
+    <div class="rounded-xl border border-line bg-white p-7 shadow-card">
+      <div class="grid md:grid-cols-[100px_1fr] gap-6 items-start">
+        <img src="author-photo.png" alt="Author portrait" width="100" height="100"
+             class="w-[100px] h-[100px] rounded-full object-cover mx-auto md:mx-0">
+        <div>
+          <p class="text-ink-soft leading-relaxed">I'm Matt. I built and maintain Mosaic.</p>
+          <p class="mt-5 text-ink-soft leading-relaxed">I've had a lifelong interest in how redistricting shapes, skews, and plagues the political process here in the United States. I built Mosaic because I believe people working to challenge gerrymandering deserve tools as powerful as those used to create it.</p>
+          <p class="mt-5 text-ink-soft leading-relaxed">I graduated from Duke with a degree in public policy and a minor in statistics. I grew up in Texas and now work as a pollster in Washington, D.C.</p>
+        </div>
+      </div>
+      <div class="mt-7 pt-5 border-t border-line flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+        <a href="https://github.com/matt-mohn" class="text-navy hover:text-ink transition">GitHub →</a>
+        <a href="https://x.com/mattmxhn" class="text-navy hover:text-ink transition">X →</a>
+      </div>
+    </div>
+  </main>
+
+  <footer class="border-t border-line bg-paper-2">
+    <div class="max-w-6xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-ink-soft">
+      <div class="flex items-center gap-2"><img src="mosaic_logo.png" alt="" class="w-5 h-5">Mosaic · Matt Mohn</div>
+      <div class="flex items-center gap-5">
+        <a href="help.html" class="hover:text-ink transition">Help</a>
+        <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub</a>
+        <a href="https://github.com/matt-mohn/mosaic_python/blob/main/LICENSE" class="hover:text-ink transition">MIT License</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>

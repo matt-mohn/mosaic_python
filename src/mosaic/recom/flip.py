@@ -3,14 +3,13 @@
 A flip picks a precinct on the boundary between two districts and moves
 it to the adjacent district, if the move keeps the source district
 contiguous and both districts within population tolerance. Cheap per
-attempt because there is no spanning-tree construction; the per-step
-cost is dominated by a local igraph contiguity check on the source
-district minus the flipped precinct.
+attempt because there is no spanning-tree construction. It checks the
+source district's contiguity after removing the selected precinct.
 
-Contract mirrors recom_step_ig: returns (new_assignment, success,
-new_cut_edge_indices). The engine handles full PlanScore + Metropolis
-above this layer. On failure the returned assignment IS the input
-object (no copy), so callers can compare by identity to detect a no-op.
+Returns (new_assignment, success, new_cut_edge_indices), matching the
+ReCom proposal interface. Scoring and acceptance happen above this layer.
+On failure the returned assignment is the input object (no copy), so
+callers can compare by identity to detect a no-op.
 """
 
 from __future__ import annotations
@@ -58,7 +57,7 @@ def flip_rate_curve(
     Each side is a normalized centered logistic, so the endpoints land
     exactly (not just asymptotically). The two halves span different amounts
     (0.45 below the midpoint, 0.35 above), so the slope can change at the
-    midpoint -- unavoidable given the asymmetric anchors.
+    midpoint.
 
     Args:
         progress: current_iteration / max_iterations; clamped to [0, 1].
@@ -135,8 +134,7 @@ def flip_step_ig(
                      correspondingly less likely to be picked as the
                      flip pivot. Only used when county_array is provided.
         max_attempts: How many random (cut-edge, direction) picks to try
-                      before returning failure. Default 100 mirrors
-                      recom_step_ig.
+                      before returning failure. Defaults to 100.
 
     Returns:
         (new_assignment, success, new_cut_edge_indices). On exhaustion
@@ -153,9 +151,8 @@ def flip_step_ig(
     lo = ideal_pop * (1.0 - tolerance)
     hi = ideal_pop * (1.0 + tolerance)
 
-    # County-biased cut-edge selection. Built once per call; the inner
-    # loop draws via np.random.random() + searchsorted, which costs the
-    # same as np.random.randint at this scale.
+    # County-biased cut-edge selection. Build cumulative weights once per call;
+    # the attempt loop samples them with a random draw and searchsorted.
     if county_array is not None and county_bias != 1.0:
         eu_idx = ctx.edge_u[cut_edge_indices]
         ev_idx = ctx.edge_v[cut_edge_indices]

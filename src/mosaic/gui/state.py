@@ -127,8 +127,8 @@ class SharedState:
     # Run-constant opportunity targets ({group: {target, feasible, ceiling}}),
     # published once at run start. Display only; never updated per iteration.
     opportunity_targets: dict = field(default_factory=dict)
-    # Groups the shapefile actually supplied a column for, and any non-blocking
-    # complaints about that selection.
+    # Groups the shapefile supplied a column for, plus non-blocking validation
+    # warnings about that selection.
     race_groups_provided: list = field(default_factory=list)
     race_warnings: list = field(default_factory=list)
     # {score_id: bool} -- whether each demographic score has anything to measure

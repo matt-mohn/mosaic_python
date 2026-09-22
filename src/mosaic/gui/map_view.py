@@ -13,14 +13,13 @@ Render pipeline:
                          Thread-safe; no DPG calls.
   draw_blank()        -- fill all precincts with neutral grey, upload texture.
   render_assignment() -- numpy LUT lookup to colorise pixel_map in O(W*H),
-                         draw 1-px district borders, upload texture.
+                         draw district borders, upload texture.
                          Both GUI-thread only.
 
-Overlay modes (instance flags):
-  county_overlay    -- grey county-border lines
-  partisan_overlay  -- recolour precincts by per-precinct dem share
-                       (Classic Mosaic 12-step red/blue palette)
-  splits_view       -- dim non-split counties + draw county borders
+Body-fill modes are mutually exclusive: district colours, precinct or district
+election results, precinct or district demographics, compactness, and
+population deviation. County lines, precinct lines, split highlighting,
+district labels, and the export state outline are separate decorations.
 """
 
 from __future__ import annotations
@@ -43,7 +42,7 @@ _LABEL_FONT_PATH = (
     / "Inter-SemiBold.ttf"
 )
 
-# Original classic Mosaic 50-colour district palette (from graphics.R)
+# District palette used for stable district identities.
 _HEX = [
     "#b86e6e", "#6e6ec2", "#bbffad", "#ff6e6e", "#ffe86e",
     "#6eb7b7", "#e7ac80", "#aca3e5", "#6effff", "#ff79c2",
@@ -62,7 +61,6 @@ DISTRICT_COLORS: list[tuple[int, int, int]] = [
 
 # Partisan colour scale on Dem two-party share. Both ends sit 2.0:1 against the
 # black district border (relative luminance 0.05); steps are even in L* inward.
-# Regenerate: dev/gen_spectrum.py
 _PARTISAN_BREAKS = np.array(
     [0.00, 0.10, 0.20, 0.30, 0.35, 0.40, 0.45,
      0.50, 0.55, 0.60, 0.65, 0.70, 0.80, 0.90],
@@ -100,7 +98,7 @@ _DEMOGRAPHIC_RGB = {
 # Demographic-overlay ramp, indexed by the dominant group's share in whole
 # percent from 35 to 100. Below 35% a district is flat grey; crossing 50% snaps
 # chroma from muted to full; 70-100% is compressed; the 100% end sits 2.0:1
-# against the black district border. Regenerate: dev/gen_race_v3.py
+# against the black district border.
 _DEMO_GRAY = np.array([210, 210, 210], dtype=np.uint8)
 _DEMO_RAMP_FLOOR = 0.35
 _DEMO_RAMP_HEX = {
@@ -202,14 +200,12 @@ def stable_color_mapping(
 ) -> np.ndarray:
     """
     Map current district indices to stable colour indices that best match the
-    initial assignment (ported from calculatestable_color_mapping in
-    original Classic Mosaic graphics.R).
+    initial assignment.
 
     Returns per-precinct array of colour indices in [0, k).
     """
     # k < 2 has no colours to disambiguate, and the confidence step below reads
     # s[:, 1] -- the runner-up overlap -- which does not exist on a (1, 1) array.
-    # A single-district plan reached this via auto-renumber on run completion.
     if k < 2:
         return np.zeros(len(current), dtype=np.int32)
     overlap = np.zeros((k, k), dtype=np.int32)
@@ -359,7 +355,7 @@ class MapView:
         draw = ImageDraw.Draw(img)
 
         # Batch GEOS extraction and NumPy projection, not individual Python
-        # points. Every original ring is still drawn in the original order.
+        # points. Input ring order is preserved.
         # Small transient batches also bound memory and cancellation latency.
         for start in range(0, len(precinct_ids), 64):
             if cancelled is not None and cancelled():
@@ -373,7 +369,8 @@ class MapView:
             for parent, count in zip(parents, counts):
                 end = offset + int(count)
                 if count >= 4:
-                    # The closing coordinate repeats the first, as before.
+                    # The closing coordinate repeats the first and is omitted
+                    # from the points passed to ImageDraw.
                     draw.polygon(points[offset:end - 1].ravel().tolist(),
                                  fill=int(ids[parent]))
                 offset = end
@@ -451,11 +448,10 @@ class MapView:
         """Per-precinct RGBA coloured by each DISTRICT's racial composition: the
         district takes its largest group's ramp, indexed by that group's share --
         grey below 35%, muted up to 50%, full chroma above. orange=White,
-        cyan=Black, green=Hispanic, magenta=Asian.
+        cyan=Black, green=Latino, magenta=Asian.
 
-        Future variant to keep in mind: colour by each PRECINCT's own composition
-        (aggregate per precinct instead of by district) -- likely a separate
-        toggle later."""
+        The precinct-level variant is provided by
+        ``_build_precinct_demographic_lut``."""
         n = self._n_precincts
         vap = self._vap
         tot_d = np.bincount(assignment, weights=np.asarray(vap["total"], dtype=np.float64),
@@ -489,8 +485,9 @@ class MapView:
 
     def _build_compactness_lut(self, assignment: np.ndarray, n_districts: int) -> np.ndarray:
         """Per-precinct LUT coloured by each district's combined compactness: a
-        50/50 blend of Polsby-Popper and Reock (the same mix the Compactness
-        score uses). Falls back to Polsby-Popper alone if Reock data is absent."""
+        50/50 blend of raw Polsby-Popper and Reock values. This display blend is
+        not the optimizer's band-normalized Compactness penalty. Falls back to
+        Polsby-Popper alone if Reock data is absent."""
         n = self._n_precincts
         pd = self._pp_data
         dist_area  = np.bincount(assignment, weights=pd.areas,
@@ -571,10 +568,7 @@ class MapView:
         dpg.set_value(self._ttag, self._to_dpg(rgba))
 
     def wipe(self) -> None:
-        """Clear the canvas to solid background and drop all loaded geometry.
-
-        Called by File > New so the old shapefile outline doesn't persist.
-        """
+        """Clear the canvas and drop all loaded geometry and render caches."""
         bg = np.full((self._h, self._w, 4), self._bg_color, dtype=np.uint8)
         dpg.set_value(self._ttag, self._to_dpg(bg))
         self._loaded = False
@@ -619,10 +613,8 @@ class MapView:
         if not self._loaded:
             return None
 
-        # Safety: if assignment length != loaded precinct count, skip rather
-        # than index past the array. Guards an IndexError when an edited
-        # re-import of the same path slips past the reload trigger; the real
-        # fix tracks gdf identity, this is the backstop.
+        # An assignment must align one-to-one with the loaded precinct rows.
+        # Skip mismatched input rather than indexing outside the array.
         if len(assignment) != self._n_precincts:
             log.warning(
                 f"MapView render skipped: assignment length {len(assignment)} "
@@ -746,8 +738,7 @@ class MapView:
                     si = int(stable_colors[mask][0])
                     dist_to_label[d] = int(lm[si]) if use_lm else si + 1
 
-            # Label placement is the hot path while annealing runs (the map
-            # re-renders every accepted step).  We have two modes:
+            # Label placement has two modes:
             #   fast_labels=True  -> cheap mean of precinct centroids per
             #     district.  Can drift outside a concave district but is
             #     microseconds, so safe to run every frame.

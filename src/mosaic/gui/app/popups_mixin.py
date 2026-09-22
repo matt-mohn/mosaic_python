@@ -21,8 +21,8 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._tolerance,
-                "Mosaic will only explore solutions where each district differs "
-                "from ideal by no more than this percentage in either direction.",
+                "Every district must stay within this percentage of ideal "
+                "population. Proposals outside the limit are rejected.",
             )
             dpg.add_spacer(height=6)
             with dpg.group(horizontal=True):
@@ -34,12 +34,9 @@ class PopupsMixin:
                 )
             self._tooltip(
                 self._tolerance_ratchet_mode,
-                "Gradually tightens Population Tolerance toward 0.25% over the "
-                "back of the run - never below the deviation the map already "
-                "hit, so it can't strand a plan.\n"
-                "  Off: fixed.\n"
-                "  Standard: tightens on each new best.\n"
-                "  Strict: tightens every eligible step.",
+                "Tightens Population Tolerance later in the run.\n"
+                "Off: fixed. Standard: tighten on a new best. "
+                "Strict: tighten at every eligible step.",
             )
             dpg.add_spacer(height=10)
             dpg.add_separator()
@@ -52,9 +49,8 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._pop_dev_harbor,
-                "Districts within this % of ideal are not penalized by the "
-                "population deviation score. Cannot exceed Population Tolerance "
-                "(clamped on run).",
+                "Differences inside this band add no Population Deviation penalty. "
+                "This does not change the hard Population Tolerance.",
             )
 
     def _build_seed_popup(self):
@@ -69,21 +65,20 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._seed,
-                "Set a non-zero seed to make a run reproducible; 0 leaves the "
-                "RNG random. Best-effort: identical results need the same "
-                "machine, Mosaic version, and shapefile - float ordering in "
-                "numpy/igraph can differ across environments.",
+                "Use a nonzero value to repeat a run; zero chooses a new value. "
+                "For best repeatability, turn off Fast tree generation and reuse "
+                "the same inputs and settings.",
             )
 
     def _build_advanced_save_popup(self):
         # Fixed size (not autosize): the inline spinner/status toggle on save and
         # we don't want the window resizing mid-export.
         with self._dialog(
-            "Export District Map", "popup_adv_save", (420, 300),
+            "Save Map Image", "popup_adv_save", (420, 300),
             show=False, autosize=False,
         ):
             self.theme.text(
-                "PNG and PDF export the whole state, regardless of zoom.\n"
+                "PNG and PDF export the full map, regardless of zoom.\n"
                 "Current colors, overlays, and labels are preserved.",
                 "muted", wrap=380,
             )
@@ -149,13 +144,18 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._fast_trees,
-                "Faster iterations; results may differ. "
-                "Turn off to use the original tree generator.",
+                "Build proposal trees faster. Turn this off for the strongest "
+                "repeatability with a fixed seed.",
             )
             dpg.add_separator()
             self._ann_enabled = dpg.add_checkbox(
                 label="Enable simulated annealing", default_value=True,
                 callback=self._on_ann_toggle,
+            )
+            self._tooltip(
+                self._ann_enabled,
+                "Sometimes accept a higher-scoring map so the search can keep "
+                "exploring. When off, every valid proposal is accepted.",
             )
             dpg.add_separator()
 
@@ -167,7 +167,8 @@ class PopupsMixin:
                 )
                 self._tooltip(
                     self._temp_factor,
-                    "initial_temp = factor x initial_score",
+                    "Sets the starting willingness to accept a higher score. "
+                    "Larger values allow more exploration.",
                 )
                 dpg.add_spacer(height=6)
 
@@ -188,7 +189,7 @@ class PopupsMixin:
                     )
                     self._tooltip(
                         self._guide_frac,
-                        "Fraction of iterations to cool over.",
+                        "Point in the run where Guided cooling reaches Target Temp.",
                     )
                     self._target_temp = dpg.add_input_float(
                         label="Target Temp",
@@ -197,7 +198,7 @@ class PopupsMixin:
                     )
                     self._tooltip(
                         self._target_temp,
-                        "Temperature at the guide point (absolute).",
+                        "Temperature Guided cooling reaches at Guide Point.",
                     )
 
                 with dpg.group(tag="static_controls", show=False):
@@ -208,8 +209,8 @@ class PopupsMixin:
                     )
                     self._tooltip(
                         self._cooling_rate,
-                        "Per-iteration temperature multiplier (default "
-                        "0.9995). Lower values cool faster.",
+                        "Multiplies temperature after each iteration. Lower values "
+                        "cool faster.",
                     )
 
                 dpg.add_spacer(height=8)
@@ -220,6 +221,11 @@ class PopupsMixin:
                     default_value=True,
                     callback=self._on_launch_watch_toggle,
                 )
+                self._tooltip(
+                    self._launch_watch_enabled,
+                    "Recalculate the Guided cooling schedule once after the "
+                    "opening part of the run.",
+                )
                 with dpg.group(tag="launch_watch_controls"):
                     self._launch_watch_iter = dpg.add_input_int(
                         label="Re-anchor after iter",
@@ -228,9 +234,7 @@ class PopupsMixin:
                     )
                     self._tooltip(
                         self._launch_watch_iter,
-                        "Once past this iteration, reset initial_temp to "
-                        "factor x current_score (instead of initial_score). "
-                        "Helps when scores nose-dive in the first ~250 steps.",
+                        "Earliest iteration when Launch Watch may recalculate the schedule.",
                     )
 
             dpg.add_spacer(height=10)
@@ -244,22 +248,20 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._n3_pct,
-                "Fraction of steps that merge 3 districts (vs 2) and re-split. "
-                "Escapes local minima better, at ~2.4x per-step cost. "
-                "Set to 0 for mass-generation runs.",
+                "Chance of redrawing three neighboring districts after no flip is "
+                "selected. These proposals usually take longer than ordinary ReCom.",
             )
 
             dpg.add_spacer(height=6)
             self.theme.text("Polish Flips", "heading")
             self._flip_enabled = dpg.add_checkbox(
-                label="Enable single-precinct flips in tail",
+                label="Enable single-precinct flips",
                 default_value=True,
             )
             self._tooltip(
                 self._flip_enabled,
-                "Adds single-precinct boundary flips alongside ReCom to polish "
-                "borders late in the run. The flip rate ramps from 5% early to "
-                "85% at the end, always leaving at least 15% ReCom.",
+                "Allow small boundary changes throughout the run. They are rare "
+                "early and more common late.",
             )
             self._flip_midpoint = dpg.add_slider_int(
                 label="50% crossover (% of run)",
@@ -268,8 +270,8 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._flip_midpoint,
-                "Where in the run the flip rate hits 50%. "
-                "Higher = flips stay rare until later.",
+                "Point in the run where flips reach half of proposal attempts. "
+                "Higher values delay them.",
             )
 
             dpg.add_spacer(height=10)
@@ -281,9 +283,8 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._hsplit_unclipped,
-                "Let the County Congruence penalty climb past the scorecard cap so "
-                "the optimizer keeps a gradient on heavily-split plans. Off = clipped "
-                "scorecard form (pins at the cap).",
+                "Keep distinguishing heavily split maps after the standard penalty "
+                "reaches its cap.",
             )
 
             dpg.add_spacer(height=10)
@@ -295,11 +296,8 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._hcompact_unclipped,
-                "Extends the compactness reward past the scorecard cap: tracks the "
-                "scorecard down to penalty 15, then eases to a flat landing at a "
-                "realistic ceiling, so the optimizer keeps rounding districts out "
-                "past 'compact enough'. Off = clipped scorecard form (saturates at "
-                "the cap).",
+                "Keep distinguishing compact maps after the standard penalty "
+                "reaches its cap.",
             )
 
     def _build_alignment_settings_popup(self):
@@ -355,9 +353,8 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._alignment_win_threshold,
-                "A reference district counts as 'won' (and is scored) when the "
-                "focus party's two-party share exceeds this. 0.535 ~ win by 7pts; "
-                "raise it to ignore near-coin-flip seats.",
+                "Include a reference district when the selected party's two-party "
+                "vote share is above this value.",
             )
 
     def _build_partisan_popup(self):
@@ -381,7 +378,8 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._win_prob,
-                "P(D wins district | D has 55% of two-party vote)",
+                "Modeled chance that a party wins a district where it has 55% of "
+                "the two-party vote.",
             )
             dpg.add_spacer(height=6)
 
@@ -392,7 +390,7 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._swing_sigma,
-                "Std dev of partisan-environment swing shared across all districts.",
+                "Controls how much the modeled statewide election environment varies.",
             )
             dpg.add_spacer(height=8)
 
@@ -404,7 +402,8 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._eg_mode,
-                "Robust EG integrates out both swing sigma and per-district noise.",
+                "Robust averages Efficiency Gap across modeled election conditions. "
+                "Static uses the loaded vote totals directly.",
             )
             dpg.add_spacer(height=10)
             dpg.add_separator()
@@ -417,9 +416,8 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._partisan_quadratic_penalty,
-                "When ON, all three modes (Fair / D / R) use a quadratic curve: "
-                "less urgency near the favored end, more urgency near the unfavored "
-                "end. Off = linear.",
+                "Make larger departures from the selected target count more heavily. "
+                "When off, the penalty is linear.",
             )
             dpg.add_spacer(height=8)
 
@@ -430,7 +428,7 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._mm_bound,
-                "MM penalty reaches 100 at this |raw| value, then saturates.",
+                "Mean-Median penalty reaches 100 at this absolute value.",
             )
             self._eg_bound = dpg.add_slider_float(
                 label="EG bound",
@@ -439,7 +437,7 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._eg_bound,
-                "EG penalty reaches 100 at this |raw| value, then saturates.",
+                "Efficiency Gap penalty reaches 100 at this absolute value.",
             )
             self._pbias_bound = dpg.add_slider_float(
                 label="Partisan Bias bound",
@@ -448,7 +446,7 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._pbias_bound,
-                "Partisan Bias penalty reaches 100 at this |raw| seat-tilt, then saturates.",
+                "Partisan Bias penalty reaches 100 at this absolute seat tilt.",
             )
             dpg.add_spacer(height=10)
             dpg.add_separator()
@@ -459,10 +457,8 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._comp_unclipped,
-                "Tracks the clipped scorecard down to penalty 25, then curves off to a "
-                "flat landing at the all-toss-up end instead of clamping to 0, so the "
-                "optimizer keeps a gradient where clipped saturates. Off = clipped "
-                "scorecard form (saturates once ~75% of seats are toss-ups).",
+                "Keep distinguishing highly competitive maps after the standard "
+                "penalty reaches its cap.",
             )
 
             dpg.add_spacer(height=10)
@@ -474,11 +470,8 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._prop_unclipped,
-                "Probabilistic form: a smooth seat-vs-vote gap escalated by the swing-"
-                "integrated chance the popular-vote loser controls the chamber, so the "
-                "optimizer feels antimajoritarian risk building instead of hitting a "
-                "binary trip. Off = clipped scorecard (winner's-bonus basin, a hard 100 "
-                "cap, and a binary antimajoritarian flip).",
+                "Use a smoother proportionality penalty instead of the standard "
+                "capped version.",
             )
 
     def _build_representation_popup(self):
@@ -489,9 +482,8 @@ class PopupsMixin:
                        lambda: dpg.configure_item("popup_representation", show=False)),
         ):
             self.theme.text(
-                "Chances for minority groups to elect their candidate of choice, "
-                "measured against what this state's geography can actually draw. "
-                "Needs demographic columns from the shapefile.",
+                "Uses selected demographic shares as a planning proxy for electoral "
+                "opportunity. Requires demographic columns.",
                 "muted", wrap=440,
             )
             dpg.add_separator()
@@ -502,19 +494,16 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._representation_unclipped,
-                "Softens the per-district credit cap so the optimizer keeps a "
-                "gradient at the solid level. Moves the Overall penalty; the "
-                "per-group Rating lines stay hard-capped either way.",
+                "Keep distinguishing districts above the standard full-credit level. "
+                "This changes the Overall penalty, not the displayed group ratings.",
             )
             self._opportunity_smart_targets = dpg.add_checkbox(
-                label="Smart targets", default_value=True,
+                label="Smart Targets", default_value=True,
             )
             self._tooltip(
                 self._opportunity_smart_targets,
-                "Judge each group against what this state's geography can actually "
-                "draw, not the best precincts anywhere in it. Off, the benchmark "
-                "can describe a district assembled from cities hundreds of miles "
-                "apart. Costs a few seconds at the start of a run.",
+                "Estimate each group's reference from nearby map units. This is a "
+                "heuristic, not proof that a valid district can be drawn.",
             )
             dpg.add_spacer(height=10)
             dpg.add_separator()
@@ -528,9 +517,7 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._opportunity_midpoint,
-                "The group's share of a district at which it has a 50/50 chance to "
-                "elect its candidate of choice. About 0.44 centers the reward on "
-                "the range where that chance is realistic.",
+                "Group share assigned a 50% opportunity value by the score curve.",
             )
             self._opportunity_steepness = dpg.add_slider_float(
                 label="Steepness",
@@ -539,8 +526,8 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._opportunity_steepness,
-                "How sharply the chance rises around the midpoint; smaller = more "
-                "of a threshold, larger = more of a gradual climb.",
+                "Controls how quickly opportunity value rises around Midpoint. "
+                "Smaller values make a sharper threshold.",
             )
             self._opportunity_solid = dpg.add_slider_float(
                 label="Solid level",
@@ -549,17 +536,14 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._opportunity_solid,
-                "The group's share of a district at which it counts as one full "
-                "opportunity district; the climb up to it is rewarded, packing "
-                "beyond it is not.",
+                "Group share that receives full standard credit.",
             )
             dpg.add_spacer(height=10)
             dpg.add_separator()
             dpg.add_spacer(height=6)
-            self.theme.text("What this map is aiming for", "heading")
+            self.theme.text("Estimated reference", "heading")
             self.theme.text(
-                "Opportunity districts this state's geography can support, "
-                "by group.",
+                "Heuristic opportunity count by group.",
                 "muted", wrap=440,
             )
             dpg.add_spacer(height=4)
@@ -568,7 +552,7 @@ class PopupsMixin:
                 self.theme.text("", "body", wrap=440) for _ in range(len(GROUPS))
             ]
             self._repr_counts_lbl = self.theme.text(
-                "Start a run to work out the targets.", "muted", wrap=440)
+                "Start a run to estimate the reference.", "muted", wrap=440)
 
     def _build_help_popup(self):
         # Fixed-size reader: the doc text scrolls inside its own child_window,
@@ -589,41 +573,35 @@ class PopupsMixin:
                 )
                 dpg.add_spacer(height=6)
                 dpg.add_text(
-                    "Mosaic uses simulated annealing plus recombination to generate "
-                    "redistricting plans. Cooling makes it more selective over time; "
-                    "recombination (merge two districts, draw a new boundary) is the "
-                    "edit it tries on each step.",
+                    "Mosaic searches for district maps that meet the population limit "
+                    "and improve the scores you choose. Most changes redraw two "
+                    "neighboring districts; optional n=3 moves and boundary flips "
+                    "provide larger or smaller changes.",
                     wrap=420,
                 )
                 dpg.add_spacer(height=14)
 
-                self.theme.text("Basic usage", "heading")
+                self.theme.text("Basic workflow", "heading")
                 dpg.add_separator()
                 dpg.add_text(
-                    "1. Import a shapefile\n"
-                    "2. Map columns (population, county, votes) in the picker\n"
-                    "3. Set district count and iterations\n"
-                    "4. Enable and weight the scores in the left-hand panel\n"
-                    "5. Optionally load an existing plan as a hot start via "
-                    "Advanced > Load Hot Start\n"
-                    "6. Start - pause / reset / revert to best as needed\n"
-                    "7. Save Assignments writes a CSV",
+                    "Load a shapefile and confirm its columns. Choose the district "
+                    "count, run length, and scores. Start the search, compare the "
+                    "current and best maps, then save the result you want.",
                     wrap=420,
                 )
                 dpg.add_spacer(height=14)
 
-                self.theme.text("Full documentation", "heading")
+                self.theme.text("Learn more", "heading")
                 dpg.add_separator()
                 dpg.add_text(
-                    "The website has the complete reference: scoring formulas, "
-                    "shapefile sources and requirements, install steps, "
-                    "troubleshooting, and methodology notes.",
+                    "The user guide explains settings, scores, saving, and "
+                    "troubleshooting. Technical details are in Methodology.",
                     wrap=420,
                 )
                 dpg.add_spacer(height=8)
                 with dpg.group(horizontal=True):
                     dpg.add_button(
-                        label="Open docs",
+                        label="Open user guide",
                         callback=lambda: webbrowser.open(_DOCS_URL),
                         width=110,
                     )

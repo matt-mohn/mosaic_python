@@ -24,7 +24,6 @@ class PanelsMixin:
                 ):
                     dpg.add_line_series([], [], label="Temp",
                                         tag="panel_temp_series")
-
     def _build_county_splits_panel(self):
         with dpg.window(
             label="Classic Splitting", tag="panel_county_splits",
@@ -56,9 +55,13 @@ class PanelsMixin:
                     dpg.add_text("", tag="cs_max_clean_note"),
                     "success_soft",
                 )
+            self._tooltip(
+                "cs_charts_grp",
+                "Fewer Excess Splits is better; more Single-County Districts is better.",
+            )
             self.theme.track(
                 dpg.add_text(
-                    "Apply a score to use this panel.",
+                    "Turn on this score to chart it.",
                     tag="cs_inactive_lbl", show=False,
                 ),
                 "muted",
@@ -239,11 +242,11 @@ class PanelsMixin:
                         dpg.add_line_series([], [], label="PP", tag="pp_series")
             self._tooltip(
                 "pp_plot_grp",
-                "Optimizer uses (1 - PP) as penalty; higher is more compact.",
+                "Shape rating from 0 to 100. Higher is more compact.",
             )
             self.theme.track(
                 dpg.add_text(
-                    "Apply a score to use this panel.",
+                    "Turn on this score to chart it.",
                     tag="pp_inactive_lbl", show=False,
                 ),
                 "muted",
@@ -265,11 +268,11 @@ class PanelsMixin:
                         dpg.add_line_series([], [], label="Reock", tag="reock_series")
             self._tooltip(
                 "reock_plot_grp",
-                "Optimizer uses (1 - Reock) as penalty; higher is more compact.",
+                "Shape rating from 0 to 100. Higher is more compact.",
             )
             self.theme.track(
                 dpg.add_text(
-                    "Apply a score to use this panel.",
+                    "Turn on this score to chart it.",
                     tag="reock_inactive_lbl", show=False,
                 ),
                 "muted",
@@ -284,14 +287,13 @@ class PanelsMixin:
             on_close=lambda: dpg.set_value(self._panel_representation_item, False),
         ):
             self._rep_chart_mode = dpg.add_radio_button(
-                items=["Overall", "Rating", "Seats"], default_value="Overall",
+                items=["Overall", "Rating", "Opportunity count"], default_value="Overall",
                 horizontal=True,
             )
             self._tooltip(
                 self._rep_chart_mode,
-                "Overall: the combined penalty actually minimized in annealing "
-                "(all races, 0 = best). Rating: per-group 0-100 opportunity rating. "
-                "Seats: live forecast of expected opportunity districts per group.",
+                "Overall: lower penalty is better. Rating: higher group rating is "
+                "better. Opportunity count: modeled full and partial district credit.",
             )
             with dpg.group(tag="representation_plot_grp"):
                 with dpg.plot(height=-1, width=-1, no_menus=True):
@@ -322,12 +324,12 @@ class PanelsMixin:
                 dpg.bind_item_theme(series, _line_theme)
             self._tooltip(
                 "representation_plot_grp",
-                "Per-group opportunity vs proportional; higher is better. "
-                "Groups below one proportional district are omitted (sit off-axis).",
+                "Group ratings and opportunity counts are higher-is-better. "
+                "Overall penalty is lower-is-better.",
             )
             self.theme.track(
                 dpg.add_text(
-                    "Apply a score to use this panel.",
+                    "Turn on this score to chart it.",
                     tag="representation_inactive_lbl", show=False,
                 ),
                 "muted",
@@ -349,9 +351,8 @@ class PanelsMixin:
             )
             self._tooltip(
                 self._cohesion_chart_mode,
-                "Overall: the combined penalty actually minimized in annealing "
-                "(0 = best). By group: per-group share of the minority neighborhood "
-                "kept intact (higher = better).",
+                "Overall: lower penalty is better. By group: higher intact share "
+                "is better.",
             )
             with dpg.group(tag="minority_cohesion_plot_grp"):
                 with dpg.plot(height=-1, width=-1, no_menus=True):
@@ -382,12 +383,12 @@ class PanelsMixin:
                 dpg.bind_item_theme(series, _line_theme)
             self._tooltip(
                 "minority_cohesion_plot_grp",
-                "Per-group share of the minority neighborhood kept intact; higher is "
-                "better. Groups with no adjacency sit off-axis.",
+                "Share of each selected group's weighted neighborhood kept together. "
+                "Higher is better.",
             )
             self.theme.track(
                 dpg.add_text(
-                    "Apply a score to use this panel.",
+                    "Turn on this score to chart it.",
                     tag="minority_cohesion_inactive_lbl", show=False,
                 ),
                 "muted",
@@ -408,10 +409,8 @@ class PanelsMixin:
             )
             self._tooltip(
                 self._congruence_chart_mode,
-                "Overall: the combined penalty actually minimized in annealing "
-                "(0 = best). By group: per-group congruence, how well that "
-                "group's communities sit inside single districts (higher = "
-                "better). Calibration is provisional.",
+                "Overall: lower penalty is better. By group: higher community "
+                "congruence is better.",
             )
             with dpg.group(tag="community_congruence_plot_grp"):
                 with dpg.plot(height=-1, width=-1, no_menus=True):
@@ -442,13 +441,12 @@ class PanelsMixin:
                 dpg.bind_item_theme(series, _line_theme)
             self._tooltip(
                 "community_congruence_plot_grp",
-                "Per-group congruence: how well that group's communities sit "
-                "inside single districts, against how many districts their size "
-                "forces. Higher is better. Groups with no cores sit off-axis.",
+                "Rates how little each selected group is spread across districts, "
+                "after a population-based allowance. Higher is better.",
             )
             self.theme.track(
                 dpg.add_text(
-                    "Apply a score to use this panel.",
+                    "Turn on this score to chart it.",
                     tag="community_congruence_inactive_lbl", show=False,
                 ),
                 "muted",
@@ -470,11 +468,11 @@ class PanelsMixin:
                         dpg.add_line_series([], [], label="Compactness", tag="hc_series")
             self._tooltip(
                 "hc_plot_grp",
-                "Combined PP + Reock rating; higher is more compact.",
+                "Combined Polsby-Popper and Reock rating. Higher is more compact.",
             )
             self.theme.track(
                 dpg.add_text(
-                    "Apply a score to use this panel.",
+                    "Turn on this score to chart it.",
                     tag="hc_inactive_lbl", show=False,
                 ),
                 "muted",
@@ -499,12 +497,11 @@ class PanelsMixin:
                         dpg.add_line_series([], [], label="Cty Cong", tag="hsplit_series")
             self._tooltip(
                 "hsplit_plot_grp",
-                "Combined county- and district-direction split penalty; lower = less "
-                "split. Unclipped mode keeps climbing past 100 on heavily-split plans.",
+                "County-splitting penalty. Lower is better; Unclipped mode may exceed 100.",
             )
             self.theme.track(
                 dpg.add_text(
-                    "Apply a score to use this panel.",
+                    "Turn on this score to chart it.",
                     tag="hsplit_inactive_lbl", show=False,
                 ),
                 "muted",
@@ -534,7 +531,7 @@ class PanelsMixin:
             self._tooltip(
                 "hprop_plot_grp",
                 "Proportionality rating (higher = closer to proportional), and "
-                "Inversion Risk: the chance the popular-vote loser controls the chamber.",
+                "the modeled chance that the statewide vote winner loses the chamber.",
             )
             self.theme.track(
                 dpg.add_text(
@@ -562,7 +559,7 @@ class PanelsMixin:
                         dpg.add_line_series([], [], label="Competitiveness", tag="hcmp_series")
             self._tooltip(
                 "hcmp_plot_grp",
-                "Competitiveness rating; higher = more districts near a toss-up.",
+                "Higher means the election model treats more districts as close contests.",
             )
             self.theme.track(
                 dpg.add_text(
@@ -641,7 +638,7 @@ class PanelsMixin:
             )
             self.theme.track(
                 dpg.add_text(
-                    "Apply a score to use this panel.",
+                    "Turn on this score to chart it.",
                     tag="popdev_inactive_lbl", show=False,
                 ),
                 "muted",
@@ -669,12 +666,11 @@ class PanelsMixin:
             self._tooltip(
                 "alignment_plot_grp",
                 "Share of each reference district that stays intact. "
-                "Mean across districts and the single worst-hit district. "
                 "Higher is closer to the reference plan.",
             )
             self.theme.track(
                 dpg.add_text(
-                    "Load a reference plan and apply the score to use this panel.",
+                    "Load a reference plan and turn on Alignment to chart it.",
                     tag="alignment_inactive_lbl", show=False,
                 ),
                 "muted",
@@ -772,6 +768,11 @@ class PanelsMixin:
                     width=200,
                     callback=self._on_dist_info_interval_change,
                 )
+                self._tooltip(
+                    self._dist_info_update_every,
+                    "How often this table refreshes during a run. This does not "
+                    "change scoring.",
+                )
             dpg.add_spacer(height=4)
             with dpg.table(
                 tag="district_info_table",
@@ -829,9 +830,8 @@ class PanelsMixin:
             on_close=lambda: dpg.set_value(self._panel_contrib_item, False),
         ):
             self.theme.text(
-                "Share of the total score each metric contributes - the "
-                "optimizer minimizes the total, so longer bars are driving the "
-                "annealing harder.",
+                "Share of the current total from each weighted score. Longer bars "
+                "have more influence.",
                 "muted",
                 wrap=w - 20,
             )

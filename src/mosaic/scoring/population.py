@@ -98,9 +98,8 @@ def score_pop_deviation(
     abs_dev = np.abs(pop_d - ideal) / ideal
     excess = np.maximum(0.0, abs_dev - safe_harbor)
     excess_sq = excess ** 2
-    # Sum-of-squares gives a smoother optimization landscape than mean+max; the
-    # 100k scale matches the earlier (mean+max) magnitude so existing weight
-    # tuning stays valid.
+    # Sum-of-squares provides a smooth gradient. The 100k factor sets the
+    # objective's magnitude; it does not impose a 0-100 bound.
     combined = float(np.sum(excess_sq) * 100_000 / n_districts)
 
     if return_components:
@@ -110,7 +109,7 @@ def score_pop_deviation(
     return combined
 
 
-# Keep these for backwards compatibility / future use
+# Reciprocal-spread population statistic.
 def calculate_population_score(
     populations: np.ndarray,
     assignment: np.ndarray,

@@ -1,11 +1,8 @@
-"""
-Weighted scoring for redistricting plans.
+"""Weighted scoring and aggregation for redistricting plans.
 
-Adding a new metric:
-  1. Add `weight_<name>: float = 0.0` to ScoreConfig.
-  2. Add `<name>: float = 0.0` to PlanScore.
-  3. Add one guarded branch in score_plan().
-  4. Add a toggle + slider in the GUI Score section.
+``score_plan`` returns the raw/display components in ``PlanScore`` and the
+weighted penalty total minimized by the optimizer. GUI histories and display
+transformations are maintained separately from this module.
 """
 
 from __future__ import annotations
@@ -93,13 +90,16 @@ class ScoreConfig:
     weight_hinge: float = 0.0
     hinge_threshold: int = 1      # seat count for the selected party
     hinge_dem: bool = True        # True = D wants >= threshold; False = R
-    # Demographic metrics (require VAP data; independent of election data)
+    # Demographic metrics (require one consistent demographic universe;
+    # independent of election data)
     weight_representation: float = 0.0
     representation_unclipped: bool = True    # smoothed cap (gradient) vs hard scorecard
-    representation_mode: str = "proportional"  # "proportional" (v1); "maximize" reserved
+    # Passed through to representation_from_opportunity; only the proportional
+    # form is currently implemented.
+    representation_mode: str = "proportional"
     weight_minority_cohesion: float = 0.0    # keep minority neighborhoods intact
     weight_community_congruence: float = 0.0  # keep minority communities whole
-    opportunity_midpoint: float = 0.44       # logistic center on group VAP share
+    opportunity_midpoint: float = 0.44       # logistic center on group share
     opportunity_steepness: float = 0.05      # logistic scale
     opportunity_solid: float = 0.55          # solid-majority share = one full opportunity district
     opportunity_smart_targets: bool = True   # local-pool feasibility + ceiling
@@ -289,8 +289,8 @@ def score_plan(
     if config.weight_alignment and assignment is not None \
             and alignment_data is not None and populations is not None \
             and n_districts is not None:
-        # Ask 1 — whose voters: measure retention in a party's votes if focused
-        # and that party's per-precinct votes are present; else fall back to pop.
+        # Measure retention in a party's votes when that focus is selected and
+        # the party's per-precinct votes are present; otherwise use population.
         focus = config.alignment_party_focus
         if focus == "rep" and gop_votes is not None:
             align_weights = gop_votes
@@ -300,8 +300,8 @@ def score_plan(
             focus = "none"
             align_weights = populations
 
-        # Ask 2 — which districts: restrict to reference districts the focus
-        # party "wins" (two-party share > threshold). Uses the reference's own
+        # Optionally restrict scoring to reference districts the focus party
+        # "wins" (two-party share > threshold). Uses the reference's own
         # per-district totals cached at load, so the set stays frozen to the
         # reference plan as the proposed map evolves.
         align_mask = None
@@ -487,7 +487,7 @@ def score_plan(
                 hinge_pen = (1.0 - hinge_raw) ** 1.5 * 100.0
             total += config.weight_hinge * hinge_pen
 
-    # Demographic metrics — only run when VAP data is present (independent of
+    # Demographic metrics — only run when demographic data is present (independent of
     # election data). Builds the shared opportunity engine once, per proposal.
     has_race = (vap_data is not None and assignment is not None
                 and n_districts is not None)
@@ -514,7 +514,8 @@ def score_plan(
     # Neighborhood Severance — minority-weighted cut-edge penalty (keep minority
     # neighborhoods intact). Independent of Representation. Scores the cut set:
     # which edges the plan severs, weighted by how much minority adjacency each
-    # carries. k sets the race-blind expectation the ratio is measured against.
+    # carries. District and precinct counts set the fixed race-blind expectation
+    # against which the ratio is measured.
     if (config.weight_minority_cohesion and minority_cohesion_data is not None
             and n_districts is not None):
         mc_pen, _coh = score_minority_cohesion(

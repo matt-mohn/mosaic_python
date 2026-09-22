@@ -3,21 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Mosaic — redistricting via recombination</title>
-  <meta name="description" content="A desktop GUI for ReCom + simulated annealing redistricting.">
+  <title>Mosaic — redistricting program</title>
+  <meta name="description" content="A program for computer-assisted redistricting with ReCom and simulated annealing.">
   <link rel="icon" href="mosaic_logo.png">
 
   <!-- Open Graph / social previews -->
   <meta property="og:type"          content="website">
-  <meta property="og:title"         content="Mosaic — redistricting via recombination">
-  <meta property="og:description"   content="A desktop tool for ReCom + simulated annealing redistricting.">
+  <meta property="og:title"         content="Mosaic — redistricting program">
+  <meta property="og:description"   content="A program for computer-assisted redistricting with ReCom and simulated annealing.">
   <meta property="og:url"           content="https://matt-mohn.github.io/mosaic_python/">
   <meta property="og:image"         content="https://matt-mohn.github.io/mosaic_python/new_landing_hero.png">
   <meta property="og:image:width"   content="1200">
   <meta property="og:image:height"  content="630">
   <meta name="twitter:card"         content="summary_large_image">
-  <meta name="twitter:title"        content="Mosaic — redistricting via recombination">
-  <meta name="twitter:description"  content="A desktop tool for ReCom + simulated annealing redistricting.">
+  <meta name="twitter:title"        content="Mosaic — redistricting program">
+  <meta name="twitter:description"  content="A program for computer-assisted redistricting with ReCom and simulated annealing.">
   <meta name="twitter:image"        content="https://matt-mohn.github.io/mosaic_python/new_landing_hero.png">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -66,9 +66,11 @@
         <img src="mosaic_logo.png" alt="" class="w-7 h-7">
         Mosaic
       </a>
-      <nav class="text-sm text-ink-soft hidden sm:flex items-center gap-7">
+      <nav class="text-sm text-ink-soft hidden md:flex items-center gap-7">
         <a href="install.html" class="hover:text-ink transition">Install</a>
-        <a href="help.html" class="hover:text-ink transition">Docs</a>
+        <a href="help.html" class="hover:text-ink transition">Help</a>
+        <a href="methodology.html" class="hover:text-ink transition">Methodology</a>
+        <a href="about.html" class="hover:text-ink transition">About</a>
         <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub →</a>
       </nav>
     </div>
@@ -81,7 +83,7 @@
       <img src="mosaic_logo.png" alt="Mosaic logo" class="mx-auto w-24 h-24 drop-shadow-md">
       <h1 class="mt-6 text-5xl sm:text-6xl font-bold tracking-tight text-ink leading-[1.05]">Mosaic</h1>
       <p class="mt-4 text-lg text-ink-soft">
-        Redistricting via Recombination, with Simulated Annealing.
+        Algorithmic redistricting in motion.
       </p>
       <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
         <a href="install.html"
@@ -101,7 +103,7 @@
     <!-- Hero visual -->
     <div class="relative max-w-5xl mx-auto px-6 pb-20 flex justify-center">
       <img src="hero.gif"
-           alt="Mosaic running a redistricting plan, choropleth redrawing each iteration"
+           alt="Mosaic showing a district plan changing during a run"
            class="block max-h-[250px] w-auto rounded-lg border border-line shadow-card">
     </div>
   </section>
@@ -110,11 +112,11 @@
   <section class="border-t border-line bg-white">
     <div class="max-w-3xl mx-auto px-6 py-16">
       <p class="text-lg text-ink leading-relaxed">
-        Mosaic is a desktop tool for ReCom + simulated annealing redistricting.
-        Load a shapefile, weight the metrics you care about, and watch each
-        iteration redraw the map and update the scores in real time. Cool the
-        chain toward fairer, more compact, or more competitive maps &mdash; or
-        start from an existing plan and refine it.
+        Mosaic is a program for computer-aided redistricting using recombination
+        and simulated annealing. Load a shapefile, choose the goals that matter
+        for your project, and let the algorithm repeatedly redraw and score the
+        map. Start from scratch, load an existing assignment, or continue
+        refining the map on screen.
       </p>
     </div>
   </section>
@@ -122,7 +124,7 @@
   <!-- ── Features ──────────────────────────────────────────────────────────── -->
   <section class="border-t border-line">
     <div class="max-w-5xl mx-auto px-6 py-16">
-      <h2 class="text-2xl font-bold tracking-tight">Features</h2>
+      <h2 class="text-2xl font-bold tracking-tight">What you can do</h2>
 
       <div class="mt-8 grid md:grid-cols-3 gap-6">
 
@@ -136,7 +138,7 @@
           </div>
           <h3 class="mt-4 text-base font-semibold text-ink">Live map</h3>
           <p class="mt-2 text-sm text-ink-soft leading-relaxed">
-            The choropleth redraws each iteration as ReCom merges and re-splits districts. Overlay counties, splits, partisanship, compactness, or population deviation.
+            Follow the current plan during a run. Color the map by election results, demographics, compactness, or population deviation, and show county lines, precinct lines, district labels, or split counties.
           </p>
         </div>
 
@@ -147,9 +149,9 @@
               <polyline points="17 18 23 18 23 12"/>
             </svg>
           </div>
-          <h3 class="mt-4 text-base font-semibold text-ink">Simulated annealing</h3>
+          <h3 class="mt-4 text-base font-semibold text-ink">Control the search</h3>
           <p class="mt-2 text-sm text-ink-soft leading-relaxed">
-            A guided cooling schedule self-tunes to the acceptance rate, so the same settings hold across different states and weight mixes. A static geometric schedule is there when you need to reproduce a published method.
+            Choose how many changes Mosaic should try and how closely district populations must match. Annealing controls how freely the search explores as the run progresses.
           </p>
         </div>
 
@@ -161,9 +163,9 @@
               <line x1="4" y1="4" x2="9" y2="9"/>
             </svg>
           </div>
-          <h3 class="mt-4 text-base font-semibold text-ink">ReCom engine</h3>
+          <h3 class="mt-4 text-base font-semibold text-ink">ReCom and local flips</h3>
           <p class="mt-2 text-sm text-ink-soft leading-relaxed">
-            Two-way recombination by default, with an optional three-way (n=3) mix to escape local minima and single-precinct polish flips that ramp in late to clean up borders.
+            Mosaic normally redraws two neighboring districts at a time. Optional three-district moves and single-precinct flips give the search additional ways to change a plan.
           </p>
         </div>
 
@@ -177,9 +179,9 @@
               <line x1="17" y1="16" x2="23" y2="16"/>
             </svg>
           </div>
-          <h3 class="mt-4 text-base font-semibold text-ink">Weighted scoring</h3>
+          <h3 class="mt-4 text-base font-semibold text-ink">Choose what to optimize</h3>
           <p class="mt-2 text-sm text-ink-soft leading-relaxed">
-            Mix and weight Compactness (a Polsby-Popper + Reock blend, or each on its own), county splits, population deviation, alignment to a reference plan, mean-median, efficiency gap, competitiveness, expected seats, and minority opportunity to elect.
+            Turn individual scores on and set their weights. Available goals cover population balance, district shape, county splits, elections, demographic geography, and alignment with a reference plan.
           </p>
         </div>
 
@@ -190,9 +192,9 @@
               <polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/>
             </svg>
           </div>
-          <h3 class="mt-4 text-base font-semibold text-ink">Composite ratings</h3>
+          <h3 class="mt-4 text-base font-semibold text-ink">Inspect the run</h3>
           <p class="mt-2 text-sm text-ink-soft leading-relaxed">
-            Single 0&ndash;100 ratings &mdash; Compactness, Competitiveness, Proportionality, County Congruence, and Electoral Opportunity &mdash; that fold several sub-measures into one interpretable number you can score and optimize against.
+            Open history charts for individual scores, track where goals align or compete, inspect district details, and return to the best plan found during the run.
           </p>
         </div>
 
@@ -203,9 +205,9 @@
               <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
           </div>
-          <h3 class="mt-4 text-base font-semibold text-ink">Export &amp; hot start</h3>
+          <h3 class="mt-4 text-base font-semibold text-ink">Save and continue</h3>
           <p class="mt-2 text-sm text-ink-soft leading-relaxed">
-            Save final assignments, score histories, and per-district metrics as CSV. Reload any saved assignment as a hot start to refine an existing map instead of starting from random.
+            Save the current assignments and district metrics as CSV, or save the map as a PNG or PDF.
           </p>
         </div>
 
@@ -221,11 +223,11 @@
         <figure class="rounded-xl overflow-hidden border border-line bg-white shadow-card">
           <div class="aspect-[4/3] flex items-center justify-center bg-white p-4">
             <img src="map_view.png"
-                 alt="Georgia congressional districts rendered as a choropleth in Mosaic, with nine districts in distinct colors."
+                 alt="Nine numbered districts with county boundaries visible in Mosaic."
                  class="max-w-full max-h-full object-contain">
           </div>
           <figcaption class="px-5 py-3 border-t border-line text-sm text-ink-soft">
-            Mosaic can align districts with county boundaries to reduce splits.
+            Pan and zoom through the changing map as the algorithm runs.
           </figcaption>
         </figure>
         <figure class="rounded-xl overflow-hidden border border-line bg-white shadow-card">
@@ -235,7 +237,7 @@
                  class="max-w-full max-h-full object-contain">
           </div>
           <figcaption class="px-5 py-3 border-t border-line text-sm text-ink-soft">
-            Tracking partisanship allows Mosaic to draw maps that are fair, competitive, or neither.
+            Inspect district-level election results and other plan metrics.
           </figcaption>
         </figure>
         <figure class="rounded-xl overflow-hidden border border-line bg-white shadow-card">
@@ -257,12 +259,12 @@
     <div class="max-w-3xl mx-auto px-6 py-16 text-center">
       <h2 class="text-2xl font-bold tracking-tight">Get Mosaic</h2>
       <p class="mt-3 text-ink-soft">
-        Five-minute install on Windows or Mac. No Python knowledge required &mdash;
-        a launcher script handles dependencies the first time you run it.
+        Install on Windows 10 or 11, or an Apple Silicon Mac. You do not need to
+        install Python yourself; the launcher handles setup on the first run.
       </p>
       <a href="install.html"
          class="mt-6 inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-ink text-paper font-medium hover:bg-ink-soft transition">
-        Read the install guide &rarr;
+        Installation guide &rarr;
       </a>
     </div>
   </section>
@@ -272,7 +274,7 @@
     <div class="max-w-5xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-ink-soft">
       <div class="flex items-center gap-2">
         <img src="mosaic_logo.png" alt="" class="w-5 h-5">
-        Mosaic &middot; <a href="https://x.com/mattmxhn" class="hover:text-ink transition">Matt Mohn</a>
+        Mosaic &middot; <a href="about.html" class="hover:text-ink transition">Matt Mohn</a>
       </div>
       <div class="flex items-center gap-5">
         <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub</a>

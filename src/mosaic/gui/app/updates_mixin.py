@@ -35,19 +35,17 @@ def _race_panel_msg(app, score_id: str = "") -> str:
     if not getattr(app, "_has_race", False):
         return "Load demographic data to use this panel."
     if app.state.race_score_applicable.get(score_id, True) is False:
-        return "Not applicable: nothing for this score to measure in this state."
-    return "Apply a score to use this panel."
+        return "Not available for the loaded demographic data."
+    return "Turn on this score to chart it."
 
 
 def _opportunity_target_lines(targets: dict,
                               provided=()) -> list[tuple[str, str]]:
     """Per-group opportunity-district targets as (text, theme token) pairs.
 
-    The count is what the geography can deliver (the ceiling), not the group's
-    proportional share: a group can clear the drawability gate on one marginal
-    district and still support well under a full one. A group with no column is
-    zero-filled upstream, so it must be named as missing rather than reported as
-    too small.
+    The count is a heuristic reference, not a forecast or proof that a valid
+    district can be drawn. A group with no column is zero-filled upstream, so it
+    must be named as missing rather than treated as a substantive zero.
     """
     out: list[tuple[str, str]] = []
     for key, name in _TARGET_LABELS:
@@ -59,12 +57,11 @@ def _opportunity_target_lines(targets: dict,
             continue
         drawable = int(round(t.get("ceiling", 0.0)))
         if int(t.get("target", 0)) < 1:
-            out.append((f"{name}: too few people for a district", "disabled_deep"))
+            out.append((f"{name}: reference below 1 district", "disabled_deep"))
         elif not t.get("feasible", 0) or drawable < 1:
-            out.append((f"{name}: too dispersed", "disabled_deep"))
+            out.append((f"{name}: no local reference found", "disabled_deep"))
         else:
-            out.append((f"{name}: {drawable} district"
-                        + ("s" if drawable != 1 else ""), "body"))
+            out.append((f"{name}: {drawable}-district reference", "body"))
     return out
 
 
@@ -226,7 +223,7 @@ class UpdatesMixin:
         )
 
         # ── Auto-renumber on run completion (Advanced checkbox) ──────────────────
-        # Fire once on the running -> COMPLETED transition.
+        # Fire once when status enters COMPLETED.
         if (status == AlgorithmStatus.COMPLETED
                 and getattr(self, "_last_seen_status", None)
                     != AlgorithmStatus.COMPLETED
@@ -435,9 +432,9 @@ class UpdatesMixin:
         if total_worse > 0:
             rate = 100.0 * acc / total_worse
             dpg.set_value(self._acc_txt,
-                          f"Entropy: {rate:.1f}%  ({acc:,} / {total_worse:,})")
+                          f"Worse accepted: {rate:.1f}%  ({acc:,} / {total_worse:,})")
         else:
-            dpg.set_value(self._acc_txt, "Entropy: --")
+            dpg.set_value(self._acc_txt, "Worse accepted: --")
 
         dpg.set_value(self._succ_txt,
                       f"Accepted steps: {snap['successful_steps']:,}")
@@ -778,9 +775,9 @@ class UpdatesMixin:
                 dpg.set_value("representation_inactive_lbl",
                               _race_panel_msg(self, "representation"))
             if repr_on:
-                mode = dpg.get_value(self._rep_chart_mode)   # Overall | Rating | Seats
+                mode = dpg.get_value(self._rep_chart_mode)
                 overall = mode == "Overall"
-                seats = mode == "Seats"
+                seats = mode == "Opportunity count"
                 dpg.configure_item("representation_overall_series", show=overall)
                 for _s in ("representation_black_series", "representation_latino_series",
                            "representation_asian_series"):
@@ -792,7 +789,7 @@ class UpdatesMixin:
                         dpg.set_axis_limits("representation_y", -4.0, 104.0)
                     elif seats:
                         dpg.configure_item("representation_y",
-                                           label="Forecast seats (opportunity districts)")
+                                           label="Opportunity count")
                     else:
                         dpg.configure_item("representation_y",
                                            label="Rating (100 = proportional)")
@@ -814,7 +811,7 @@ class UpdatesMixin:
                     _render(bufs[2], "representation_asian_series",
                             "representation_x", "representation_y", fit_y=False)
                     if seats:
-                        # Variable y-axis: fit to the largest forecast across the
+                        # Variable y-axis: fit to the largest opportunity count across the
                         # three groups in the current window, with a little
                         # headroom.  Seats top out at the district count, so the
                         # fixed 0-100 rating scale would bury the lines at the
@@ -1196,9 +1193,8 @@ class UpdatesMixin:
             dpg.set_value(self._panel_cs_item, False)
             dpg.configure_item("panel_county_splits", show=False)
 
-        # Map fill availability. One call replaces the old per-checkbox
-        # enable/disable + clear-if-unavailable bookkeeping: the combo relabels
-        # its entries and drops the current selection if its data just went away.
+        # Map-fill availability relabels combo entries and clears a selection
+        # whose required data is absent.
         # PP alone is enough to shade compactness -- the overlay blends in Reock
         # when reock_data is present and falls back to PP-only when it isn't, so
         # don't gate on Reock.
@@ -1246,7 +1242,7 @@ class UpdatesMixin:
             ]:
                 dpg.set_value(chk, False)
                 dpg.configure_item(ctrl_tag, show=False)
-        # Enable/disable demographic metric controls based on VAP data. Mirrors the
+        # Enable/disable demographic metric controls based on demographic data. Mirrors the
         # partisan block above: Representation ships visible by default (its group's
         # flagship), so without demographics loaded its checkbox has to read as
         # unavailable rather than as a live control that silently scores 0.

@@ -85,7 +85,7 @@ _PHASE_METRICS: list[tuple[str, str, str]] = [
     ("Dem Majority",         "majority_dem_history",              "x100"),
     ("Rep Majority",         "majority_rep_history",              "x100"),
     ("Hinge",                "hinge_history",                     "x100"),
-    # Demographic — dropped from the pickers when no VAP data is loaded. The
+    # Demographic — dropped from the pickers when no demographic data is loaded. The
     # aggregate penalties actually minimized in annealing (0 = best).
     ("Electoral Opportunity", "representation_overall_history",   "raw"),
     ("Neighborhood Severance", "minority_cohesion_overall_history", "raw"),
@@ -269,10 +269,8 @@ class _SeriesBuffer:
 # (name, x-tick label, RGBA fill)
 _DIR_TO_MODE = {"Fair": "fair", "D": "favor_dem", "R": "favor_rep"}
 
-# The map-toolbar fills: these colour the map body, exactly one at a time, so
-# they live in a single combo rather than a row of checkboxes. Six independent
-# -looking checkboxes implied they combined, while the code silently cleared the
-# others; the combo makes the exclusivity honest and reclaims a toolbar row.
+# The map-toolbar fills colour the map body one at a time. The combo represents
+# that mutual exclusivity directly.
 #
 # (combo label, MapView attribute, data this fill requires)
 _FILL_NONE = "None (District)"
@@ -346,7 +344,7 @@ _DIALOG_BTN_W = 90     # standard footer button width
 _DIALOG_RM    = 6      # right margin inside the content region for the footer
 _MAP_DH       = _MAP_H - 22            # texture pixel height (~368)
 _PLOT_H       = 155    # single-plot height (score row)
-_HALF_PLOT_H  = 150    # height of the two side-by-side plots (Score / Entropy)
+_HALF_PLOT_H  = 150    # height of the two side-by-side plots
 # Do not raise this without also raising _TOP_H. These plots are the last items
 # in the _TOP_H container and DPG clips rather than scrolls, so any overflow eats
 # the x-axis off the bottom of both charts. 150 exactly fills the space that
@@ -358,118 +356,96 @@ _HALF_PLOT_W  = (_MAP_DW - 10) // 2   # width of each half-plot (~429)
 # Attach with self._hint(widget_tag, "key"). Keep entries one or two sentences.
 _HINTS: dict[str, str] = {
     "entropy": (
-        "Entropy is the share of iterations that Mosaic accepts that are "
-        "technically worse - when high, Mosaic is conducting lots of "
-        "exploration, and when low, Mosaic is settling on a solution."
+        "Share of recent higher-scoring proposals that Mosaic accepted. "
+        "Higher means more exploration."
     ),
     "score": (
-        "The score is how the current map rates - totaling all the weighted "
-        "penalties you've set. Mosaic tries to lower this number over the "
-        "course of the annealing."
+        "Combined total of the scores and weights you turned on. Lower is better."
     ),
     "county_edge_bias": (
-        "Makes Mosaic less likely to cut edges that cross county lines when "
-        "drawing new districts, so counties stay whole more often. Higher "
-        "multiplier = stronger preference for keeping counties intact."
+        "Changes which redraws Mosaic is more likely to try; it does not add to "
+        "the score. Higher values more strongly avoid crossing county lines."
     ),
     "cut_edges": (
-        "Counts adjacent precinct-pairs that fall in different districts. "
-        "Lower means more natural, compact-graph boundaries."
+        "Counts neighboring map-unit pairs assigned to different districts. "
+        "Lower is better; this is not a shape measure."
     ),
     "county_splits": (
-        "Penalizes plans that split counties across multiple districts. "
-        "Encourages keeping counties whole or nearly so."
+        "Two county goals: fewer excess splits and more districts contained in "
+        "one county. Each has its own weight."
     ),
     "pop_deviation": (
-        "How far each district's population strays from the ideal (total / N). "
-        "Districts inside the safe-harbor band are unpenalized; the rest "
-        "contribute proportional to how far out they are."
+        "Prefers populations closer to ideal inside the hard Population "
+        "Tolerance. Differences inside Safe Harbor add no penalty."
     ),
     "alignment": (
-        "How close the plan stays to a loaded reference plan - a least-change "
-        "penalty. A reference district kept whole costs nothing; one split "
-        "apart costs more. Load a reference CSV first; 0 = identical to it."
+        "Measures how much of each reference district stays together. Lower "
+        "penalty means closer to the loaded reference plan."
     ),
     "alignment_focus": (
-        "Whose retention to measure: all residents, or a party's voters - so a "
-        "district scores on how many of its own partisans stayed together. "
-        "Needs election data."
+        "Choose what should stay together: all residents, Democratic votes, or "
+        "Republican votes. Party choices require election data."
     ),
     "alignment_restrict": (
-        "Score only the reference districts the focus party already wins, so "
-        "you keep your own seats. Needs a party focus and election data."
+        "Focus the comparison on reference districts above the selected party's "
+        "win threshold."
     ),
     "compactness": (
-        "Polsby-Popper: ratio of district area to a circle with the same perimeter. "
-        "1.0 = perfectly round, lower means stretched or jagged. "
-        "Optimizer uses (1 - PP) as the penalty."
+        "Shape compactness from 0 to 100. Higher means more area for the same "
+        "boundary length."
     ),
     "reock": (
-        "Reock: ratio of district area to its bounding-circle area. "
-        "1.0 = perfect circle, lower means stretched. Complements Polsby-Popper, "
-        "which measures boundary smoothness rather than overall roundness."
+        "Shape compactness from 0 to 100. Higher means the district fills more "
+        "of its smallest enclosing circle."
     ),
     "holistic_compactness": (
-        "One 0-100 compactness dial blending Polsby-Popper and Reock 50/50. "
-        "Higher = more compact. Use it instead of tuning the two separately."
+        "Combines Polsby-Popper and Reock into one shape rating."
     ),
     "holistic_splitting": (
-        "One splitting penalty (0 = best) blending county and district splits "
-        "50/50. Rewards lopsided splits over even ones, weighted by population so "
-        "splitting a big city costs more. 'Unclipped' lets the penalty climb past "
-        "the scorecard cap so the optimizer keeps a gradient on heavily-split plans."
+        "Measures how much counties are divided among districts. Lower is better."
     ),
     "holistic_proportionality": (
-        "One 0-100 rating of seat share vs vote share. Pulls toward proportional "
-        "seats for the statewide vote; antimajoritarian plans get an instant 100."
+        "Compares expected seat share with statewide vote share."
     ),
     "holistic_competitiveness": (
-        "One 0-100 rating that rewards districts near a 50/50 win probability. "
-        "The credit tapers off as seats get safer, and caps once about 75% of "
-        "districts are competitive."
+        "Rates how many districts the election model treats as close contests."
     ),
     "representation": (
-        "One 0-100 rating of minority opportunity to elect, scored per group "
-        "against what this state's geography can actually draw. Higher = better."
+        "Uses selected demographic shares to reward districts with potential "
+        "electoral opportunity."
     ),
     "minority_cohesion": (
-        "Penalizes cutting district lines through the core of a Black, Latino or "
-        "Asian community, even one too small to elect. Correlates with Cut Edges, "
-        "so start the weight low."
+        "Measures whether district lines separate neighboring map units with "
+        "substantial selected-group population. Lower penalty is better."
     ),
     "community_congruence": (
-        "Keeps a minority community in as few districts as population equality "
-        "allows, so one too big for a single district is not charged for an "
-        "unavoidable split. Counts pieces, not where lines fall."
+        "Measures how widely each selected demographic community is spread across "
+        "districts. Lower penalty is better."
     ),
     "mean_median": (
-        "Gap between the mean and median Democratic vote share across districts. "
-        "A nonzero value signals partisan skew baked into the plan."
+        "Difference between mean and median Democratic vote share. Fair moves "
+        "toward zero; D and R favor their selected direction."
     ),
     "efficiency_gap": (
-        "Difference in wasted votes between parties, normalized by total votes. "
-        "Captures classic gerrymander signatures (packing and cracking). "
-        "0 = neutral; sign shows which party benefits."
+        "Compares the parties' wasted votes. Fair moves toward zero; D and R "
+        "favor their selected direction."
     ),
     "partisan_bias": (
-        "Seat-share tilt at a hypothetical 50/50 statewide vote (uniform swing). "
-        "0 = symmetric; sign shows which party would hold the seat majority at a tie."
+        "Estimates seat advantage at an even statewide vote. Fair moves toward "
+        "zero; D and R favor their selected direction."
     ),
     "partisan_gini": (
-        "Area between the seats-votes curve and its mirror image. Unsigned "
-        "measure of asymmetry; 0 = a perfectly symmetric plan."
+        "Unsigned partisan-asymmetry penalty. Zero is best."
     ),
     "dem_seats": (
-        "Expected Democratic-won districts under the swing model. Directional: "
-        "the D toggle pulls toward more Dem seats, R toward fewer."
+        "Model-average Democratic seat count. Choose D to seek more or R to seek fewer."
     ),
     "majority_chance": (
-        "Probability that the selected party wins a majority of seats under "
-        "the swing model. Useful when integer seat count is too coarse."
+        "Estimated chance that the selected party wins more than half the seats."
     ),
     "hinge": (
-        "Probability the selected party reaches a chosen seat threshold "
-        "(e.g. 2/3 supermajority). Targets minority-veto or override-proof seat counts."
+        "Estimated chance that the selected party wins at least the number of "
+        "seats in Threshold."
     ),
 }
 

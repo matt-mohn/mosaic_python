@@ -60,7 +60,7 @@ class MenuMixin:
             pass
 
     def _on_check_updates(self):
-        """Manual update check (Advanced menu). Compares the local version to the
+        """Manual update check (File menu). Compares the local version to the
         public repo's pyproject version. Synchronous — it's user-initiated — with
         a short timeout so it can't hang the UI for long."""
         import re as _re
@@ -222,7 +222,7 @@ class MenuMixin:
             self._do_new()
 
     def _do_new(self) -> None:
-        """Discard current results and return to a clean slate."""
+        """Discard the current file and results and return to the no-file state."""
         dpg.configure_item("popup_new_confirm", show=False)
         self._on_reset()
         self._saved_plan = None

@@ -263,9 +263,10 @@ class IOMixin:
             self._clear_relight()
 
     def _on_num_districts_change(self, *_args) -> None:
-        """Changing the district count invalidates the on-screen map, so a
-        Relight armed against it no longer applies -- turn it off (restoring the
-        pre-Relight annealing settings). No-op when Relight isn't armed."""
+        """Clear Relight when its seed map no longer matches the district count.
+
+        Restores the pre-Relight annealing settings. No-op when Relight is off.
+        """
         if self._relight_active:
             self._clear_relight()
 
@@ -331,8 +332,7 @@ class IOMixin:
     def _update_relight_display(self) -> None:
         if self._relight_active:
             dpg.set_value(self._relight_info,
-                          "RELIGHT: reseeding from the current map each run "
-                          "with ultra-low temperature")
+                          "RELIGHT ON: each Start continues from the current map")
             dpg.configure_item(self._relight_info, show=True)
         else:
             dpg.configure_item(self._relight_info, show=False)
@@ -340,8 +340,8 @@ class IOMixin:
 
     def _sync_seed_controls(self) -> None:
         """Enable-state for the Relight / Hot Start menu items: mutually
-        exclusive, and Relight needs a map with a paused/ended run. Runs every
-        frame, so it avoids taking the state lock (a None-check and an enum read)."""
+        exclusive. Relight needs a map in IDLE, PAUSED, COMPLETED, or ERROR
+        status. Called every frame."""
         has_map = self.state.current_assignment is not None
         status = self.state.status
         real_hot = self.state.get("hot_start_filename")[0] != ""
@@ -526,7 +526,7 @@ class IOMixin:
             msg = (
                 f"HOT START: {info['filename']} -- "
                 f"{info['n_districts']} districts, "
-                f"max dev {info['max_dev_pct']:.2f}%"
+                f"max population difference {info['max_dev_pct']:.2f}%"
             )
             dpg.set_value(self._hot_start_info, msg)
             dpg.configure_item(self._hot_start_info, show=True)

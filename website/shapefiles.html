@@ -3,21 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Shapefiles for Mosaic</title>
-  <meta name="description" content="Where to get shapefiles and what Mosaic needs them to look like.">
+  <title>Prepare a Shapefile for Mosaic</title>
+  <meta name="description" content="What a shapefile needs to contain before you load it into Mosaic.">
   <link rel="icon" href="mosaic_logo.png">
 
   <!-- Open Graph / social previews -->
   <meta property="og:type"          content="website">
-  <meta property="og:title"         content="Shapefiles for Mosaic">
-  <meta property="og:description"   content="Where to find one, what Mosaic needs it to look like, and what to do when it complains.">
+  <meta property="og:title"         content="Prepare a Shapefile for Mosaic">
+  <meta property="og:description"   content="Required files and columns, optional data, coordinate systems, and load errors.">
   <meta property="og:url"           content="https://matt-mohn.github.io/mosaic_python/shapefiles.html">
   <meta property="og:image"         content="https://matt-mohn.github.io/mosaic_python/new_landing_hero.png">
   <meta property="og:image:width"   content="1200">
   <meta property="og:image:height"  content="630">
   <meta name="twitter:card"         content="summary_large_image">
-  <meta name="twitter:title"        content="Shapefiles for Mosaic">
-  <meta name="twitter:description"  content="Where to find one, what Mosaic needs it to look like, and what to do when it complains.">
+  <meta name="twitter:title"        content="Prepare a Shapefile for Mosaic">
+  <meta name="twitter:description"  content="Required files and columns, optional data, coordinate systems, and load errors.">
   <meta name="twitter:image"        content="https://matt-mohn.github.io/mosaic_python/new_landing_hero.png">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -60,10 +60,6 @@
     .prose-block li { margin-top: 0.35rem; }
     .prose-block a { color: #1d4180; text-decoration: underline; text-underline-offset: 2px; }
     .prose-block a:hover { color: #1a1f2c; }
-    .src-card { display: block; padding: 1rem 1.25rem; border: 1px solid #e3e7ef; border-radius: 0.75rem; background: white; transition: all 0.15s; }
-    .src-card:hover { border-color: #1d4180; box-shadow: 0 4px 16px rgba(20,28,48,0.06); }
-    .src-card h3 { margin: 0; font-size: 1rem; font-weight: 600; color: #1a1f2c; }
-    .src-card p { margin-top: 0.35rem; font-size: 0.875rem; color: #4a5263; line-height: 1.55; }
   </style>
 </head>
 <body class="bg-paper text-ink">
@@ -75,10 +71,12 @@
         <img src="mosaic_logo.png" alt="" class="w-7 h-7">
         Mosaic
       </a>
-      <nav class="text-sm text-ink-soft hidden sm:flex items-center gap-7">
+      <nav class="text-sm text-ink-soft hidden md:flex items-center gap-7">
         <a href="index.html" class="hover:text-ink transition">Home</a>
         <a href="install.html" class="hover:text-ink transition">Install</a>
-        <a href="help.html" class="hover:text-ink transition">Docs</a>
+        <a href="help.html" class="hover:text-ink transition">Help</a>
+        <a href="methodology.html" class="hover:text-ink transition">Methodology</a>
+        <a href="about.html" class="hover:text-ink transition">About</a>
         <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub →</a>
       </nav>
     </div>
@@ -86,335 +84,148 @@
 
   <main class="max-w-3xl mx-auto px-6 py-14 prose-block">
 
-    <h1 class="text-4xl font-bold tracking-tight leading-tight">Shapefiles for Mosaic</h1>
+    <h1 class="text-4xl font-bold tracking-tight leading-tight">Prepare a shapefile</h1>
     <p class="mt-3 text-ink-soft text-lg">
-      Where to find one, what Mosaic needs it to look like, and what to do
-      when it complains.
+      Mosaic can use any polygon shapefile that has a population count and a
+      stable ID for each map unit. Election, county, and demographic data are optional.
     </p>
 
-    <!-- ── Where to get a shapefile ──────────────────────────────────────── -->
-    <h2 id="sources">Where do I get a shapefile?</h2>
-    <p>
-      Mosaic does not include a built-in data fetcher; you bring your own
-      shapefile. These are the cleanest sources for redistricting work:
-    </p>
+    <nav class="mt-7 flex flex-wrap gap-2 text-sm font-medium" aria-label="On this page">
+      <a class="rounded-full border border-line bg-white px-3 py-1.5 no-underline hover:border-navy" href="#files">Files</a>
+      <a class="rounded-full border border-line bg-white px-3 py-1.5 no-underline hover:border-navy" href="#columns">Columns</a>
+      <a class="rounded-full border border-line bg-white px-3 py-1.5 no-underline hover:border-navy" href="#crs">Coordinate system</a>
+      <a class="rounded-full border border-line bg-white px-3 py-1.5 no-underline hover:border-navy" href="#problems">Load problems</a>
+    </nav>
 
-    <div class="mt-5 grid sm:grid-cols-2 gap-4">
+    <section id="files">
+      <h2>Start with the complete file</h2>
+      <p>
+        A shapefile is a group of files, not only the file ending in
+        <code>.shp</code>. Keep its matching <code>.shp</code>, <code>.shx</code>,
+        <code>.dbf</code>, and <code>.prj</code> files together with the same base
+        name. Select the <code>.shp</code> file in Mosaic.
+      </p>
 
-      <a class="src-card" href="https://redistrictingdatahub.org/">
-        <h3>Redistricting Data Hub &rarr;</h3>
-        <p>The most user-friendly start. Pre-cleaned precinct shapefiles with
-          population and election totals, organised by state and election year.
-          Free with registration.</p>
-      </a>
+      <div class="mt-5 rounded-xl border border-line bg-white p-5 shadow-card">
+        <h3 class="mt-0">Mosaic-ready files</h3>
+        <p>
+          The <a href="https://github.com/matt-mohn/mosaic_shapefiles_extra">Mosaic
+          shapefile collection</a> contains prepared state files and documents
+          each file's fields, data choices, and license. Mosaic also includes a
+          small North Carolina sample for trying the program.
+        </p>
+      </div>
 
-      <a class="src-card" href="https://dataverse.harvard.edu/dataverse/electionscience">
-        <h3>VEST (Harvard Dataverse) &rarr;</h3>
-        <p>The Voting and Election Science Team's precinct shapefiles with
-          election results joined in. Strong for partisan-scoring runs. Format
-          and column naming are very consistent across states.</p>
-      </a>
+      <p>
+        Files from anywhere else are fine. Mosaic cares about their geometry and
+        columns, not who published them.
+      </p>
+    </section>
 
-      <a class="src-card" href="https://github.com/mggg-states">
-        <h3>MGGG-states &rarr;</h3>
-        <p>Academic-grade shapefiles curated by the Metric Geometry and
-          Gerrymandering Group. Each state repo includes documentation of
-          columns and known caveats. Designed for redistricting research.</p>
-      </a>
+    <section id="geometry">
+      <h2>Geometry</h2>
+      <p>
+        Each row must contain one polygon or multipolygon representing a map unit,
+        usually a precinct. Points, lines, empty shapes, and zero-area shapes cannot
+        be used to build districts.
+      </p>
+    </section>
 
-      <a class="src-card" href="https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html">
-        <h3>Census TIGER/Line &rarr;</h3>
-        <p>The official boundary files for counties, congressional districts,
-          tracts, and block groups. No population or vote data attached &mdash;
-          you would need to join those yourself.</p>
-      </a>
+    <section id="columns">
+      <h2>Choose columns in Shapefile Setup</h2>
+      <p>
+        Mosaic will suggest columns when their names are recognizable. Check the
+        selections before choosing <strong>Confirm and Load</strong>; the meaning of
+        the data matters more than the column name.
+      </p>
 
-    </div>
+      <div class="mt-5 overflow-x-auto rounded-xl border border-line bg-white">
+        <table class="w-full text-left text-sm">
+          <thead class="border-b border-line bg-paper-2 text-ink">
+            <tr><th class="px-4 py-3 font-semibold">Selection</th><th class="px-4 py-3 font-semibold">What it needs</th><th class="px-4 py-3 font-semibold">What it enables</th></tr>
+          </thead>
+          <tbody class="divide-y divide-line text-ink-soft">
+            <tr><td class="px-4 py-3 font-semibold text-ink">Population</td><td class="px-4 py-3">A numeric count with no blanks or negative values.</td><td class="px-4 py-3">Required for every run.</td></tr>
+            <tr><td class="px-4 py-3 font-semibold text-ink">Precinct ID</td><td class="px-4 py-3">A stable, unique value for every row.</td><td class="px-4 py-3">Required for assignments and saved plans.</td></tr>
+            <tr><td class="px-4 py-3 font-semibold text-ink">County</td><td class="px-4 py-3">A county name or code shared by units in the same county.</td><td class="px-4 py-3">County scoring, County-Edge Bias, and the county overlay.</td></tr>
+            <tr><td class="px-4 py-3 font-semibold text-ink">Elections</td><td class="px-4 py-3">Matching Democratic and Republican vote totals from the same election.</td><td class="px-4 py-3">Partisan scores and election displays.</td></tr>
+            <tr><td class="px-4 py-3 font-semibold text-ink">Demographics</td><td class="px-4 py-3">A total plus at least one matching Black, Latino, or Asian count. White is optional.</td><td class="px-4 py-3">Demographic scores and map fills. White is used only in the map fill.</td></tr>
+          </tbody>
+        </table>
+      </div>
 
-    <p class="mt-5">
-      You can also grab a shapefile from your state's GIS portal. Quality varies
-      wildly; the cleaned sources above are usually less work.
-    </p>
+      <div class="mt-5 rounded-xl border border-gold/60 bg-amber-50 px-5 py-4 text-sm text-ink-soft">
+        <strong class="text-ink">Keep the demographic basis consistent.</strong>
+        Whether you use CVAP, VAP, total population, or another basis, the group
+        columns and their total must describe the same population.
+      </div>
 
-    <!-- ── Bonus pre-prepared state files ─────────────────────────────── -->
-    <h2 id="bonus">Bonus Mosaic-ready state shapefiles</h2>
-    <p>
-      Forty-three US states pre-joined and ready to load directly into Mosaic:
-      TIGER/Line VTD geometries, 2020 population + race/age VAP breakdowns, and
-      2016 / 2020 / 2024 presidential vote totals. Each zip extracts to a single
-      <code>.shp</code> set; pick it in Mosaic's load dialog and the auto-detect
-      should pre-fill the population and county columns for you.
-    </p>
-    <p>
-      Available states: Alabama, Arizona, Arkansas, California, Colorado,
-      Connecticut, Florida, Georgia, Idaho, Illinois, Indiana, Iowa, Kansas,
-      Kentucky, Louisiana, Maine, Maryland, Massachusetts, Michigan, Minnesota,
-      Mississippi, Missouri, Montana, Nebraska, Nevada, New Hampshire, New
-      Jersey, New Mexico, New York, North Carolina, Ohio, Oklahoma, Oregon,
-      Pennsylvania, Rhode Island, South Carolina, Tennessee, Texas, Utah,
-      Virginia, Washington, West Virginia, Wisconsin (1.4&ndash;55.5 MB each).
-    </p>
-    <p>
-      Three caveats are documented per-state on the repo: eight states
-      (AR, CT, ME, MI, NJ, OK, OR, PA) use county-swing-estimated 2024
-      results (<code>DT_EST_24</code> / <code>KH_EST_24</code>) because
-      precinct-level 2024 data was unavailable; three states (CA, NY, RI)
-      have a small number of offshore precincts removed for graph
-      connectivity; Florida is accurate in Mosaic but will not round-trip
-      cleanly into Dave's Redistricting. See the
-      <a href="https://github.com/matt-mohn/mosaic_shapefiles_extra#per-state-notes">per-state notes</a>
-      and
-      <a href="https://github.com/matt-mohn/mosaic_shapefiles_extra/blob/main/DATA_LICENSE.md">DATA_LICENSE.md</a>
-      for the schema and modeling choices.
-    </p>
-    <a class="src-card" href="https://github.com/matt-mohn/mosaic_shapefiles_extra"
-       style="display:block; padding:1.25rem 1.5rem;">
-      <h3>Browse and download on GitHub &rarr;</h3>
-      <p>Click any <code>_DRA_Mosaic.zip</code> file on the repo, then the
-        download icon to save it.</p>
-    </a>
-    <div class="mt-4 rounded-xl border border-line bg-paper-2 p-4 text-sm text-ink-soft">
-      <strong>License:</strong> these files inherit
-      <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC&nbsp;BY-SA&nbsp;4.0</a>
-      from <a href="https://davesredistricting.org">Dave's Redistricting</a>,
-      with DRA's explicit <strong>no-sale restriction</strong>. Distinct from
-      Mosaic itself, which is MIT. Full attribution and schema notes:
-      <a href="https://github.com/matt-mohn/mosaic_shapefiles_extra/blob/main/DATA_LICENSE.md">DATA_LICENSE.md</a>.
-    </div>
+      <p>
+        Leave optional selections blank when your file does not contain the right
+        data. Mosaic will leave the related scores and displays unavailable.
+      </p>
+    </section>
 
-    <p class="mt-8">
-      Just want to try Mosaic without picking a state? The bundled North Carolina sample
-      (<code>shapefiles/North_Carolina_Simplified.shp</code> in the extracted
-      folder) is ready to load with no setup.
-    </p>
+    <section id="crs">
+      <h2>Use an appropriate coordinate system</h2>
+      <p>
+        Mosaic reads the coordinate system stored in the shapefile. A latitude and
+        longitude file can be displayed, but its area, distance, and compactness
+        calculations are distorted. Use an appropriate projected, preferably
+        equal-area, coordinate system when those measurements matter.
+      </p>
+      <p>
+        The bundled North Carolina sample uses latitude and longitude. It is useful
+        for learning the interface, but its compactness values should not be treated
+        as authoritative.
+      </p>
+    </section>
 
-    <!-- ── What Mosaic needs ─────────────────────────────────────────────── -->
-    <h2 id="requirements">What Mosaic needs the shapefile to look like</h2>
+    <section id="problems">
+      <h2>When a file will not load</h2>
+      <p>
+        Mosaic reports the first blocking problem in Shapefile Setup. These are the
+        common fixes.
+      </p>
 
-    <h3>Geometry</h3>
-    <p>
-      Polygons (or multipolygons), one per precinct. Mosaic will refuse to load
-      a shapefile of points or lines, or one where some rows have null geometry.
-    </p>
+      <div class="mt-5 space-y-3">
+        <details class="rounded-xl border border-line bg-white">
+          <summary class="cursor-pointer px-5 py-4 font-semibold text-ink">Missing, empty, or wrong geometry</summary>
+          <div class="px-5 pb-5 text-sm text-ink-soft">
+            <p class="mt-0">Errors mentioning <strong>null or empty geometry</strong>, <strong>not Polygon / MultiPolygon</strong>, or <strong>zero area</strong> identify rows Mosaic cannot use. Repair or remove those shapes in a GIS program, then reload the file.</p>
+          </div>
+        </details>
+        <details class="rounded-xl border border-line bg-white">
+          <summary class="cursor-pointer px-5 py-4 font-semibold text-ink">Population or vote column errors</summary>
+          <div class="px-5 pb-5 text-sm text-ink-soft">
+            <p class="mt-0">The selected columns must be numeric, nonnegative, and free of missing values. Confirm that you selected counts rather than a label, percentage, or ID column.</p>
+          </div>
+        </details>
+        <details class="rounded-xl border border-line bg-white">
+          <summary class="cursor-pointer px-5 py-4 font-semibold text-ink">Demographic selection errors</summary>
+          <div class="px-5 pb-5 text-sm text-ink-soft space-y-2">
+            <p class="mt-0"><strong>“A Total column is required”</strong> means a group was selected without its matching denominator. <strong>“Select at least one scored group”</strong> means only Total or White was selected.</p>
+            <p>A warning that a group is larger than its total usually means the columns use different population bases or the wrong total was selected. Fix that before relying on demographic results.</p>
+          </div>
+        </details>
+        <details class="rounded-xl border border-line bg-white">
+          <summary class="cursor-pointer px-5 py-4 font-semibold text-ink">Disconnected geography</summary>
+          <div class="px-5 pb-5 text-sm text-ink-soft">
+            <p class="mt-0">Islands and exclaves are normal, and Mosaic usually connects them in its working map automatically. If it still reports disconnected components, inspect the named rows for empty, damaged, or unusable geometry.</p>
+          </div>
+        </details>
+      </div>
+    </section>
 
-    <h3>Required columns</h3>
-    <ul>
-      <li>
-        <strong>Population</strong> &mdash; numeric, no missing values, no negatives,
-        positive total. Mosaic auto-detects common names such as <code>POP</code>,
-        <code>TOTPOP</code>, <code>POPULATION</code>, <code>TOTAL_POP</code>,
-        <code>POP_TOTAL</code>, <code>POP100</code>, and the census
-        <code>P0010001</code> / <code>P001001</code>. If yours uses something else
-        you can pick it in the column-picker dialog after load.
-      </li>
-      <li>
-        <strong>Precinct ID</strong> &mdash; any column that uniquely identifies
-        each row, used when Mosaic writes the assignments CSV. Common names:
-        <code>GEOID</code>, <code>GEOID20</code>, <code>VTDID</code>.
-      </li>
-    </ul>
-
-    <h3>Optional columns</h3>
-    <ul>
-      <li>
-        <strong>County</strong> &mdash; required only if you want to score
-        county splits, county-edge bias, or use the county overlay. Common names:
-        <code>CTY</code>, <code>COUNTY</code>, <code>COUNTYFP</code>.
-      </li>
-      <li>
-        <strong>Vote totals</strong> &mdash; one pair (Democratic, Republican)
-        per election. Required for partisan scores (mean-median, efficiency gap,
-        expected seats, etc.). Mosaic supports one election per run, and
-        auto-detects a recognized D/R column pair (e.g. <code>baseline_d</code> /
-        <code>baseline_r</code>, or plain <code>DEM</code> / <code>REP</code>),
-        pre-filling it in the column-picker dialog; pick your own pair there if
-        the names differ.
-      </li>
-      <li>
-        <strong>Population by group</strong> &mdash; required for the three
-        demographic scores (Electoral Opportunity, Neighborhood Severance,
-        Community Dispersion). You need a <strong>total</strong> column plus at
-        least one of <strong>Black</strong>, <strong>Hispanic</strong> or
-        <strong>Asian</strong>; a <strong>White</strong> column is optional and
-        feeds the map overlay only. Common names are auto-detected
-        (<code>VAP_TOTAL</code>, <code>VAP_BLACK</code>, <code>CVAP_HISP</code>,
-        <code>BVAP</code>, &hellip;) and pre-filled in the column-picker, where
-        you confirm or change them.
-      </li>
-    </ul>
-
-    <p>
-      <strong>Which population basis?</strong> Any consistent one works &mdash;
-      voting-age population (VAP), citizen voting-age population (CVAP), or plain
-      total population. Mosaic measures each group as a share of whichever total
-      you select, so the arithmetic is the same either way. Use the best basis
-      your file carries; if it only has total population by group, that is fine
-      and Mosaic will not nag you about it.
-    </p>
-    <p>
-      Whichever basis you use, you may want to tune the opportunity curve to
-      match it &mdash; the midpoint and solid level in
-      <span class="gui">Electoral Opportunity settings</span> are thresholds on
-      a group's share of a district, so what counts as an opportunity district
-      depends on how that share was measured.
-    </p>
-    <p>
-      Mosaic checks the columns you pick and will tell you if something looks
-      wrong &mdash; a group column that sums to more than the total, groups
-      summing well past the total, a column already used for votes or population,
-      or a total that is not a head count. A group you leave unset is simply left
-      out of the scores rather than silently counted as zero.
-    </p>
-
-    <h3>Coordinate system (CRS)</h3>
-    <p>
-      Mosaic works with any CRS the file declares, but Polsby-Popper compactness
-      is computed from polygon area &mdash; so a geographic CRS (degrees of
-      latitude / longitude) gives misleadingly low scores. For honest
-      compactness, project your shapefile to an equal-area CRS first. For the
-      continental US, <code>EPSG:5070</code> (USA Contiguous Albers Equal Area)
-      is a safe default.
-    </p>
-    <p>
-      The Redistricting Data Hub, VEST, and MGGG sources above already ship in
-      projected CRSs.
-    </p>
-    <p>
-      Note: the bundled North Carolina sample
-      (<code>North_Carolina_Simplified.shp</code>) is in a geographic CRS
-      (<code>EPSG:4269</code>, NAD83 lat/long), so its Polsby-Popper /
-      compactness scores show exactly the distortion described above. Treat them
-      as illustrative, not authoritative.
-    </p>
-
-    <!-- ── Worked example ────────────────────────────────────────────────── -->
-    <h2 id="example">Worked example: loading the bundled sample</h2>
-    <ol class="mt-3 list-decimal list-inside space-y-2">
-      <li>Open Mosaic.</li>
-      <li>Click <strong>Load shapefile</strong> and pick
-        <code>shapefiles/North_Carolina_Simplified.shp</code> from the folder
-        you extracted.</li>
-      <li>
-        The column-picker dialog opens. Every column in the sample is
-        auto-detected: <strong>Population</strong> <code>POP</code>,
-        <strong>Precinct ID</strong> <code>GEOID20</code>,
-        <strong>County</strong> <code>CTY</code>, the election pair
-        <code>DEM</code> / <code>REP</code>, and the demographic columns
-        <code>VAP_TOTAL</code> / <code>VAP_WHITE</code> / <code>VAP_BLACK</code> /
-        <code>VAP_LATINO</code> / <code>VAP_ASIAN</code>. Confirm.
-      </li>
-      <li>Set district count to 14 (NC's congressional total) and run.</li>
-      <li>
-        The sample carries election and demographic columns, so every score is
-        available on it, including the three demographic ones.
-      </li>
-    </ol>
-
-    <!-- ── About the cache ───────────────────────────────────────────────── -->
-    <h2 id="cache">About the cache folder</h2>
-    <p>
-      The first time you load a shapefile, Mosaic builds an adjacency graph
-      and saves a pickled copy under <code>cache/&lt;shapefile-stem&gt;.pkl</code>
-      so subsequent loads of the same file skip the build step (typically
-      saving 5&ndash;30 seconds, longer for big files).
-    </p>
-    <p>
-      The cache is keyed by the shapefile's filename and a content hash of its
-      <code>.shp</code> / <code>.dbf</code> bytes, so editing the shapefile
-      invalidates the cache automatically. You can delete the <code>cache/</code>
-      folder any time; it rebuilds on next load.
-    </p>
-
-    <!-- ── If Mosaic refuses to load ─────────────────────────────────────── -->
-    <h2 id="problems">If Mosaic refuses to load your shapefile</h2>
-    <p>
-      Mosaic does a few strict checks at load time. If any fail, it tells you
-      why in the status bar (or inline in the column-picker dialog) and refuses
-      to proceed.
-    </p>
-
-    <h3>"N of M rows have null or empty geometry"</h3>
-    <p>
-      Some rows have no polygon. Remove them in QGIS or your GIS tool and reload.
-      Mosaic cannot build adjacency for rows with no geometry.
-    </p>
-
-    <h3>"N of M rows are not Polygon / MultiPolygon"</h3>
-    <p>
-      The shapefile contains points or lines. Mosaic needs polygons. You probably
-      grabbed the wrong file &mdash; for example, a precinct *centroids* file
-      instead of a precinct *boundaries* file.
-    </p>
-
-    <h3>"N of M polygons have zero area"</h3>
-    <p>
-      Some rows have degenerate (zero-area) polygons. Mosaic cannot redistrict
-      degenerate features. Repair or remove those rows in QGIS or your GIS tool
-      and reload.
-    </p>
-
-    <h3>"Population column has N null / NaN value(s)"</h3>
-    <p>
-      Population must be present on every row. Clean the data in your GIS tool
-      (set blanks to 0 if you really want, but understand 0-pop districts get
-      treated as empty) and reload.
-    </p>
-
-    <h3>"Demographics: a Total column is required"</h3>
-    <p>
-      You picked one or more group columns but no total to measure them against.
-      Every demographic score works on shares, so pick the matching total column
-      &mdash; or clear the demographic dropdowns entirely, in which case the
-      three demographic scores are simply unavailable and nothing else changes.
-    </p>
-
-    <h3>"Demographics: select at least one scored group"</h3>
-    <p>
-      A total on its own has nothing to compare against. Pick at least one of
-      Black, Hispanic or Asian. A White column does not satisfy this &mdash; it
-      feeds the map overlay and is never scored.
-    </p>
-
-    <h3>"Demographic total column '&hellip;' is not numeric"</h3>
-    <p>
-      The selected column holds text rather than counts &mdash; a county name or
-      an ID, most often, picked from the dropdown by mistake. Choose the column
-      holding the actual population figures.
-    </p>
-
-    <h3>"&hellip; sums to more than the demographic total" (warning)</h3>
-    <p>
-      A group column is larger than the total you selected, which usually means
-      the two are swapped or the total is a subgroup. This is a warning, not a
-      blocker: Mosaic will run, but the shares it computes will be wrong, so it
-      is worth fixing before you trust the demographic scores.
-    </p>
-
-    <h3>"Adjacency graph has N disconnected components"</h3>
-    <p>
-      Your shapefile contains islands or exclaves &mdash; physically separate
-      regions that don't touch the mainland. Common in coastal states (HI, AK,
-      Outer Banks, barrier islands). Mosaic normally handles these for you: when
-      it builds the adjacency graph it reconnects each detached component to the
-      mainland with a deterministic <em>virtual</em> bridge edge (nearest
-      precinct, same county preferred) that is invisible to scoring, so a
-      well-formed shapefile loads and runs with no manual cleanup.
-    </p>
-    <p>
-      This error now appears only when bridging can't find a valid link &mdash;
-      typically degenerate or empty geometry. The message reports the mainland
-      (largest component) plus the number of smaller groups and how many
-      precincts they total, and lists the row indices involved (capped at the
-      first 10, with a count of any remaining). Fix or remove those rows in your
-      GIS tool and reload.
-    </p>
-
-    <p class="mt-10">
-      Still stuck? Open an issue on
-      <a href="https://github.com/matt-mohn/mosaic_python/issues">GitHub</a>
-      with a description of the data you tried to load and the error message
-      you got.
-    </p>
+    <section id="cache">
+      <h2>The cache folder</h2>
+      <p>
+        Mosaic saves the connections between map units after the first load so the
+        same file opens faster later. It rebuilds that information when the source
+        data changes. The <code>cache</code> folder can be deleted safely; Mosaic
+        creates it again when needed.
+      </p>
+    </section>
 
   </main>
 
@@ -423,9 +234,11 @@
     <div class="max-w-5xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-ink-soft">
       <div class="flex items-center gap-2">
         <img src="mosaic_logo.png" alt="" class="w-5 h-5">
-        Mosaic &middot; <a href="https://x.com/mattmxhn" class="hover:text-ink transition">Matt Mohn</a>
+        Mosaic &middot; <a href="about.html" class="hover:text-ink transition">Matt Mohn</a>
       </div>
       <div class="flex items-center gap-5">
+        <a href="help.html" class="hover:text-ink transition">Help</a>
+        <a href="methodology.html" class="hover:text-ink transition">Methodology</a>
         <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub</a>
         <a href="https://github.com/matt-mohn/mosaic_python/blob/main/LICENSE" class="hover:text-ink transition">MIT License</a>
       </div>

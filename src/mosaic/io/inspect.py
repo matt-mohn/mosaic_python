@@ -36,10 +36,10 @@ _ELECTION_PAIRS: tuple[tuple[set[str], set[str]], ...] = (
 # and is not a user dropdown.
 #
 # ORDER = PREFERENCE: names are checked left-to-right, first present column wins.
-# CVAP is preferred (citizen basis is the more accurate electorate for the
-# opportunity scores), VAP is the fallback -- so a file carrying BOTH bases (like
-# *_Adv) auto-fills CVAP, while a VAP-only file still auto-fills VAP. To prefer
-# VAP instead, move the cvap_* names to the back of each tuple.
+# These are only suggestions for the demographic picker; the user must confirm a
+# total and group columns from one consistent basis. Because each field currently
+# resolves independently, this routine must not be treated as proof that a hinted
+# set is uniformly CVAP, VAP, total population, or any other demographic universe.
 _RACE_HINTS: dict[str, tuple[str, ...]] = {
     "total":  ("cvap_total", "cvap", "vap_total", "vap", "total_vap", "totvap", "vap100"),
     "white":  ("cvap_white", "vap_white", "white", "vap_wht", "nh_white", "wvap"),
@@ -68,7 +68,7 @@ class ShapefileConfig:
     id_col: str
     county_col: Optional[str] = None
     elections: list[tuple[str, str]] = field(default_factory=list)  # [(dem_col, gop_col)]
-    # VAP-by-race columns the user confirmed: {group: col} for "total" plus any
+    # Demographic columns the user confirmed: {group: col} for "total" plus any
     # subset of "black"/"latino"/"asian", optionally "white". None or missing
     # "total"/no scored race = the demographic scores are unavailable. "white" is
     # selectable but never scored -- it feeds the map's demographic overlay.
@@ -94,7 +94,7 @@ class ShapefileInspection:
     hint_id_col: Optional[str] = None
     hint_county_col: Optional[str] = None
     hint_election: Optional[tuple[str, str]] = None   # (dem_col, gop_col)
-    hint_race: Optional[dict] = None                  # {group: col} VAP-by-race, or None
+    hint_race: Optional[dict] = None                  # {group: demographic column}, or None
 
 
 # Census GEOID column names — used only for the no-fiona heuristic fallback
@@ -304,7 +304,8 @@ def _detect_race(
     cols: list[str],
     col_info: dict[str, ColumnInfo] | None = None,
 ) -> Optional[dict]:
-    """Best-effort per-group VAP column match to pre-fill the demographics
+    """Best-effort per-group demographic column match to pre-fill the
+    demographics
     dropdowns. Returns {group: original_col_name} for WHATEVER resolves to a
     present (case-insensitive), numeric column -- partial is fine (e.g. total +
     black only). None if nothing matched. The user confirms/edits in the dialog."""
