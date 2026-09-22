@@ -21,8 +21,10 @@ mosaic
 
 Prefer a one-click launcher? See [Getting started](https://matt-mohn.github.io/mosaic_python/help.html#getting-started).
 
-Python 3.10+ on Windows, macOS, or Linux. Sample North Carolina shapefiles included.
+Windows 10 or 11, or an Apple Silicon Mac on macOS 13 or newer. The launcher sets up
+Python for you; installing with `pip` needs Python 3.10+. Sample North Carolina
+shapefiles included.
 
 ---
 
-MIT &mdash; ReCom derived from the [MGGG Redistricting Lab](https://mggg.org/). A Python port of [Mosaic for R](https://github.com/matt-mohn/Mosaic).
+MIT &mdash; ReCom derived from the [MGGG Redistricting Lab](https://mggg.org/).
