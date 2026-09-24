@@ -56,6 +56,7 @@
     .setting-table tr:last-child td { border-bottom: 0; }
     code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; background: #f1f3f7; padding: 0.08rem 0.3rem; border-radius: 0.25rem; }
   </style>
+  <link rel="stylesheet" href="site-nav.css">
 </head>
 <body class="bg-paper text-ink">
   <header class="border-b border-line bg-paper/90 backdrop-blur sticky top-0 z-10">
@@ -63,7 +64,7 @@
       <a href="index.html" class="flex items-center gap-2.5 font-semibold tracking-tight text-lg">
         <img src="mosaic_logo.png" alt="" class="w-7 h-7">Mosaic
       </a>
-      <nav class="text-sm text-ink-soft hidden md:flex items-center gap-7">
+      <nav aria-label="Primary" class="site-nav-desktop text-sm text-ink-soft hidden md:flex items-center gap-7">
         <a href="index.html" class="hover:text-ink transition">Home</a>
         <a href="install.html" class="hover:text-ink transition">Install</a>
         <a href="help.html" class="text-ink font-medium">Help</a>
@@ -71,6 +72,18 @@
         <a href="about.html" class="hover:text-ink transition">About</a>
         <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub →</a>
       </nav>
+      <details class="site-nav-mobile">
+        <summary>Menu</summary>
+        <nav aria-label="Mobile">
+          <a href="index.html">Home</a>
+          <a href="install.html">Install</a>
+          <a href="help.html" aria-current="page">Help</a>
+          <a href="shapefiles.html">Shapefiles</a>
+          <a href="methodology.html">Methodology</a>
+          <a href="about.html">About</a>
+          <a href="https://github.com/matt-mohn/mosaic_python">GitHub →</a>
+        </nav>
+      </details>
     </div>
   </header>
 
@@ -98,6 +111,7 @@
         <a href="#setup" class="block hover:text-ink transition">Set up a run</a>
         <a href="#scores" class="block hover:text-ink transition">Choose priorities</a>
         <a href="#run" class="block hover:text-ink transition">Run and inspect</a>
+        <a href="#presets" class="block hover:text-ink transition">Score presets</a>
         <a href="#save" class="block hover:text-ink transition">Save and export</a>
         <a href="#troubleshooting" class="block hover:text-ink transition">Troubleshooting</a>
         <a href="#advanced" class="block hover:text-ink transition">Advanced settings</a>
@@ -108,21 +122,11 @@
     <main class="min-w-0 space-y-20">
       <section id="overview" class="help-section">
         <h2 class="text-3xl font-bold tracking-tight">What Mosaic does</h2>
-        <div class="mt-6 grid md:grid-cols-2 gap-5">
-          <div class="rounded-xl border border-line bg-white p-6 shadow-card">
-            <h3 class="font-semibold text-lg">Mosaic builds district plans</h3>
-            <p class="mt-2">Load a polygon shapefile, choose how many districts to create, and tell Mosaic which qualities matter to you. Mosaic repeatedly changes the boundaries and keeps track of plans that better match those priorities.</p>
-          </div>
-          <div class="rounded-xl border border-line bg-white p-6 shadow-card">
-            <h3 class="font-semibold text-lg">You remain in control</h3>
-            <p class="mt-2">The map, scores, and charts update during a run. You can pause, inspect the current plan, return to the best plan found so far, and export the plan on screen.</p>
-          </div>
-        </div>
+        <p class="mt-3">Load a polygon shapefile, choose the district count, and set your scoring priorities. Mosaic searches for plans with lower weighted scores. Pause to inspect a plan, return to the best found, or export the map on screen.</p>
       </section>
 
       <section id="getting-started" class="help-section">
         <h2 class="text-3xl font-bold tracking-tight">Basic workflow</h2>
-        <p class="mt-3">Most work in Mosaic follows the same five stages.</p>
         <ol class="number-list mt-8 space-y-7">
           <li><h3 class="font-semibold text-lg">Load your data</h3><p class="mt-1">Open a polygon shapefile and identify the population, precinct ID, county, election, and demographic columns that are available. See the <a href="shapefiles.html">shapefile guide</a> for file requirements.</p></li>
           <li><h3 class="font-semibold text-lg">Set the basic limits</h3><p class="mt-1">Choose the number of districts, the population tolerance, and the maximum number of iterations.</p></li>
@@ -135,13 +139,12 @@
       <section id="setup" class="help-section">
         <h2 class="text-3xl font-bold tracking-tight">Set up a run</h2>
         <p class="mt-3"><strong class="text-ink">Import Shapefile from File</strong> opens <strong class="text-ink">Shapefile Setup</strong>. Choose the required Population and Precinct ID columns; County, Elections, and Demographics are optional. <strong class="text-ink">+ Add Election</strong> pairs DEM and GOP columns. Then choose <strong class="text-ink">Confirm and Load</strong>.</p>
-        <p class="mt-3">Start with the three settings below. The defaults for the remaining controls are suitable for an ordinary first run.</p>
         <div class="mt-6 overflow-x-auto rounded-xl border border-line bg-white">
           <table class="setting-table w-full min-w-[620px]">
             <thead class="bg-paper-2"><tr><th>Setting</th><th>What it changes</th><th>Practical guidance</th></tr></thead>
             <tbody>
               <tr><td class="font-semibold text-ink">Districts</td><td>The number of districts in the plan.</td><td>Use the size of the chamber or map you are drawing.</td></tr>
-              <tr><td class="font-semibold text-ink">Population Tolerance</td><td>The largest allowed difference from the ideal district population.</td><td>A smaller tolerance demands more equal populations but makes valid moves harder to find.</td></tr>
+              <tr><td class="font-semibold text-ink">Population Tolerance</td><td>The largest allowed difference from the ideal district population.</td><td>Choose percent or people; both control the same limit. The people slider moves in rounded steps. Smaller tolerances make valid moves harder to find.</td></tr>
               <tr><td class="font-semibold text-ink">Iterations</td><td>The maximum number of search steps in the run.</td><td>More iterations give Mosaic more opportunities to improve the plan, but take longer.</td></tr>
             </tbody>
           </table>
@@ -205,6 +208,7 @@
         <h3 class="mt-9 text-xl font-semibold">Read the map</h3>
         <ul class="help-list mt-3">
           <li>Scroll over the map to zoom, drag to pan, and double-click to return to the full state.</li>
+          <li>Resizing the window preserves the map’s center and zoom. Extra width expands the map; extra height goes to the scores area.</li>
           <li>Use the controls below the map to change the coloring and add county lines, precinct lines, or labels.</li>
           <li>Coloring modes replace one another. Line and label overlays can be placed on top.</li>
           <li>Map-image exports always show the full state, regardless of the current zoom.</li>
@@ -215,27 +219,35 @@
           <div class="rounded-xl border border-line bg-white p-5"><h4 class="font-semibold">Views</h4><p class="mt-1 text-sm">Controls which charts and information panels are visible. Showing a view does not automatically add that metric to the objective.</p></div>
         </div>
         <div class="mt-4 space-y-3">
-          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Map fills, overlays, and status</summary><div class="px-5 pb-5 space-y-3"><p>The Fill menu offers <strong class="text-ink">None (District)</strong>, election <strong class="text-ink">Results - Precinct</strong> and <strong class="text-ink">Results - District</strong>, <strong class="text-ink">Demographics - Precinct</strong> and <strong class="text-ink">Demographics - District</strong>, <strong class="text-ink">Compactness</strong>, and <strong class="text-ink">Population Deviation</strong>. Results use Democratic two-party share; Demographics use the largest selected group and its share. Compactness runs from less-compact red/orange toward more-compact green. Population Deviation uses blue below ideal and red above it. County, Precinct, Labels, and Splits are additive overlays; Splits highlights counties divided among districts.</p><p><strong class="text-ink">Score</strong> is the current weighted total and <strong class="text-ink">Best</strong> is the lowest accepted total so far. <strong class="text-ink">Worse accepted</strong> is the run-wide share of higher-scoring proposals accepted; <strong class="text-ink">Entropy</strong> shows the rolling rate. <strong class="text-ink">Accepted steps</strong> counts accepted proposals, while <strong class="text-ink">Flip rate</strong> is the current chance of trying a boundary flip. Iter/sec and Est. left report speed and estimated time remaining.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Map fills, overlays, and status</summary><div class="px-5 pb-5 space-y-3"><p>The Fill menu offers <strong class="text-ink">None (District)</strong>, election <strong class="text-ink">Results - Precinct</strong> and <strong class="text-ink">Results - District</strong>, <strong class="text-ink">Demographics - Precinct</strong> and <strong class="text-ink">Demographics - District</strong>, <strong class="text-ink">Compactness</strong>, and <strong class="text-ink">Population Deviation</strong>. Results use Democratic two-party share; Demographics use the largest selected group and its share. Compactness runs from less-compact red/orange toward more-compact green. Population Deviation uses blue below ideal and red above it. County, Precinct, Labels, and Splits are additive overlays; Splits highlights counties divided among districts.</p><p><strong class="text-ink">Score</strong> is the current weighted total and <strong class="text-ink">Best</strong> is the lowest accepted total so far. <strong class="text-ink">Entropy</strong> in the status box is the run-wide share of higher-scoring proposals accepted; the Entropy chart shows the rolling rate. <strong class="text-ink">Accepted steps</strong> counts accepted proposals, while <strong class="text-ink">Flip rate</strong> is the current chance of trying a boundary flip. Iter/sec and Est. left report speed and estimated time remaining.</p></div></details>
           <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Temperature, Partisanship, Win Chance, Score Contributors, District Info, and Comet Plot</summary><div class="px-5 pb-5 space-y-3"><p><strong class="text-ink">Temperature</strong> charts annealing temperature. <strong class="text-ink">Partisanship</strong> shows loaded two-party district results; <strong class="text-ink">Win Chance</strong> shows modeled Democratic win probabilities. <strong class="text-ink">Score Contributors</strong> shows each enabled metric's share of the current weighted total. <strong class="text-ink">District Info</strong> is a per-district table; Update every (iters) changes only its refresh rate.</p><p><strong class="text-ink">Comet Plot</strong> traces two selected measures against each other. Smooth averages nearby plotted points, Fit all shows the full trail, and Fade makes older points less prominent. These controls change only the chart.</p></div></details>
         </div>
+      </section>
+
+      <section id="presets" class="help-section">
+        <h2 class="text-3xl font-bold tracking-tight">Score presets</h2>
+        <p class="mt-3">Use <strong>Configuration → Save Preset...</strong> to save scoring choices as TOML. <strong>Apply Preset...</strong> or <strong>Apply Recent Preset</strong> restores them. The default folder is <code>presets/</code> beside the launcher.</p>
+        <p class="mt-3">Presets include score switches, weights, score options, and county bias. They exclude the map, column selections, reference assignment, district count, population tolerance, and run controls. Applying a preset turns Hinge off because its seat threshold depends on the map.</p>
+        <details class="mt-5 rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Applying and editing presets</summary><div class="px-5 pb-5 space-y-3 text-sm"><p>Disabled scores retain their saved weights. Scores requiring missing data stay off, and a message identifies the missing inputs. Review those choices after loading the required data. Safe Harbor is capped at the current population tolerance.</p><p>Known numeric settings must be finite, in range, and integral where required. Invalid settings reject the preset before controls change. Missing settings use startup defaults; unknown keys are ignored with a warning. TOML proportions use fractions, such as 0.05 for 5%.</p><p>Clear All Scores turns every score off and restores its startup control values. It does not restore the usual set of enabled scores or change row visibility. Presets are scoring recipes, not full run checkpoints.</p></div></details>
       </section>
 
       <section id="save" class="help-section">
         <h2 class="text-3xl font-bold tracking-tight">Save and export</h2>
         <p class="mt-3"><strong class="text-ink">Exports use the plan currently shown on the map.</strong> If you want the best plan found during the run, choose <strong class="text-ink">Revert to Best</strong> before exporting.</p>
         <div class="mt-6 grid md:grid-cols-3 gap-4">
-          <div class="rounded-xl border border-line bg-white p-5"><h3 class="font-semibold">Quick Save / Save Assignments</h3><p class="mt-2 text-sm">Writes an Assignments CSV with one row per source feature and its district number. Quick Save uses a timestamped name in the output folder; File → Save Assignments lets you choose a name and location where supported.</p></div>
+          <div class="rounded-xl border border-line bg-white p-5"><h3 class="font-semibold">Quick Save / Save Assignments</h3><p class="mt-2 text-sm">Writes an Assignments CSV with one row per source feature and its district number. Quick Save uses a timestamped name in the output folder; File → Save Assignments lets you choose a name and location.</p></div>
           <div class="rounded-xl border border-line bg-white p-5"><h3 class="font-semibold">Save Metrics / Save District Info</h3><p class="mt-2 text-sm">Writes a District Info CSV with one row per district and the available district-level measures. Save Metrics uses a timestamped name in the output folder.</p></div>
           <div class="rounded-xl border border-line bg-white p-5"><h3 class="font-semibold">Quick PNG / Save Map Image...</h3><p class="mt-2 text-sm">Saves the full map using the current fill, overlays, and labels. Save Map Image offers an optional title, PNG resolution, vector PDF, and Save As.</p></div>
         </div>
         <p class="mt-5 text-sm"><strong class="text-ink">Open output directory...</strong> opens the automatic-save folder. <strong class="text-ink">New</strong> unloads the current shapefile; unlike Reset, it returns Mosaic to its no-file state. Saving assignments marks the current plan as saved; exporting metrics or a photo does not. <strong class="text-ink">Open Recent</strong> reuses the column choices remembered for that file. <strong class="text-ink">Check for updates...</strong> checks for a newer release.</p>
+        <details class="mt-5 rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">District Info CSV fields and units</summary><div class="px-5 pb-5 space-y-3 text-sm"><p>Population differences are signed relative to ideal: positive means overpopulated. The absolute-percent column removes the sign. District numbers start at 1; precinct counts count source features.</p><p>County fields count counties touched and counties wholly contained in each district. Election fields use the first configured DEM/GOP pair. Total votes means DEM + GOP; shares are percentages, and dem_margin is Democratic share minus 50 percentage points. A district with no two-party votes receives 50% for each share. win_prob is a modeled probability from 0 to 1.</p><p>Area and perimeter use the shapefile’s coordinate units, squared for area. Geographic coordinates therefore produce square degrees and degrees; Mosaic does not reproject them for export. Polsby–Popper and Reock are ratios. Holistic compactness is the clipped combined rating from 0 to 1.</p><p>Demographic totals and group shares use the selected demographic universe, which may differ from general population. Only selected groups are exported. Group opportunity is normalized election-opportunity credit from 0 to 1, not a probability. Fields requiring unavailable inputs are omitted. A calculation or write error fails the export and preserves any existing destination file.</p></div></details>
       </section>
 
       <section id="troubleshooting" class="help-section">
         <h2 class="text-3xl font-bold tracking-tight">Troubleshooting</h2>
         <div class="mt-6 space-y-3">
           <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Mosaic will not load my shapefile</summary><div class="px-5 pb-5"><p>Check the message in the application, then use the <a href="shapefiles.html#problems">shapefile troubleshooting guide</a>. Common problems include unsupported geometry, a missing population column, invalid values, or disconnected geography that Mosaic cannot repair automatically.</p></div></details>
-          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">A score is unavailable</summary><div class="px-5 pb-5"><p>Election scores require election columns. Demographic scores require a demographic total and compatible group columns. Alignment requires a reference assignment. Reload the data and select the missing fields.</p></div></details>
+          <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">A score is unavailable</summary><div class="px-5 pb-5"><p>Election scores require election columns. Demographic scores require a demographic total and compatible group columns. Alignment requires a reference assignment. Reload the data and select the missing fields. A demographic score can also be not applicable when there is no qualifying community or opportunity to measure; that is a normal result.</p></div></details>
           <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">The run will not start</summary><div class="px-5 pb-5"><p>Read the status message. Check the district count, population tolerance, enabled score requirements, and any loaded starting map. A very strict population tolerance can make a valid starting plan difficult or impossible to construct.</p></div></details>
           <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">My map includes islands or disconnected pieces</summary><div class="px-5 pb-5"><p>Mosaic normally adds internal connections so the search can reach islands and exclaves. These connections do not alter the shapefile. If Mosaic still reports disconnected geometry, inspect the source data for invalid or degenerate shapes.</p></div></details>
           <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">The first run is slow to begin</summary><div class="px-5 pb-5"><p>Some of Mosaic's fast numerical routines are compiled when first used. Later iterations and later runs are usually faster.</p></div></details>
@@ -246,8 +258,12 @@
 
       <section id="advanced" class="help-section">
         <h2 class="text-3xl font-bold tracking-tight">Advanced settings</h2>
-        <p class="mt-3">These controls are useful when you have a specific reason to change the search. You do not need them for a normal first run.</p>
         <div class="mt-6 space-y-3">
+          <details id="ensemble" class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Ensemble</summary><div class="px-5 pb-5 space-y-3">
+            <p><strong class="text-ink">Advanced → Ensemble...</strong> repeats runs with the loaded map and settings. It is available when the search is idle and Relight is off. Count sets the number of runs; Duration finishes the current run when time expires; Unlimited continues until stopped.</p>
+            <p>Each run saves its final map, or its lowest-scoring map with <strong class="text-ink">Keep best map</strong> enabled. <strong class="text-ink">Force Stop</strong> discards the unfinished run and keeps completed results.</p>
+            <p>Histograms, Scatterplot, and Roster compare completed runs; Map displays a selected plan. <strong class="text-ink">Open Folder</strong> opens the saved assignments, metrics, and settings.</p>
+          </div></details>
           <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Fast tree generation</summary><div class="px-5 pb-5 space-y-3"><p>Uses Mosaic's faster method for building the randomized trees behind most ReCom moves. It is on by default.</p><p>Turning it off uses the slower reference method. Both follow the same basic move procedure, but they randomize trees differently, so changing this setting changes the path of the search—even with the same seed. County-Edge Bias uses the reference method automatically.</p></div></details>
           <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">n=3 ReCom Mix and Polish Flips</summary><div class="px-5 pb-5 space-y-3"><p><strong class="text-ink">% of iterations</strong> sets the conditional chance of trying n=3 after no flip is selected. These moves take more work but can reach plans that ordinary two-district ReCom misses.</p><p><strong class="text-ink">Enable single-precinct flips</strong> adds small, contiguous boundary adjustments. Flips are rare early and more common late. The <strong class="text-ink">50% crossover (% of run)</strong> chooses when flips reach half of proposal attempts.</p></div></details>
           <details class="rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Enable simulated annealing, cooling, and Launch Watch</summary><div class="px-5 pb-5 space-y-3"><p><strong class="text-ink">Enable simulated annealing</strong> lets Mosaic sometimes accept a worse-scoring plan so it can move out of local dead ends. Turning it off accepts every valid proposal.</p><p><strong class="text-ink">Initial Temp Factor</strong> controls how permissive the run is at the start. <strong class="text-ink">Guided (recommended)</strong> calculates a schedule that reaches Target Temp at Guide Point. <strong class="text-ink">Static</strong> applies the selected <strong class="text-ink">Cooling Rate / iteration</strong> after each step.</p><p><strong class="text-ink">Launch Watch</strong> can recalculate the Guided schedule once, using the score at that point instead of the original starting score. <strong class="text-ink">Re-anchor after iter</strong> chooses how long Mosaic waits before doing so.</p></div></details>

@@ -1,54 +1,57 @@
 # CODEMAP
 
-A one-screen index of `src/mosaic/` so you (or an assistant) can open the file
-that owns a concern directly, instead of scanning. Line counts are approximate.
+Module ownership and invariants for `src/mosaic/`.
 
 ## Top level
 
-| File | ~LOC | Owns |
-|------|-----:|------|
-| `__init__.py` | 170 | Package init, `__version__`, preflight dep checks, logging, `main()` (the `mosaic` console script) |
-| `__main__.py` | — | `python -m mosaic` entry (preferred launcher path) |
-| `paths.py` | — | `output_dir()` and path helpers |
-| `renumber.py` | 258 | District renumbering / stable label mapping |
-| `crash.py` | 77 | `write_crash_log()` — durable crash dumps to `crashes/` |
-| `engine.py` | 421 | `MosaicEngine`, headless chain driver — **private attachment, never ships** |
+| File | Owns |
+|------|------|
+| `__init__.py` | Package init, `__version__`, preflight dep checks, logging, `main()` (the `mosaic` console script) |
+| `__main__.py` | `python -m mosaic` entry (preferred launcher path) |
+| `paths.py` | `output_dir()` and path helpers |
+| `renumber.py` | District renumbering / stable label mapping |
+| `crash.py` | `write_crash_log()` — durable crash dumps to `crashes/` |
+| `presets.py` | Score presets: TOML schema, read/write, `to_score_config()` / `run_settings()` for headless |
+| `ensemble.py` | Ensemble loop (repeat full runs), per-run writer, map-wide summary metrics. No GUI imports |
+| `ensemble_store.py` | SQLite summaries, disk-backed assignment records, streamed export and result-view queries |
+| `targeting.py` | Beta Targeting: randomized per-run settings, continuous OLS/quantile fits over a bounded recent window, bootstrap intervals and adaptive centers |
+| `engine.py` | `MosaicEngine`, headless chain driver — **private attachment, never ships** |
 
 ## graph/ — adjacency
 
-| File | ~LOC | Owns |
-|------|-----:|------|
-| `adjacency.py` | 235 | Build precinct adjacency graph |
-| `cache.py` | 104 | Adjacency cache |
+| File | Owns |
+|------|------|
+| `adjacency.py` | Build precinct adjacency graph |
+| `cache.py` | Adjacency cache |
 
 ## recom/ — the ReCom algorithm
 
-| File | ~LOC | Owns |
-|------|-----:|------|
-| `tree.py` | 785 | Spanning-tree build + balanced-cut (Numba Kruskal) |
-| `recombination.py` | 308 | ReCom step (merge two districts, re-split) |
-| `flip.py` | 224 | Boundary flip moves |
-| `swap.py` | 171 | Swap moves |
-| `partition.py` | 164 | Partition state container |
-| `annealing.py` | 161 | `AnnealingConfig`, schedule/temperature |
+| File | Owns |
+|------|------|
+| `tree.py` | Spanning-tree build + balanced-cut (Numba Kruskal) |
+| `recombination.py` | ReCom step (merge two districts, re-split) |
+| `flip.py` | Boundary flip moves |
+| `swap.py` | Swap moves |
+| `partition.py` | Population-balanced initial partition construction and local subgraph preparation |
+| `annealing.py` | `AnnealingConfig`, schedule/temperature |
 
 ## scoring/ — plan metrics
 
-| File | ~LOC | Owns |
-|------|-----:|------|
-| `score.py` | 431 | `ScoreConfig`, `PlanScore`, the score aggregator |
-| `partisan.py` | 436 | Partisan metrics (EG, MM, bias, seats, gini) |
-| `opportunity.py` | 563 | Shared opportunity-to-elect engine — per-district group curves, proportional benchmark `T`, drawability gate, achievable ceiling `f(state)`, smart targets. Feeds every demographic score |
-| `community_congruence.py` | 384 | Community Dispersion — layered per-group cores, `N_eff / m` |
-| `alignment.py` | 294 | Alignment-to-reference scoring |
-| `minority_cohesion.py` | 286 | Neighborhood Severance — minority-weighted cut-edge enrichment ratio |
-| `reock.py` | 260 | Reock compactness |
-| `holistic_splitting.py` | 208 | Holistic county-congruence |
-| `precompute.py` | 192 | Per-precinct precomputation |
-| `representation.py` | 147 | Electoral Opportunity — top-`round(T)` credit vs `f(state)` |
-| `population.py` | 128 | Population deviation |
-| `cache.py` | 100 | Score cache |
-| `county_splits.py` / `polsby_popper.py` / `holistic_proportionality.py` / `holistic_competitiveness.py` | <100 each | Named single metrics |
+| File | Owns |
+|------|------|
+| `score.py` | `ScoreConfig`, `PlanScore`, the score aggregator |
+| `partisan.py` | Partisan metrics (EG, MM, bias, seats, gini) |
+| `opportunity.py` | Shared opportunity-to-elect engine — per-district group curves, proportional benchmark `T`, drawability gate, achievable ceiling `f(state)`, smart targets. Feeds every demographic score |
+| `community_congruence.py` | Community Dispersion — layered per-group cores, `N_eff / m` |
+| `alignment.py` | Alignment-to-reference scoring |
+| `minority_cohesion.py` | Neighborhood Severance — minority-weighted cut-edge enrichment ratio |
+| `reock.py` | Reock compactness |
+| `holistic_splitting.py` | Holistic county-congruence |
+| `precompute.py` | Per-precinct precomputation |
+| `representation.py` | Electoral Opportunity — top-`round(T)` credit vs `f(state)` |
+| `population.py` | Population deviation |
+| `cache.py` | Score cache |
+| `county_splits.py` / `polsby_popper.py` / `holistic_proportionality.py` / `holistic_competitiveness.py` | Named single metrics |
 
 The three demographic scores are independent axes, not proxies for one another:
 Electoral Opportunity asks whether a group can elect, Neighborhood Severance
@@ -59,45 +62,50 @@ the score itself.
 
 ## io/ — data in/out
 
-| File | ~LOC | Owns |
-|------|-----:|------|
-| `inspect.py` | 272 | `ShapefileConfig`, `ShapefileInspection` — column detection (population, id, county, election pairs, demographic groups) |
-| `hot_start.py` | 212 | Load an existing assignment as a warm start |
-| `export.py` | 185 | Assignment / metric CSV export |
-| `validate.py` | 248 | Shapefile validation — geometry, columns, demographics, connectivity |
+| File | Owns |
+|------|------|
+| `inspect.py` | `ShapefileConfig`, `ShapefileInspection` — column detection (population, id, county, election pairs, demographic groups) |
+| `hot_start.py` | Load an existing assignment as a warm start |
+| `export.py` | Assignment / metric CSV export |
+| `validate.py` | Shapefile validation — geometry, columns, demographics, connectivity |
 
 ## gui/ — Dear PyGui front end
 
-| File | ~LOC | Owns |
-|------|-----:|------|
-| `runner.py` | 840 | `AlgorithmRunner` — the worker thread that drives the chain |
-| `map_view.py` | 696 | `MapView` — the live district map render |
-| `theme.py` | 599 | `ThemeManager` — light/dark themes |
-| `shp_dialog.py` | 457 | Shapefile import dialog |
-| `state.py` | 280 | `SharedState`, `AlgorithmStatus` — thread-shared status snapshot |
-| `app/` | — | **The application class — see below** |
+| File | Owns |
+|------|------|
+| `runner.py` | `AlgorithmRunner` — the worker thread that drives the chain |
+| `map_view.py` | `MapView` — the live district map render |
+| `theme.py` | `ThemeManager` — light/dark themes |
+| `file_dialog.py` | Windows PowerShell/STA file picker, encoded arguments, cancellation and error handling |
+| `shp_dialog.py` | Shapefile import dialog |
+| `state.py` | `SharedState`, `AlgorithmStatus` — thread-shared status snapshot |
+| `app/` | **The application class — see below** |
 
-### gui/app/ — `MosaicApp`, split from the old 7k-line `app.py`
+### gui/app/ — `MosaicApp` assembly
 
 `MosaicApp` is one class at runtime, assembled in `core.py` from mixins that
 each own one concern. Any method may call any other via `self` (shared state,
 no cross-mixin imports). To find a method, pick the concern:
 
-| File | ~LOC | Owns (method families) |
-|------|-----:|------|
-| `core.py` | 290 | Class assembly + `_internal` seam, `__init__`, `run`, dialog infra (`_dialog*`), module `main()` |
-| `_common.py` | 514 | Shared imports, constants (`_PHASE_*`, layout dims), module helpers, `_SeriesBuffer`. `__all__` is the re-export surface |
-| `setup_mixin.py` | 1318 | `setup()` — the whole two-column window build (one large method) |
-| `popups_mixin.py` | 525 | `_build_*_popup` modal builders (settings, help, confirm) |
-| `panels_mixin.py` | 679 | `_build_*_panel` score/metric side-panels + ref-line themes |
-| `phase_mixin.py` | 311 | Phase plot (metric-vs-metric comet) build + `_on_phase_*` controls |
-| `updates_mixin.py` | 1027 | Per-frame refresh: `_update_ui`, `_update_plots_and_panels`, tables, status labels |
-| `toggles_mixin.py` | 277 | Series/panel visibility toggles, `_hint`, `_tooltip`, `_show_panel` |
-| `map_mixin.py` | 198 | Map overlay toggles (`_on_*_overlay/_toggle`), `_rerender_map`, theme sync |
-| `io_mixin.py` | 634 | Shapefile / hot-start / alignment loading, column pickers, seed/relight |
-| `runner_mixin.py` | 575 | `_on_run/_pause/_reset/_revert`, renumber wiring |
-| `export_mixin.py` | 818 | CSV/metric export, map image save, PDF/PNG workers, advanced-save |
-| `menu_mixin.py` | 234 | File/session menu: recent files, new/close, update check, output dir |
+| File | Owns (method families) |
+|------|------|
+| `core.py` | Class assembly + `_internal` seam, `__init__`, `run`, dialog infra (`_dialog*`), module `main()` |
+| `_common.py` | Shared imports, constants (`_PHASE_*`, layout dims), module helpers, `_SeriesBuffer`. `__all__` is the re-export surface |
+| `setup_mixin.py` | `setup()` — the whole two-column window build (one large method) |
+| `popups_mixin.py` | `_build_*_popup` modal builders (settings, help, confirm) |
+| `panels_mixin.py` | `_build_*_panel` score/metric side-panels + ref-line themes |
+| `phase_mixin.py` | Phase plot (metric-vs-metric comet) build + `_on_phase_*` controls |
+| `updates_mixin.py` | Per-frame refresh: `_update_ui`, `_update_plots_and_panels`, tables, status labels |
+| `toggles_mixin.py` | Series/panel visibility toggles, `_hint`, `_tooltip`, `_show_panel` |
+| `map_mixin.py` | Map overlay toggles (`_on_*_overlay/_toggle`), `_rerender_map`, theme sync |
+| `io_mixin.py` | Shapefile / hot-start / alignment loading, column pickers, seed/relight |
+| `runner_mixin.py` | `_on_run/_pause/_reset/_revert`, renumber wiring |
+| `export_mixin.py` | CSV/metric export, map image save, PDF/PNG workers, advanced-save |
+| `menu_mixin.py` | File/session menu: recent files, new/close, update check, output dir; score presets (Save/Apply/Recent, Clear All Scores) |
+| `ensemble_mixin.py` | Advanced > Ensemble window: start / force stop / extend, per-frame progress (replaces `_update_ui` while active) |
+| `ensemble_views_mixin.py` | Ensemble pop-out views (Histograms, Scatterplot) and the main-window freeze during a run |
+| `ensemble_roster_mixin.py` | Ensemble Roster: up to 5 metric criteria on drawn two-handle range tracks, filtered + sortable run table (click a run to map it), per-metric display formats |
+| `ensemble_map_mixin.py` | Ensemble Map: static minimap of one run on its own `MapView` + texture (no zoom/overlays); shape follows the state |
 
 **Private-only extension seam:** `core.py` does `try: from ._internal import
 INTERNAL_MIXINS`. Any internal-only GUI feature becomes a mixin in a private
@@ -106,10 +114,38 @@ checkout simply lacks it and falls back to `INTERNAL_MIXINS = ()`.
 
 ## headless/ — batch CLI (private attachment, never ships)
 
-| File | ~LOC | Owns |
-|------|-----:|------|
-| `cli.py` | 273 | `mosaic-headless` argument parsing / entry |
-| `output.py` | 247 | Ensemble output writing |
-| `load.py` | 187 | Config-driven data load |
-| `config.py` | 183 | Headless run config |
-| `run.py` | 158 | Batch run loop (uses `engine.MosaicEngine`) |
+| File | Owns |
+|------|------|
+| `cli.py` | `mosaic-headless` argument parsing / entry |
+| `output.py` | Ensemble output writing |
+| `load.py` | Config-driven data load |
+| `config.py` | Headless run config |
+| `run.py` | Batch run loop (uses `engine.MosaicEngine`) |
+
+## Ownership and performance invariants
+
+- Dear PyGui widget and texture mutations belong to the frame thread. Session
+  requests wait for algorithm, data and map workers to exit before replacement.
+  Callback signatures must remain explicit: Dear PyGui inspects argument counts.
+- Map geometry, rasters, border masks and asynchronous results belong to one
+  source and generation. A failed resize leaves the previous texture and grid
+  together; successful resizing preserves geographic center and scale.
+- The client width is at least 1,300 pixels. The upper map/control span retains
+  its height; the score area absorbs vertical resizing.
+- Adjacency caches fingerprint source files and retain shared boundary lengths.
+  Virtual bridges are reconstructed from the selected population/county arrays.
+  Compactness reuses the lengths; virtual bridges have zero boundary length.
+- `_SeriesBuffer` amortizes numeric conversion and allocation; chart scanning
+  still scales with the visible window. Map color matching is shared by fills
+  and labels; static border masks are lazy and raster-owned.
+- Ensemble results publish only after writes succeed. SQLite queries run off
+  the frame thread, with one outstanding request per view type. Statistics use
+  all finite results; scatter drawing is capped at 2,000 points and roster pages
+  at 100 rows. Assignment selection reads one plan, and final CSV export uses
+  bounded stripes. Unlimited mode still grows disk usage.
+- Targeting fits outside the progress lock and publishes compact snapshots.
+  Cancellation occurs between bootstrap replicates; an active solver call must
+  return first. Fitting starts after 10 runs and continues past warm-up.
+- Python 3.10 uses `tomli`; Python 3.11+ uses `tomllib`. Shared preset validation
+  checks values before GUI mutation. The optional private headless config uses
+  config-relative preset paths; explicit config values override preset values.

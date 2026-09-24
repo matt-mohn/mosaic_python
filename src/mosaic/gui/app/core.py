@@ -3,6 +3,8 @@
 The sibling ``*_mixin.py`` modules form one runtime class with shared ``self``
 state. Private extensions may attach through the optional ``_internal`` seam.
 """
+from queue import Empty, SimpleQueue
+
 from ._common import (
     _DIALOG_BTN_W,
     _DIALOG_GAP,
@@ -22,6 +24,10 @@ from ._common import (
     dpg,
     threading,
 )
+from .ensemble_map_mixin import EnsembleMapMixin
+from .ensemble_mixin import EnsembleMixin
+from .ensemble_roster_mixin import EnsembleRosterMixin
+from .ensemble_views_mixin import EnsembleViewsMixin
 from .export_mixin import ExportMixin
 from .io_mixin import IOMixin
 from .map_mixin import MapMixin
@@ -47,6 +53,10 @@ _APP_MIXINS = (
     RunnerMixin,
     ExportMixin,
     MenuMixin,
+    EnsembleMixin,
+    EnsembleViewsMixin,
+    EnsembleRosterMixin,
+    EnsembleMapMixin,
 )
 
 try:
@@ -62,6 +72,11 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         self.state = SharedState()
         self.runner: Optional[AlgorithmRunner] = None
         self.algorithm_thread: Optional[threading.Thread] = None
+        self._data_thread: Optional[threading.Thread] = None
+        self._map_load_thread: Optional[threading.Thread] = None
+        self._pending_session_action = None
+        self._gui_thread_id = threading.get_ident()
+        self._session_requests = SimpleQueue()
         self.map_view: Optional[MapView] = None
         self._shp_dialog: Optional[ShapefileDialog] = None
         self.theme = ThemeManager(initial="light")
@@ -71,6 +86,15 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
 
         # Recent shapefiles (path + column config), loaded from disk in setup()
         self._recent_shapefiles: list = []   # [{"path": str, "config": dict}]
+        self._recent_presets: list = []      # preset file paths, newest first
+        # Ensemble tool: while active, run() refreshes only the ensemble window.
+        self._ensemble_active = False
+        self._ens_writer = None
+        self._ens_keep_best = False          # Ensemble Advanced > Keep best map
+        self._ens_targeting = False          # Ensemble Advanced > Targeting
+        self._ens_target_tail = False        # ... > Favor lower-tail scores
+        self._ensemble_item = 0              # Advanced > Ensemble... item
+        self._min_width_set = False          # window min width corrected for the frame
         self._file_save_asgn_item = 0        # File > Save Assignments menu item
         self._file_save_metrics_item = 0     # File > Save District Info menu item
         # last-saved assignment; drives the unsaved-changes guard
@@ -197,10 +221,10 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
 
         ``size`` is ``(width, height_hint)``. Width is enforced (``min_size`` +
         ``autosize``) so wrap widths and footer alignment stay predictable; height
-        auto-fits the content, so a dialog can never show a scrollbar or clip its
-        text -- size it once and it always fits. ``height_hint`` is used only to
-        centre the window vertically. Wrap long/dynamic text at ``width - 2 *
-        _DIALOG_PAD`` so it never forces the window wider.
+        follows the content. ``height_hint`` is used only to centre the window
+        vertically. Wrap long/dynamic text at ``width - 2 * _DIALOG_PAD`` to keep
+        it within the fixed width. Long bodies need a scrollable child or an
+        explicitly bounded window to fit short displays.
 
         Footer buttons come from either ``primary``/``secondary`` ``(label,
         callback)`` tuples (primary blue, secondary grey) or a general ``buttons``
@@ -216,12 +240,8 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
                           no_collapse=True, no_resize=True, no_scrollbar=True,
                           show=show, pos=self._dialog_pos(w, h))
         if autosize:
-            # Auto-fit height, and pin the width to exactly w (min == max on the
-            # x axis). The window can never scroll, clip vertically, or -- the
-            # part that bites -- balloon sideways when a body item is wider than
-            # expected, which would leave the right-aligned footer floating away
-            # from the edge. Wrap long body text at w - 2 * _DIALOG_PAD so it
-            # doesn't clip against the pinned width.
+            # Fix width while height follows the body. Callers wrap dynamic
+            # text so it fits without moving the footer beyond the fixed edge.
             win_kwargs.update(autosize=True, min_size=[w, 1],
                               max_size=[w, 100_000])
         else:
@@ -276,10 +296,29 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
         dpg.show_viewport()
         try:
             while dpg.is_dearpygui_running():
+                while True:
+                    try:
+                        request = self._session_requests.get_nowait()
+                    except Empty:
+                        break
+                    self._perform_session_action(request)
                 self._update_window_layout()
-                self._update_ui()
+                if self._ensemble_active:
+                    self._update_ensemble_ui()
+                else:
+                    self._tick_session_action()
+                    if not self._session_action_pending():
+                        self._update_ui()
+                self._refresh_ens_hist()
+                self._refresh_ens_scatter()
+                self._refresh_ens_roster()
+                self._refresh_ens_map()
                 dpg.render_dearpygui_frame()
         finally:
+            if self._ensemble_active:
+                with self._ens_progress.lock:
+                    self._ens_progress.stop_requested = True
+            self.state.request_stop()
             self._shutdown_map_navigation()
             dpg.destroy_context()
 
@@ -287,9 +326,7 @@ class MosaicApp(*INTERNAL_MIXINS, *_APP_MIXINS):
 
 
 def main():
-    # The .bat / .command / .sh launchers invoke this entry point directly
-    # via `python -m mosaic.gui.app`, bypassing mosaic:main. Wire up logging
-    # here too so the 'mosaic' logger always has a console + file handler.
+    # Direct module launches need the same console logging as mosaic:main.
     from mosaic import _setup_logging
     _setup_logging()
 

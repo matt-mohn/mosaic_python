@@ -34,6 +34,7 @@
   <style>
     body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
   </style>
+  <link rel="stylesheet" href="site-nav.css">
 </head>
 <body class="bg-paper text-ink min-h-screen flex flex-col">
   <header class="border-b border-line bg-paper/90 backdrop-blur sticky top-0 z-10">
@@ -41,7 +42,7 @@
       <a href="index.html" class="flex items-center gap-2.5 font-semibold tracking-tight text-lg">
         <img src="mosaic_logo.png" alt="" class="w-7 h-7">Mosaic
       </a>
-      <nav class="text-sm text-ink-soft hidden md:flex items-center gap-7">
+      <nav aria-label="Primary" class="site-nav-desktop text-sm text-ink-soft hidden md:flex items-center gap-7">
         <a href="index.html" class="hover:text-ink transition">Home</a>
         <a href="install.html" class="hover:text-ink transition">Install</a>
         <a href="help.html" class="hover:text-ink transition">Help</a>
@@ -49,6 +50,18 @@
         <a href="about.html" class="text-ink font-medium">About</a>
         <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub →</a>
       </nav>
+      <details class="site-nav-mobile">
+        <summary>Menu</summary>
+        <nav aria-label="Mobile">
+          <a href="index.html">Home</a>
+          <a href="install.html">Install</a>
+          <a href="help.html">Help</a>
+          <a href="shapefiles.html">Shapefiles</a>
+          <a href="methodology.html">Methodology</a>
+          <a href="about.html" aria-current="page">About</a>
+          <a href="https://github.com/matt-mohn/mosaic_python">GitHub →</a>
+        </nav>
+      </details>
     </div>
   </header>
 
@@ -67,7 +80,7 @@
         <div>
           <p class="text-ink-soft leading-relaxed">I'm Matt. I built and maintain Mosaic.</p>
           <p class="mt-5 text-ink-soft leading-relaxed">I've had a lifelong interest in how redistricting shapes, skews, and plagues the political process here in the United States. I built Mosaic because I believe people working to challenge gerrymandering deserve tools as powerful as those used to create it.</p>
-          <p class="mt-5 text-ink-soft leading-relaxed">I graduated from Duke, where I studied public policy and statistics. I grew up in Texas and now work as a pollster in Washington, D.C.</p>
+          <p class="mt-5 text-ink-soft leading-relaxed">I grew up in Texas and graduated from Duke University, where I studied public policy and statistics. Today, I work as a pollster in Washington, D.C.</p>
         </div>
       </div>
       <div class="mt-7 pt-5 border-t border-line flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">

@@ -110,14 +110,16 @@ def find_county_array(gdf: gpd.GeoDataFrame) -> Optional[np.ndarray]:
 def precompute_pp_data(gdf: gpd.GeoDataFrame, graph: nx.Graph) -> Optional[PPData]:
     """
     Compute per-precinct areas, exterior perimeters, and shared edge lengths
-    from the GeoDataFrame and the already-built adjacency graph.
+    from the GeoDataFrame and the already-built adjacency graph. Real edges
+    reuse intersection lengths from adjacency construction when available;
+    virtual bridges contribute zero boundary length.
 
     Returns None on failure (e.g., missing/invalid geometries).
 
     Note: PP values are computed in the shapefile's native CRS.  If the CRS
     is geographic (degrees), the absolute PP values will reflect coordinate-space
-    shape rather than true geographic compactness, but relative plan rankings
-    remain valid.
+    shape rather than true geographic compactness. Projection distortion can
+    also affect relative plan rankings.
     """
     try:
         n = len(gdf)
@@ -143,9 +145,17 @@ def precompute_pp_data(gdf: gpd.GeoDataFrame, graph: nx.Graph) -> Optional[PPDat
         edge_v = np.array([e[1] for e in edges], dtype=np.int32)
         edge_len = np.zeros(m, dtype=np.float64)
 
+        geometry_array = geoms.to_numpy()
         for i, (u, v) in enumerate(edges):
+            attrs = graph.edges[u, v]
+            if attrs.get("virtual"):
+                continue
+            cached = attrs.get("shared_length")
+            if cached is not None and np.isfinite(cached) and cached >= 0:
+                edge_len[i] = cached
+                continue
             try:
-                edge_len[i] = geoms[u].intersection(geoms[v]).length
+                edge_len[i] = geometry_array[u].intersection(geometry_array[v]).length
             except Exception:
                 edge_len[i] = 0.0
 

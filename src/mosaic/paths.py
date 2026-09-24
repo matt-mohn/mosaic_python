@@ -48,3 +48,8 @@ def output_dir() -> Path:
 
 def shapefiles_dir() -> Path:
     return mosaic_data_dir() / "shapefiles"
+
+
+def presets_dir() -> Path:
+    """Default folder for score presets (Configuration > Save Preset)."""
+    return mosaic_data_dir() / "presets"

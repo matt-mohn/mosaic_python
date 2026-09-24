@@ -43,6 +43,7 @@ htmlcov/
 
 # Generated output
 output/
+presets/
 gifs/
 
 # OS files

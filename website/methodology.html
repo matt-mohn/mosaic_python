@@ -41,12 +41,13 @@
     .formula { font-family: 'JetBrains Mono', ui-monospace, monospace; color: #1a1f2c; overflow-x: auto; }
     .metric-grid > details { break-inside: avoid; }
   </style>
+  <link rel="stylesheet" href="site-nav.css">
 </head>
 <body class="bg-paper text-ink">
   <header class="border-b border-line bg-paper/90 backdrop-blur sticky top-0 z-10">
     <div class="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
       <a href="index.html" class="flex items-center gap-2.5 font-semibold tracking-tight text-lg"><img src="mosaic_logo.png" alt="" class="w-7 h-7">Mosaic</a>
-      <nav class="text-sm text-ink-soft hidden md:flex items-center gap-7">
+      <nav aria-label="Primary" class="site-nav-desktop text-sm text-ink-soft hidden md:flex items-center gap-7">
         <a href="index.html" class="hover:text-ink transition">Home</a>
         <a href="install.html" class="hover:text-ink transition">Install</a>
         <a href="help.html" class="hover:text-ink transition">Help</a>
@@ -54,6 +55,18 @@
         <a href="about.html" class="hover:text-ink transition">About</a>
         <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub →</a>
       </nav>
+      <details class="site-nav-mobile">
+        <summary>Menu</summary>
+        <nav aria-label="Mobile">
+          <a href="index.html">Home</a>
+          <a href="install.html">Install</a>
+          <a href="help.html">Help</a>
+          <a href="shapefiles.html">Shapefiles</a>
+          <a href="methodology.html" aria-current="page">Methodology</a>
+          <a href="about.html">About</a>
+          <a href="https://github.com/matt-mohn/mosaic_python">GitHub →</a>
+        </nav>
+      </details>
     </div>
   </header>
 
@@ -61,8 +74,8 @@
     <div class="max-w-6xl mx-auto px-6 py-12">
       <p class="text-sm font-semibold uppercase tracking-wider text-navy">Technical reference</p>
       <h1 class="mt-2 text-4xl font-bold tracking-tight">Methodology</h1>
-      <p class="mt-3 max-w-3xl text-lg text-ink-soft leading-relaxed">How Mosaic currently constructs proposals, applies constraints, accepts plans, and calculates scores. This page describes Mosaic 0.5.3.</p>
-      <div class="mt-5 rounded-lg bg-navy-soft/60 px-4 py-3 max-w-3xl text-sm text-ink-soft">Looking for instructions? Start with the <a class="text-navy underline" href="help.html">user guide</a>. This page is intentionally more technical.</div>
+      <p class="mt-3 max-w-3xl text-lg text-ink-soft leading-relaxed">Proposal construction, population constraints, annealing, and score formulas.</p>
+      <div class="mt-5 rounded-lg bg-navy-soft/60 px-4 py-3 max-w-3xl text-sm text-ink-soft"><a class="text-navy underline" href="help.html">User guide: setup, controls, and exports</a></div>
       <div class="mt-5 relative max-w-xl">
         <input id="method-search" type="search" placeholder="Search methodology and formulas"
                class="w-full px-4 py-2.5 rounded-lg border border-line bg-paper text-ink placeholder:text-ink-mute focus:outline-none focus:border-navy focus:ring-2 focus:ring-navy-soft transition"
@@ -78,7 +91,6 @@
     <aside class="hidden lg:block">
       <nav class="sticky top-24 text-sm text-ink-soft space-y-2.5" aria-label="On this page">
         <div class="font-semibold text-ink uppercase tracking-wide text-xs mb-4">On this page</div>
-        <a href="#scope" class="block hover:text-ink">About this page</a>
         <a href="#run" class="block hover:text-ink">The search process</a>
         <a href="#graph" class="block hover:text-ink">Graph and connectivity</a>
         <a href="#moves" class="block hover:text-ink">Recombination and moves</a>
@@ -86,17 +98,13 @@
         <a href="#population" class="block hover:text-ink">Population constraints</a>
         <a href="#best" class="block hover:text-ink">Current and best plans</a>
         <a href="#scores" class="block hover:text-ink">Score methodology</a>
+        <a href="#ensemble" class="block hover:text-ink">Ensembles</a>
         <a href="#reproducibility" class="block hover:text-ink">Reproducibility</a>
         <a href="#credit" class="block hover:text-ink">Attribution</a>
       </nav>
     </aside>
 
     <main class="min-w-0 space-y-20">
-      <section id="scope" class="method-section">
-        <h2 class="text-3xl font-bold tracking-tight">About this page</h2>
-        <p class="mt-4">This page documents Mosaic's current search, constraints, and scores. ReCom has many implementations; the details below are Mosaic's.</p>
-      </section>
-
       <section id="run" class="method-section">
         <h2 class="text-3xl font-bold tracking-tight">The search process</h2>
         <ol class="mt-5 space-y-2">
@@ -126,7 +134,7 @@
         <h2 class="text-3xl font-bold tracking-tight">Recombination and other moves</h2>
         <h3 class="mt-7 text-xl font-semibold">Two-district recombination</h3>
         <p class="mt-2">Mosaic selects an edge that currently crosses a district boundary, combines the two districts on that edge, builds a randomized minimum spanning tree across the combined region, and looks for a tree cut that gives both replacement districts an allowed population.</p>
-        <div class="mt-4 rounded-xl border border-gold/60 bg-amber-50 px-5 py-4 text-sm text-ink-soft"><strong class="text-ink">Tree-sampling note:</strong> randomized minimum-spanning-tree construction does not sample all possible spanning trees uniformly. Mosaic makes no uniform-tree claim.</div>
+        <div class="mt-4 rounded-xl border border-gold/60 bg-amber-50 px-5 py-4 text-sm text-ink-soft"><strong class="text-ink">Tree-sampling note:</strong> randomized minimum-spanning-tree construction does not sample all possible spanning trees uniformly.</div>
         <details class="mt-5 rounded-xl border border-line bg-white">
           <summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Exact tree and cut procedure</summary>
           <div class="px-5 pb-5 text-sm">
@@ -406,6 +414,21 @@ r &gt; R95:  tail = (R95−Rs)/18
           </div></details>
         </div>
         <div class="mt-5 rounded-xl border border-line bg-navy-soft/50 px-5 py-4 text-sm text-ink-soft"><strong class="text-ink">Applicability:</strong> Electoral Opportunity excludes a group when its rounded proportional target is below one district or its targeting heuristic finds no qualifying bundle. Neighborhood Severance excludes a group with no positive weighted adjacency. Community Dispersion excludes a group with no qualifying connected core.</div>
+      </section>
+
+      <section id="ensemble" class="method-section">
+        <h2 class="text-3xl font-bold tracking-tight">Ensembles</h2>
+        <p class="mt-3">Each run starts from a fresh partition or the loaded Hot Start and retains its final or lowest-scoring plan. With a nonzero base seed, successive runs increment the seed by one. These optimized plans are not uniform samples of valid district plans.</p>
+        <details class="mt-5 rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Summary metrics</summary><div class="px-5 pb-5 space-y-3 text-sm">
+          <p>Summaries measure available metrics using unclipped holistic scores and static efficiency gap, regardless of which scores the search optimizes. Hinge is measured only when enabled. The <code>score</code> column is the retained plan’s weighted objective.</p>
+          <p>Histograms and scatterplot statistics use all finite results; the scatterplot may display a subset of points.</p>
+        </div></details>
+        <details id="targeting" class="mt-5 rounded-xl border border-line bg-white"><summary class="cursor-pointer flex items-center gap-4 px-5 py-4 font-semibold">Targeting (Beta)</summary><div class="px-5 pb-5 space-y-3 text-sm">
+          <p>Targeting varies run settings within adaptive bands to seek lower scores. It varies iterations and the n=3 mix, plus flip, temperature, and guide settings when their corresponding features are enabled. Scoring weights remain fixed; iterations are capped at 300,000 per run.</p>
+          <p>A regression over recent runs estimates how settings relate to score. The default fits the mean; <strong class="text-ink">Favor lower-tail scores</strong> fits the 20th percentile using all runs in a larger window. If the quantile solver fails, it falls back to least squares.</p>
+          <p>Fitting begins after 10 runs and repeats every five. The first 20 runs are labeled warm-up; adaptation continues throughout the ensemble. A setting’s center moves toward lower estimated scores when its 90% bootstrap interval excludes zero.</p>
+          <p>These beta estimates guide tuning; their intervals are not calibrated confidence guarantees for the adaptive search.</p>
+        </div></details>
       </section>
 
       <section id="reproducibility" class="method-section">

@@ -61,6 +61,7 @@
     details[open] > summary::after { content: '−'; }
     code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; background: #f1f3f7; padding: 0.08rem 0.3rem; border-radius: 0.25rem; }
   </style>
+  <link rel="stylesheet" href="site-nav.css">
 </head>
 <body class="bg-paper text-ink">
 
@@ -69,7 +70,7 @@
       <a href="index.html" class="flex items-center gap-2.5 font-semibold tracking-tight text-lg">
         <img src="mosaic_logo.png" alt="" class="w-7 h-7">Mosaic
       </a>
-      <nav class="text-sm text-ink-soft hidden md:flex items-center gap-7">
+      <nav aria-label="Primary" class="site-nav-desktop text-sm text-ink-soft hidden md:flex items-center gap-7">
         <a href="index.html" class="hover:text-ink transition">Home</a>
         <a href="install.html" class="text-ink font-medium">Install</a>
         <a href="help.html" class="hover:text-ink transition">Help</a>
@@ -77,6 +78,18 @@
         <a href="about.html" class="hover:text-ink transition">About</a>
         <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub →</a>
       </nav>
+      <details class="site-nav-mobile">
+        <summary>Menu</summary>
+        <nav aria-label="Mobile">
+          <a href="index.html">Home</a>
+          <a href="install.html" aria-current="page">Install</a>
+          <a href="help.html">Help</a>
+          <a href="shapefiles.html">Shapefiles</a>
+          <a href="methodology.html">Methodology</a>
+          <a href="about.html">About</a>
+          <a href="https://github.com/matt-mohn/mosaic_python">GitHub →</a>
+        </nav>
+      </details>
     </div>
   </header>
 
@@ -106,6 +119,7 @@
         <div class="mt-6 rounded-xl border border-line bg-white p-6 shadow-card">
           <ul class="install-list text-sm">
             <li>A Windows 10 or 11 PC, or an Apple Silicon Mac running macOS 13 or newer</li>
+            <li>Space for a window at least 1,300 pixels wide at your display scaling</li>
             <li>An internet connection for the first launch, when Mosaic downloads its dependencies</li>
             <li>Enough time for that one-time setup to finish; the duration depends on your connection and computer</li>
           </ul>

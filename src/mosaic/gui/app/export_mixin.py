@@ -8,6 +8,7 @@ from ._common import (
     Optional,
     Path,
     dpg,
+    log,
     np,
     output_dir,
     threading,
@@ -24,6 +25,8 @@ class ExportMixin:
     """CSV/metric export and map image save (PNG/PDF workers)."""
 
     def _on_export(self):
+        if self._ensemble_active:
+            return
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = output_dir() / f"assignments_{timestamp}.csv"
@@ -62,6 +65,8 @@ class ExportMixin:
         self._saved_plan = current.copy()   # mark the plan clean for the unsaved-changes guard
 
     def _on_export_metrics(self):
+        if self._ensemble_active:
+            return
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_path = output_dir() / f"metrics_{timestamp}.csv"
@@ -98,6 +103,11 @@ class ExportMixin:
                 county_ids=self.runner.county_array,
                 win_prob_at_55=cfg.election_win_prob_at_55,
                 swing_sigma=cfg.election_swing_sigma,
+                vap_data=self.runner.vap_data,
+                race_groups=self.state.race_groups_provided,
+                opportunity_midpoint=cfg.opportunity_midpoint,
+                opportunity_steepness=cfg.opportunity_steepness,
+                opportunity_solid=cfg.opportunity_solid,
             )
         except Exception as exc:
             self.state.update(status_message=f"Metrics export failed: {exc}")
@@ -130,30 +140,17 @@ class ExportMixin:
     def _native_save_csv(self, default_name: str) -> str:
         """Windows native Save-As for a CSV, opened to output/. Returns the
         chosen path, or "" on cancel."""
-        import subprocess
+        from mosaic.gui.file_dialog import windows_file_dialog
         out_dir = output_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
-        # TopMost owner so the dialog can't hide behind the app (see Save As).
-        ps = (
-            "Add-Type -AssemblyName System.Windows.Forms; "
-            "$owner = New-Object System.Windows.Forms.Form; "
-            "$owner.TopMost = $true; "
-            "$d = New-Object System.Windows.Forms.SaveFileDialog; "
-            "$d.Filter = 'CSV (*.csv)|*.csv'; "
-            "$d.DefaultExt = 'csv'; $d.AddExtension = $true; "
-            f"$d.InitialDirectory = '{out_dir}'; "
-            f"$d.FileName = '{default_name}'; "
-            "$null = $d.ShowDialog($owner); "
-            "$owner.Dispose(); "
-            "Write-Output $d.FileName"
-        )
         try:
-            r = subprocess.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-                capture_output=True, text=True, timeout=120,
+            return windows_file_dialog(
+                save=True, title="Save CSV", file_filter="CSV (*.csv)|*.csv",
+                initial_dir=out_dir, default_name=default_name, extension="csv",
             )
-            return r.stdout.strip()
         except Exception:
+            log.exception("CSV save picker failed")
+            self.state.update(status_message="Could not open save picker. See log.")
             return ""
 
     def _on_file_save_metrics(self) -> None:
@@ -250,6 +247,8 @@ class ExportMixin:
         return offscreen.compose_rgba(assignment, n_dist, initial)
 
     def _on_save_map(self):
+        if self._ensemble_active:
+            return
         if getattr(self, "_saving", False):
             return
         if self.map_view is None or not self.map_view._loaded:
@@ -376,40 +375,24 @@ class ExportMixin:
         self._adv_begin("Waiting for save dialog...")
 
         def _ask():
-            import subprocess
             from datetime import datetime as _dt
-            ext = ".pdf" if is_pdf else ".png"
-            filt = ("PDF Document|*.pdf" if is_pdf else "PNG Image|*.png")
-            ts = _dt.now().strftime("%Y%m%d_%H%M%S")
-            default_name = f"map_{ts}"
+
+            from mosaic.gui.file_dialog import windows_file_dialog
+            ext = "pdf" if is_pdf else "png"
+            filt = "PDF Document|*.pdf" if is_pdf else "PNG Image|*.png"
+            default_name = f"map_{_dt.now().strftime('%Y%m%d_%H%M%S')}"
             out_dir = output_dir()
             out_dir.mkdir(parents=True, exist_ok=True)
-            init_dir = str(out_dir)
-            # TopMost owner keeps the dialog above the (still-responsive) DPG
-            # window: without it, clicking back on Mosaic buries the ownerless
-            # dialog and the export hangs at "Waiting for save dialog...".
-            ps = (
-                "Add-Type -AssemblyName System.Windows.Forms; "
-                "$owner = New-Object System.Windows.Forms.Form; "
-                "$owner.TopMost = $true; "
-                "$d = New-Object System.Windows.Forms.SaveFileDialog; "
-                f"$d.Filter = '{filt}'; "
-                f"$d.DefaultExt = '{ext.lstrip('.')}'; "
-                f"$d.InitialDirectory = '{init_dir}'; "
-                f"$d.FileName = '{default_name}'; "
-                "$null = $d.ShowDialog($owner); "
-                "$owner.Dispose(); "
-                "Write-Output $d.FileName"
-            )
             try:
-                r = subprocess.run(
-                    ["powershell", "-NoProfile", "-NonInteractive",
-                     "-Command", ps],
-                    capture_output=True, text=True, timeout=120,
+                path = windows_file_dialog(
+                    save=True, title="Save Map", file_filter=filt,
+                    initial_dir=out_dir, default_name=default_name, extension=ext,
                 )
-                path = r.stdout.strip()
             except Exception:
-                path = ""
+                log.exception("Map save picker failed")
+                self.state.update(status_message="Could not open save picker. See log.")
+                self._adv_finish(close=False)
+                return
             if not path:
                 self._adv_finish(close=False)
                 return

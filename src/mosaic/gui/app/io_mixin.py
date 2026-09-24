@@ -15,41 +15,32 @@ class IOMixin:
     """Shapefile / hot-start / alignment loading, pickers, and seeding."""
 
     def _on_import_shapefile(self):
+        if self._ensemble_active:
+            return
         # Platform split: Windows uses a PowerShell OpenFileDialog (tkinter's
         # native picker throws "Catastrophic failure" against DPG's Win32 loop).
         # mac + Linux use DPG's own dialog: tkinter fights DPG for the Cocoa run
         # loop on macOS, and PowerShell doesn't exist on either.
         import os
         if os.name == "nt":
-            self._pick_shapefile_tk()
+            self._pick_shapefile_windows()
         else:
             self._pick_shapefile_dpg()
 
-    def _pick_shapefile_tk(self):
-        # Use PowerShell OpenFileDialog on Windows to avoid Win32 message-loop
-        # conflicts between tkinter and DPG that cause repeated dialog opens.
-        import subprocess
-
+    def _pick_shapefile_windows(self):
+        from mosaic.gui.file_dialog import windows_file_dialog
         from mosaic.paths import mosaic_data_dir, shapefiles_dir
         shp_dir = shapefiles_dir()
-        init_dir = str(shp_dir if shp_dir.is_dir() else mosaic_data_dir())
-        ps = (
-            "Add-Type -AssemblyName System.Windows.Forms; "
-            "$d = New-Object System.Windows.Forms.OpenFileDialog; "
-            "$d.Title = 'Select Shapefile'; "
-            "$d.Filter = 'Shapefiles (*.shp)|*.shp|All files (*.*)|*.*'; "
-            f"$d.InitialDirectory = '{init_dir}'; "
-            "$null = $d.ShowDialog(); "
-            "Write-Output $d.FileName"
-        )
         try:
-            r = subprocess.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-                capture_output=True, text=True, timeout=120,
+            path = windows_file_dialog(
+                title="Select Shapefile",
+                file_filter="Shapefiles (*.shp)|*.shp|All files (*.*)|*.*",
+                initial_dir=shp_dir if shp_dir.is_dir() else mosaic_data_dir(),
             )
-            path = r.stdout.strip()
         except Exception:
-            path = ""
+            log.exception("Shapefile picker failed")
+            self.state.update(status_message="Could not open file picker. See log.")
+            return
         if path:
             self._on_shapefile_selected(None, {"file_path_name": path})
 
@@ -77,41 +68,30 @@ class IOMixin:
     # ── Hot start (Advanced menu) ────────────────────────────────────────────────
 
     def _on_load_hot_start(self):
-        log.info("Hot start: menu clicked")
         if self.runner is None or self.runner.gdf is None or self.runner.graph is None:
             self._show_hot_start_error(
                 "Load a shapefile before loading a hot start.",
             )
             return
         import sys
-        if sys.platform == "darwin":
-            self._pick_hot_start_dpg()
+        if sys.platform == "win32":
+            self._pick_hot_start_windows()
         else:
-            self._pick_hot_start_tk()
+            self._pick_hot_start_dpg()
 
-    def _pick_hot_start_tk(self):
-        import tkinter as tk
-        from tkinter import filedialog
-
+    def _pick_hot_start_windows(self):
+        from mosaic.gui.file_dialog import windows_file_dialog
         from mosaic.paths import mosaic_data_dir
-        initialdir = str(mosaic_data_dir())
         try:
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-            path = filedialog.askopenfilename(
+            path = windows_file_dialog(
                 title="Select Hot Start CSV",
-                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-                initialdir=initialdir,
+                file_filter="CSV files (*.csv)|*.csv|All files (*.*)|*.*",
+                initial_dir=mosaic_data_dir(),
             )
-            root.destroy()
         except Exception:
-            log.exception("Hot start: tk file dialog failed")
-            self._show_hot_start_error(
-                "File dialog could not be opened. See log for details."
-            )
+            log.exception("Hot start file picker failed")
+            self._show_hot_start_error("Could not open file picker. See log.")
             return
-        log.info(f"Hot start: tk file dialog returned path={path!r}")
         if not path:
             return
         self._show_hot_start_column_picker(path)
@@ -173,18 +153,17 @@ class IOMixin:
         ):
             dpg.add_text(f"File: {Path(path).name}", wrap=500)
             dpg.add_text(
-                f"Shapefile ID column: {gdf_id_col} "
-                f"(CSV values will be matched against these)",
+                f"Match CSV precinct IDs to shapefile column: {gdf_id_col}",
                 wrap=500,
             )
             dpg.add_separator()
             id_combo = dpg.add_combo(
                 items=columns, default_value=default_id,
-                label="Precinct ID column (in CSV)", width=240,
+                label="CSV precinct ID column", width=240,
             )
             district_combo = dpg.add_combo(
                 items=columns, default_value=default_district,
-                label="District column (in CSV)", width=240,
+                label="CSV district column", width=240,
             )
 
     def _apply_hot_start(
@@ -263,12 +242,14 @@ class IOMixin:
             self._clear_relight()
 
     def _on_num_districts_change(self, *_args) -> None:
-        """Clear Relight when its seed map no longer matches the district count.
+        """Rescale the people tolerance when the district count changes.
 
-        Restores the pre-Relight annealing settings. No-op when Relight is off.
+        If Relight is active, clear its seed and restore the saved annealing
+        settings because the seed no longer matches the requested plan size.
         """
         if self._relight_active:
             self._clear_relight()
+        self._sync_tolerance_people()
 
     def _relight_snapshot(self) -> dict:
         return {
@@ -332,7 +313,7 @@ class IOMixin:
     def _update_relight_display(self) -> None:
         if self._relight_active:
             dpg.set_value(self._relight_info,
-                          "RELIGHT ON: each Start continues from the current map")
+                          "Relight: Start continues from the current map")
             dpg.configure_item(self._relight_info, show=True)
         else:
             dpg.configure_item(self._relight_info, show=False)
@@ -366,30 +347,23 @@ class IOMixin:
                 "Load a shapefile before loading a reference plan.")
             return
         import sys
-        if sys.platform == "darwin":
-            self._pick_alignment_dpg()
+        if sys.platform == "win32":
+            self._pick_alignment_windows()
         else:
-            self._pick_alignment_tk()
+            self._pick_alignment_dpg()
 
-    def _pick_alignment_tk(self):
-        import tkinter as tk
-        from tkinter import filedialog
-
+    def _pick_alignment_windows(self):
+        from mosaic.gui.file_dialog import windows_file_dialog
         from mosaic.paths import mosaic_data_dir
         try:
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-            path = filedialog.askopenfilename(
+            path = windows_file_dialog(
                 title="Select Reference Plan CSV",
-                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-                initialdir=str(mosaic_data_dir()),
+                file_filter="CSV files (*.csv)|*.csv|All files (*.*)|*.*",
+                initial_dir=mosaic_data_dir(),
             )
-            root.destroy()
         except Exception:
-            log.exception("Alignment: tk file dialog failed")
-            self._show_alignment_error(
-                "File dialog could not be opened. See log for details.")
+            log.exception("Reference plan file picker failed")
+            self._show_alignment_error("Could not open file picker. See log.")
             return
         if not path:
             return
@@ -440,17 +414,16 @@ class IOMixin:
         ):
             dpg.add_text(f"File: {Path(path).name}", wrap=500)
             dpg.add_text(
-                f"Shapefile ID column: {gdf_id_col} "
-                f"(CSV values will be matched against these)", wrap=500,
+                f"Match CSV precinct IDs to shapefile column: {gdf_id_col}", wrap=500,
             )
             dpg.add_separator()
             id_combo = dpg.add_combo(
                 items=columns, default_value=default_id,
-                label="Precinct ID column (in CSV)", width=240,
+                label="CSV precinct ID column", width=240,
             )
             district_combo = dpg.add_combo(
                 items=columns, default_value=default_district,
-                label="District column (in CSV)", width=240,
+                label="CSV district column", width=240,
             )
 
     def _apply_alignment(self, path, csv_id_col, csv_district_col) -> None:
@@ -550,11 +523,62 @@ class IOMixin:
             pass
 
     def _on_shapefile_selected(self, sender, app_data):
+        if self._queue_session_action(self._on_shapefile_selected, sender, app_data):
+            return
         path = app_data.get("file_path_name", "") if isinstance(app_data, dict) else ""
         if not path:
             return
+        self._request_open_shapefile(path)
+
+    def _request_open_shapefile(self, path, config=None):
+        """Ask before discarding a plan, including when opening a recent file."""
+        if self._ensemble_active or self._session_action_pending():
+            return
+        if self._plan_unsaved():
+            def discard():
+                dpg.delete_item("popup_open_confirm")
+                self._begin_open_shapefile(path, config)
+
+            with self._dialog(
+                "Open Map", "popup_open_confirm", (380, 120),
+                primary=("Discard & Open", discard),
+                secondary=("Cancel", lambda: dpg.delete_item("popup_open_confirm")),
+            ):
+                dpg.add_text("Discard unsaved results and open this map?", wrap=348)
+            return
+        self._begin_open_shapefile(path, config)
+
+    def _clear_file_state(self):
+        """Clear file-specific signals only after their publishers have stopped."""
+        self._pending_recent_config = None
+        self._restore_partisan_on_load = False
+        self._saved_plan = None
+        self._map_loaded_path = ""
+        self._map_loaded_gdf_id = self._map_data_gdf_id = 0
+        self._map_loading = self._map_ready = False
+        self.state.update(shp_inspect_ready=False, gdf_ready=False,
+                          map_needs_update=False, initial_assignment=None,
+                          hot_start_assignment=None, hot_start_filename="",
+                          shapefile_path="", error_message="")
+        if dpg.does_item_exist("shp_dialog"):
+            dpg.configure_item("shp_dialog", show=False)
+        if self._shp_dialog is not None:
+            self._shp_dialog._inspection = None
+
+    def _begin_open_shapefile(self, path, config=None):
+        if self._queue_session_action(self._begin_open_shapefile, path, config):
+            return
+        if self._ensemble_active:
+            return
+        if self._wait_for_workers(lambda: self._begin_open_shapefile(path, config)):
+            return
+        self._on_reset()
+        self._clear_file_state()
+        self._pending_recent_config = config
+        self._restore_partisan_on_load = bool(config and config.elections)
         self._reset_map_navigation()
         self.runner = AlgorithmRunner(self.state)
+        self._sync_tolerance_people()
         self._loaded_config = None
         self._has_elections = False
         # Drop the map fill immediately so no stale overlay from the previous
@@ -562,6 +586,9 @@ class IOMixin:
         # relabels the combo once the new file's data is known.
         self._fill_avail = None
         self._clear_fill()
+        if self.map_view is not None:
+            self.map_view.wipe()
+            self._update_map_preview()
         # Hot start (and Relight) were tied to the previous shapefile's map.
         self.state.update(
             current_assignment=None,
@@ -575,13 +602,22 @@ class IOMixin:
         self._clear_relight()   # turn off + restore the pre-Relight settings
         dpg.set_value(self._shp_info, "Reading shapefile...")
         self.theme.retoken(self._shp_info, "muted")
-        threading.Thread(
+        self._data_thread = threading.Thread(
             target=self.runner.start_inspection, args=(path,), daemon=True,
-        ).start()
+        )
+        self._data_thread.start()
 
     def _on_shp_confirm(self, inspection: ShapefileInspection,
                         config: ShapefileConfig) -> None:
         """Called by ShapefileDialog when the user clicks Confirm and Load."""
+        if self._queue_session_action(self._on_shp_confirm, inspection, config):
+            return
+        if self._ensemble_active or self._session_action_pending():
+            return
+        if self.runner is None or inspection is not self.runner._pending_inspection:
+            return
+        if self._wait_for_workers(lambda: self._on_shp_confirm(inspection, config)):
+            return
         self._loaded_config = config
         self._push_recent_shapefile(inspection.path, config)
         # Flush all history and series before the new load so charts start
@@ -631,14 +667,19 @@ class IOMixin:
         self._clear_all_series()
         dpg.set_value(self._shp_info, "Building graph...")
         self.theme.retoken(self._shp_info, "muted")
-        threading.Thread(
+        self._data_thread = threading.Thread(
             target=self.runner.complete_load,
             args=(inspection, config),
             daemon=True,
-        ).start()
+        )
+        self._data_thread.start()
 
     def _on_shp_cancel(self) -> None:
         """Called by ShapefileDialog when the user clicks Cancel."""
+        if self._queue_session_action(self._on_shp_cancel):
+            return
+        if self._session_action_pending():
+            return
         self.state.update(
             status=AlgorithmStatus.IDLE,
             status_message="Load cancelled",

@@ -242,10 +242,14 @@ class UpdatesMixin:
                 else:
                     self._shp_dialog.populate(self.runner._pending_inspection)
 
+        if self._session_action_pending():
+            return
+
         # ── Load complete → update shapefile info label ────────────────────────
         if snap["gdf_ready"]:
             self.state.update(gdf_ready=False)
             self._update_shp_info_label()
+            self._sync_tolerance_people()
             # Mark this gdf as fully populated (all overlay arrays present) so
             # the map bg-load below may load it. complete_load sets gdf +
             # populations + county + elections + pp before pulsing gdf_ready,
@@ -317,7 +321,8 @@ class UpdatesMixin:
                     )
                 finally:
                     self._map_loading = False
-            threading.Thread(target=_bg_load, daemon=True).start()
+            self._map_load_thread = threading.Thread(target=_bg_load, daemon=True)
+            self._map_load_thread.start()
 
         if self._map_ready:
             self._map_ready = False
@@ -432,9 +437,9 @@ class UpdatesMixin:
         if total_worse > 0:
             rate = 100.0 * acc / total_worse
             dpg.set_value(self._acc_txt,
-                          f"Worse accepted: {rate:.1f}%  ({acc:,} / {total_worse:,})")
+                          f"Entropy: {rate:.1f}%  ({acc:,} / {total_worse:,})")
         else:
-            dpg.set_value(self._acc_txt, "Worse accepted: --")
+            dpg.set_value(self._acc_txt, "Entropy: --")
 
         dpg.set_value(self._succ_txt,
                       f"Accepted steps: {snap['successful_steps']:,}")
@@ -454,6 +459,8 @@ class UpdatesMixin:
         # force-disables it (see _set_score_row_vis), so a hidden score can never
         # keep silently affecting annealing.
         self._sync_seed_controls()
+        self._sync_preset_controls()
+        self._sync_ensemble_controls()
         dpg.configure_item(self._run_btn,    enabled=not is_busy)
         dpg.configure_item(self._pause_btn,  enabled=is_running or is_paused or is_partitioning)
         dpg.configure_item(self._pause_btn,
@@ -634,7 +641,8 @@ class UpdatesMixin:
                     fit_y: bool = True) -> None:
             if not buf.ys:
                 return
-            xs, ys = buf.plot_data(limit)
+            total = len(buf.ys)
+            n = min(total, _PLOT_LIMIT) if limit else total   # == len(plot_data)
             # Render-time uniform subsample.  Buffer is untouched; we just
             # don't ship more than ~_RENDER_TARGET points to DPG per frame.
             # Three rules:
@@ -649,20 +657,30 @@ class UpdatesMixin:
             #   3) Always include the indices of the windowed min, max, and
             #      last point so fit_axis_data has stable bounds and the
             #      leading edge tracks current data.
-            n = len(xs)
             if limit and n > _RENDER_TARGET:
                 step = n // _RENDER_TARGET
                 # Where this window starts in the full buffer.  Used to
                 # offset the stride so absolute positions divisible by
                 # `step` remain sampled even as the window slides.
-                window_start = max(0, len(buf.ys) - _PLOT_LIMIT)
+                window_start = max(0, total - _PLOT_LIMIT)
                 offset = (step - window_start % step) % step
-                y_min_idx = ys.index(min(ys))
-                y_max_idx = ys.index(max(ys))
-                idx = sorted(set(range(offset, n, step))
-                             | {y_min_idx, y_max_idx, n - 1})
-                xs = [xs[i] for i in idx]
-                ys = [ys[i] for i in idx]
+                # Scan the cached numeric window; only newly appended values
+                # need conversion from Python lists.
+                xa, ya = buf.arrays()
+                xa, ya = xa[total - n:], ya[total - n:]
+                sel = np.zeros(n, dtype=bool)
+                sel[offset::step] = True
+                sel[n - 1] = True
+                if not np.isnan(ya).any():              # first min / max, as list.index
+                    sel[int(ya.argmin())] = sel[int(ya.argmax())] = True
+                elif not np.isnan(ya).all():            # partly gaps: skip them
+                    sel[int(np.nanargmin(ya))] = sel[int(np.nanargmax(ya))] = True
+                else:                                   # all gaps: retain the first point
+                    sel[0] = True
+                idx = np.flatnonzero(sel)
+                xs, ys = xa[idx].tolist(), ya[idx].tolist()
+            else:
+                xs, ys = buf.plot_data(limit)
             dpg.set_value(series_tag, [xs, ys])
             dpg.fit_axis_data(x_tag)
             # Skip y-fit for axes locked to a fixed range (e.g. probability
@@ -1291,5 +1309,6 @@ class UpdatesMixin:
             if not has_race and dpg.is_item_shown(panel_tag):
                 dpg.set_value(item_tag, False)
                 dpg.configure_item(panel_tag, show=False)
+        self._set_preset_info([])   # notes described the previous map
 
     # ── Popup toggle callbacks ────────────────────────────────────────────────

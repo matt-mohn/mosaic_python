@@ -8,12 +8,13 @@ from ._common import (
     _FILL_NONE,
     _HALF_PLOT_H,
     _HALF_PLOT_W,
+    _LEFT_GAP,
     _LEFT_W,
     _MAP_DH,
     _MAP_DW,
     _MAP_H,
+    _MIN_CLIENT_W,
     _SCORE_COL_W,
-    _SCORE_H,
     _TOP_H,
     _VP_H,
     _VP_W,
@@ -24,6 +25,25 @@ from ._common import (
     dpg,
     np,
 )
+
+_SCORE_MIN_H = 80
+
+
+def _initial_viewport_bounds():
+    """Fit initial height to the work area while retaining the required width."""
+    import sys
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            work = wintypes.RECT()
+            if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(work), 0):
+                height = min(_VP_H, work.bottom - work.top - 40)
+                return dict(width=_MIN_CLIENT_W, height=max(560, height),
+                            x_pos=work.left + 20, y_pos=work.top + 20)
+        except (AttributeError, OSError):
+            pass
+    return dict(width=_MIN_CLIENT_W, height=700)
 
 
 class SetupMixin:
@@ -47,7 +67,8 @@ class SetupMixin:
         _icon_path = str(_APP_ICON) if _APP_ICON.exists() else ""
         dpg.create_viewport(
             title="Mosaic",
-            width=_VP_W, height=_VP_H,
+            **_initial_viewport_bounds(),
+            min_width=_MIN_CLIENT_W, min_height=560,
             small_icon=_icon_path,
             large_icon=_icon_path,
         )
@@ -88,6 +109,7 @@ class SetupMixin:
         self._shp_dialog.build(_VP_W, _VP_H)
 
         self._load_recent_shapefiles()
+        self._load_recent_presets()
 
         self._build_population_popup()
         self._build_seed_popup()
@@ -133,7 +155,7 @@ class SetupMixin:
         with dpg.window(tag="main_window"):
 
 
-            with dpg.menu_bar():
+            with dpg.menu_bar(tag="main_menu_bar"):
                 with dpg.menu(label="File"):
                     dpg.add_menu_item(
                         label="New", shortcut="Ctrl+N",
@@ -204,6 +226,18 @@ class SetupMixin:
                         callback=lambda: dpg.configure_item(
                             "popup_partisan", show=True),
                     )
+                    dpg.add_separator()
+                    dpg.add_menu_item(label="Save Preset...",
+                                      callback=self._on_save_preset)
+                    self._preset_apply_item = dpg.add_menu_item(
+                        label="Apply Preset...", enabled=False,
+                        callback=self._on_apply_preset)
+                    dpg.add_menu(label="Apply Recent Preset", enabled=False,
+                                 tag="cfg_preset_recent_menu")
+                    dpg.add_separator()
+                    dpg.add_menu_item(
+                        label="Clear All Scores",
+                        callback=self._on_clear_scores)
                 with dpg.menu(label="Appearance"):
                     dpg.add_text("Theme")
                     self._theme_radio = dpg.add_radio_button(
@@ -507,6 +541,10 @@ class SetupMixin:
                     )
 
                 with dpg.menu(label="Advanced", tag="menu_debug"):
+                    self._ensemble_item = dpg.add_menu_item(
+                        label="Ensemble...", enabled=False,
+                        callback=self._on_open_ensemble)
+                    dpg.add_separator()
                     self._hot_start_load_item = dpg.add_menu_item(
                         label="Load Hot Start...",
                         callback=self._on_load_hot_start,
@@ -568,33 +606,39 @@ class SetupMixin:
                         "Choose the rule used to assign district numbers.",
                     )
 
-            with dpg.child_window(height=_TOP_H, border=False,
-                                  no_scrollbar=True, no_scroll_with_mouse=True):
+            with dpg.child_window(width=-1, height=_TOP_H, border=False, tag="top_section",
+                                  no_scrollbar=True):
                 with dpg.group(horizontal=True):
 
                     # ── Left column ───────────────────────────────────────────
-                    with dpg.child_window(width=_LEFT_W, border=False):
+                    # Long filenames and warnings may require vertical scrolling.
+                    with dpg.child_window(width=_LEFT_W, border=False,
+                                          tag="run_controls"):
 
                         self.theme.text("Load Shapefile", "heading")
                         dpg.add_separator()
                         dpg.add_button(
-                            label="Import Shapefile from File",
+                            label="Open Shapefile...",
                             callback=self._on_import_shapefile,
                             width=_LEFT_W - 20,
                         )
                         self._shp_info = self.theme.text(
-                            "No shapefile loaded", "muted",
+                            "No shapefile loaded", "muted", wrap=_LEFT_W - 44,
                         )
                         self._hot_start_info = self.theme.text(
-                            "", "warning",
+                            "", "warning", wrap=_LEFT_W - 44,
                         )
                         dpg.configure_item(self._hot_start_info, show=False)
                         self._relight_info = self.theme.text(
-                            "", "warning",
+                            "", "warning", wrap=_LEFT_W - 44,
                         )
                         dpg.configure_item(self._relight_info, show=False)
+                        self._preset_info = self.theme.text(
+                            "", "warning", wrap=_LEFT_W - 44,
+                        )
+                        dpg.configure_item(self._preset_info, show=False)
 
-                        dpg.add_spacer(height=6)
+                        dpg.add_spacer(height=_LEFT_GAP)
                         self.theme.text("Run Parameters", "heading")
                         dpg.add_separator()
                         _inp_w = (_LEFT_W - 24) // 2
@@ -604,10 +648,7 @@ class SetupMixin:
                                 self._num_districts = dpg.add_input_int(
                                     label="##dist",
                                     default_value=5, min_value=2, max_value=500,
-                                    # DPG ignores min_value/max_value unless the
-                                    # clamped flags are set, so without these a
-                                    # typed 1 was accepted and crashed the
-                                    # stable-colour renumber (needs k >= 2).
+                                    # Clamp typed values as well as spinner input.
                                     min_clamped=True, max_clamped=True,
                                     width=_inp_w, step=0,
                                     callback=self._on_num_districts_change,
@@ -630,7 +671,7 @@ class SetupMixin:
                                     "iterations take longer but do not guarantee a better map.",
                                 )
 
-                        dpg.add_spacer(height=6)
+                        dpg.add_spacer(height=_LEFT_GAP)
                         self.theme.text("Controls", "heading")
                         dpg.add_separator()
                         _btn_w = (_LEFT_W - 30) // 2
@@ -682,10 +723,10 @@ class SetupMixin:
                             "Save current district-level metrics as a CSV in output.",
                         )
 
-                        dpg.add_spacer(height=6)
+                        dpg.add_spacer(height=_LEFT_GAP)
                         self.theme.text("Status", "heading")
                         dpg.add_separator()
-                        self._status_txt = dpg.add_text("Status: Idle")
+                        self._status_txt = dpg.add_text("Status: Idle", wrap=_LEFT_W - 44)
                         self._iter_txt   = dpg.add_text("Iteration: 0 / 0")
                         # Timer readout as a fixed 3-column table. width=-1 fills
                         # the panel and SizingStretchSame splits it into equal
@@ -732,12 +773,12 @@ class SetupMixin:
                             borders_outerH=False, borders_innerV=True,
                             borders_outerV=False, width=-1,
                             policy=dpg.mvTable_SizingStretchSame,
-                        ) as _stats_table:
+                            tag="left_stats_table") as _stats_table:
                             dpg.add_table_column()
                             dpg.add_table_column()
                             with dpg.table_row():
                                 self._score_txt = dpg.add_text("Score: --")
-                                self._acc_txt   = dpg.add_text("Worse accepted: --")
+                                self._acc_txt   = dpg.add_text("Entropy: --")
                             with dpg.table_row():
                                 self._best_txt  = dpg.add_text(
                                     "Best:  --   (iter. --)")
@@ -750,7 +791,7 @@ class SetupMixin:
 
                     # ── Right column (map + plots) ────────────────────────────
                     with dpg.child_window(width=-1, border=False,
-                                          no_scrollbar=True, no_scroll_with_mouse=True):
+                                          no_scrollbar=True):
 
                         map_heading = self.theme.text(
                             "District Map", "heading", tag="map_heading")
@@ -763,16 +804,14 @@ class SetupMixin:
                             tag="map_container", no_scrollbar=True,
                             no_scroll_with_mouse=True,
                         ):
-                            self._build_map_canvas()
-                        # Map toolbar, one row. The six mutually exclusive body
-                        # fills use one combo; the checkboxes are additive
-                        # decorations.
-                        #
-                        # A table, not a plain group: the stretch column is what
-                        # pins the photo controls to the right edge. A spacer with
-                        # width=-1 inside a horizontal group does NOT fill the
-                        # remaining space, so the camera drifted left beside the
-                        # checkboxes.
+                            # The spacer centres the map when it is narrower
+                            # than the box (see MapMixin._sync_map_size).
+                            with dpg.group(horizontal=True):
+                                dpg.add_spacer(width=1, tag="map_center_pad", show=False)
+                                self._build_map_canvas()
+                        # The fill combo selects one body color mode. Overlay
+                        # checkboxes add decorations; the stretch table column
+                        # keeps the image-save controls against the right edge.
                         with dpg.theme() as _toolbar_theme:
                             with dpg.theme_component(dpg.mvTable):
                                 dpg.add_theme_style(
@@ -869,7 +908,7 @@ class SetupMixin:
                         with dpg.group(horizontal=True):
                             with dpg.group():
                                 self._hint(self.theme.text("Score", "heading"), "score")
-                                with dpg.plot(height=_HALF_PLOT_H,
+                                with dpg.plot(height=_HALF_PLOT_H, tag="score_half_plot",
                                               width=_HALF_PLOT_W, no_menus=True):
                                     dpg.add_plot_legend()
                                     dpg.add_plot_axis(dpg.mvXAxis,
@@ -884,7 +923,8 @@ class SetupMixin:
                             with dpg.group():
                                 self._hint(self.theme.text(
                                     "Entropy", "heading"), "entropy")
-                                with dpg.plot(height=_HALF_PLOT_H, width=-1, no_menus=True):
+                                with dpg.plot(height=_HALF_PLOT_H, width=-1, no_menus=True,
+                                              tag="entropy_half_plot"):
                                     dpg.add_plot_legend()
                                     dpg.add_plot_axis(dpg.mvXAxis,
                                                       label="Iteration",
@@ -897,7 +937,9 @@ class SetupMixin:
                                             tag="acc_series")
 
             # ── Score panel (bottom) ──────────────────────────────────────────
-            with dpg.child_window(height=_SCORE_H, border=True, tag="score_panel"):
+            # Scores absorb vertical resizing while the map/controls stay fixed.
+            # Page scrolling is a fallback when even a small score area cannot fit.
+            with dpg.child_window(width=-1, height=_SCORE_MIN_H, border=True, tag="score_panel"):
                 with dpg.group(horizontal=True):
                     self.theme.text("Choose visible scores from the Scores menu", "muted")
                     dpg.add_spacer(width=12)
@@ -909,10 +951,7 @@ class SetupMixin:
                 dpg.add_separator()
                 with dpg.group(horizontal=True):
 
-                    # Col 1: default-on rows first (Compactness, County
-                    # Col 1: flagships (Compactness, County Congruence) lead, then
-                    # the rest of geography and misc. Two per column, so enabling
-                    # extra rows appends below the flagships instead of shifting them.
+                    # Default scores lead each column; optional scores follow.
                     with dpg.child_window(width=_SCORE_COL_W, height=-1,
                                           border=False):
                         with dpg.group(tag="score_row_hc", show=True):
@@ -1091,6 +1130,7 @@ class SetupMixin:
                                     default_value=1.0, min_value=0.0, max_value=100.0,
                                     format="%.1f", width=_SCORE_COL_W - 100,
                                 )
+                            dpg.add_spacer(height=4)
 
                         with dpg.group(tag="score_row_alignment", show=False):
                             with dpg.group(horizontal=True):
@@ -1446,6 +1486,7 @@ class SetupMixin:
                                     self._majority_rep_chk,
                                     "Choose the party whose majority chance to favor.",
                                 )
+                            dpg.add_spacer(height=4)
 
                         with dpg.group(tag="score_row_hinge", show=False):
                             with dpg.group(horizontal=True):
@@ -1494,10 +1535,10 @@ class SetupMixin:
                                     self._hinge_rep_chk,
                                     "Choose the party whose seat-target chance to favor.",
                                 )
+                            dpg.add_spacer(height=4)
 
-
+        self._refresh_recent_presets_menu()
         dpg.set_primary_window("main_window", True)
-        dpg.configure_item("main_window", no_scrollbar=False, no_scroll_with_mouse=False)
         dpg.setup_dearpygui()
 
         self.map_view = MapView("map_texture", _MAP_DW, _MAP_DH)
@@ -1541,11 +1582,28 @@ class SetupMixin:
         dpg.bind_item_theme("map_canvas", map_theme)
 
     def _update_window_layout(self):
-        # Keep score controls usable when the page is shorter than its content.
-        # Tall windows let the score panel fill the remaining space.
-        height = -1 if dpg.get_viewport_client_height() >= _VP_H - 40 else _SCORE_H
-        if dpg.get_item_configuration("score_panel")["height"] != height:
-            dpg.configure_item("score_panel", height=height)
+        if not self._min_width_set and dpg.get_frame_count() >= 2:
+            # The OS frame contributes to viewport width. Correct the minimum
+            # after measuring it, without overriding the user's window size.
+            frame = dpg.get_viewport_width() - dpg.get_viewport_client_width()
+            if dpg.get_viewport_client_width() > 0 and frame >= 0:
+                dpg.set_viewport_min_width(_MIN_CLIENT_W + frame)
+                if dpg.get_viewport_client_width() < _MIN_CLIENT_W:
+                    dpg.set_viewport_width(_MIN_CLIENT_W + frame)
+                self._min_width_set = True
+        sp = self.theme.palette.spacing
+        client_w = dpg.get_viewport_client_width()
+        client_h = dpg.get_viewport_client_height()
+        if client_w > 0 and client_h > 0:
+            self._shp_dialog.fit_to_viewport(client_w, client_h)
+            # Scores absorb changes in available height; reserve a little room
+            # so scrollbar visibility cannot repeatedly toggle at the boundary.
+            menu_h = dpg.get_item_state("main_menu_bar").get("rect_size", (0, 24))[1]
+            height = max(_SCORE_MIN_H, client_h - _TOP_H - menu_h
+                         - 2 * sp.window_padding[1] - sp.item_spacing[1] - 20)
+            if dpg.get_item_configuration("score_panel")["height"] != height:
+                dpg.configure_item("score_panel", height=height)
+        self._sync_map_size()
 
     # ── Popup builders ────────────────────────────────────────────────────────
 

@@ -56,6 +56,7 @@
       background-size: 22px 22px;
     }
   </style>
+  <link rel="stylesheet" href="site-nav.css">
 </head>
 <body class="bg-paper text-ink">
 
@@ -66,13 +67,25 @@
         <img src="mosaic_logo.png" alt="" class="w-7 h-7">
         Mosaic
       </a>
-      <nav class="text-sm text-ink-soft hidden md:flex items-center gap-7">
+      <nav aria-label="Primary" class="site-nav-desktop text-sm text-ink-soft hidden md:flex items-center gap-7">
         <a href="install.html" class="hover:text-ink transition">Install</a>
         <a href="help.html" class="hover:text-ink transition">Help</a>
         <a href="methodology.html" class="hover:text-ink transition">Methodology</a>
         <a href="about.html" class="hover:text-ink transition">About</a>
         <a href="https://github.com/matt-mohn/mosaic_python" class="hover:text-ink transition">GitHub →</a>
       </nav>
+      <details class="site-nav-mobile">
+        <summary>Menu</summary>
+        <nav aria-label="Mobile">
+          <a href="index.html" aria-current="page">Home</a>
+          <a href="install.html">Install</a>
+          <a href="help.html">Help</a>
+          <a href="shapefiles.html">Shapefiles</a>
+          <a href="methodology.html">Methodology</a>
+          <a href="about.html">About</a>
+          <a href="https://github.com/matt-mohn/mosaic_python">GitHub →</a>
+        </nav>
+      </details>
     </div>
   </header>
 

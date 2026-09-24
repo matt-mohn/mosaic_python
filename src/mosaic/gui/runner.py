@@ -217,9 +217,6 @@ class AlgorithmRunner:
         flags = dict(self.state.race_score_applicable)
         flags[score_id] = ok
         self.state.race_score_applicable = flags
-        if not ok:
-            log.warning(f"{score_id}: nothing to measure in this state; "
-                        f"the score is reported as not applicable")
 
     def start_inspection(self, path: str) -> None:
         """
@@ -394,7 +391,10 @@ class AlgorithmRunner:
 
             # Load or build adjacency graph
             cache_path = get_cache_path(inspection.path)
-            self.graph = load_cached_graph(cache_path, inspection.path, gdf)
+            self.graph = load_cached_graph(
+                cache_path, inspection.path, gdf,
+                populations=self.populations, county_ids=self.county_array,
+            )
 
             if self.graph is not None:
                 log.info(f"Cached graph: {self.graph.number_of_nodes()} nodes, "
@@ -409,7 +409,9 @@ class AlgorithmRunner:
                     status=AlgorithmStatus.BUILDING_GRAPH,
                     status_message="Building adjacency graph...",
                 )
-                self.graph = build_adjacency_graph(gdf)
+                self.graph = build_adjacency_graph(
+                    gdf, populations=self.populations, county_ids=self.county_array,
+                )
                 save_cached_graph(self.graph, cache_path, inspection.path)
                 log.info(f"Built graph: {self.graph.number_of_nodes()} nodes, "
                          f"{self.graph.number_of_edges()} edges")
@@ -443,6 +445,7 @@ class AlgorithmRunner:
                 inspection.path,
                 n_precincts=n,
                 n_edges=self.graph.number_of_edges(),
+                edges=list(self.graph.edges()),
             )
             if self.pp_data is not None:
                 log.info(f"Loaded cached PP geometry from {pp_cache_path}")
@@ -494,6 +497,41 @@ class AlgorithmRunner:
             return False
 
     # ── Algorithm ─────────────────────────────────────────────────────────────
+
+    def score_kwargs(self, num_districts: int, tolerance: float) -> dict:
+        """Prepare score_plan inputs for this map and district count.
+
+        Call after per-run minority-cohesion and community-congruence
+        precomputation. County constants are computed for the supplied tolerance.
+        """
+        ideal_pop = self.populations.sum() / num_districts
+        # County constants once per run; scoring uses the fixed map-wide
+        # tolerance (not the ratchet's), so they hold for the whole run.
+        county_data = (
+            precompute_county_data(
+                self.county_array, self.populations, ideal_pop, tolerance,
+            )
+            if self.county_array is not None
+            else None
+        )
+        return dict(
+            county_ids=self.county_array,
+            county_data=county_data,
+            populations=self.populations,
+            ideal_pop=ideal_pop,
+            tolerance=tolerance,
+            pp_data=self.pp_data,
+            reock_data=self.reock_data,
+            alignment_data=self.alignment_data,
+            n_districts=num_districts,
+            dem_votes=self.election_arrays[0][0] if self.election_arrays else None,
+            gop_votes=self.election_arrays[0][1] if self.election_arrays else None,
+            real_edge_mask=self.graph_ctx.real_edge_mask,
+            vap_data=self.vap_data,
+            minority_cohesion_data=self.minority_cohesion_data,
+            community_congruence_data=self.community_congruence_data,
+            opportunity_coords=self.opportunity_coords,
+        )
 
     def run_algorithm(self):
         """Main ReCom + annealing loop."""
@@ -554,19 +592,6 @@ class AlgorithmRunner:
                 "Polish Flips enabled: two-piece logistic ramp "
                 f"(5%->50% at p={flip_midpoint:.2f}->85%, steepness={_FLIP_STEEPNESS})"
             )
-
-        # Precompute county constants once per run (county_pops / allowances /
-        # max_clean / pops_f). The per-iteration county scorers reuse these
-        # instead of rebuilding them every step. Scoring always uses the fixed
-        # map-wide tolerance (not the ratchet's active_tolerance), so this stays
-        # valid for the whole run.
-        county_data = (
-            precompute_county_data(
-                self.county_array, self.populations, ideal_pop, tolerance,
-            )
-            if self.county_array is not None
-            else None
-        )
 
         # Neighborhood Severance: per-edge minority adjacency, precomputed per run.
         self.minority_cohesion_data = precompute_minority_cohesion_data(
@@ -644,24 +669,7 @@ class AlgorithmRunner:
                 any(t["target"] >= 1 and t["feasible"] for t in _targets.values()),
             )
 
-        _skw = dict(
-            county_ids=self.county_array,
-            county_data=county_data,
-            populations=self.populations,
-            ideal_pop=ideal_pop,
-            tolerance=tolerance,
-            pp_data=self.pp_data,
-            reock_data=self.reock_data,
-            alignment_data=self.alignment_data,
-            n_districts=num_districts,
-            dem_votes=self.election_arrays[0][0] if self.election_arrays else None,
-            gop_votes=self.election_arrays[0][1] if self.election_arrays else None,
-            real_edge_mask=ctx.real_edge_mask,
-            vap_data=self.vap_data,
-            minority_cohesion_data=self.minority_cohesion_data,
-            community_congruence_data=self.community_congruence_data,
-            opportunity_coords=self.opportunity_coords,
-        )
+        _skw = self.score_kwargs(num_districts, tolerance)
         if self.vap_data is not None and score_config.weight_representation:
             from mosaic.scoring.opportunity import _get_prep
 

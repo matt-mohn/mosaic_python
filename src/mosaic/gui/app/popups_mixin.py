@@ -1,7 +1,17 @@
 """Modal popup builders (settings, help, confirmations)."""
+import math
+
 from mosaic.scoring.opportunity import GROUPS
 
 from ._common import _DOCS_SHAPEFILE_URL, _DOCS_URL, __version__, dpg, webbrowser
+
+# Population Tolerance bounds, shared by the percentage slider and the people
+# slider that mirrors it.
+_TOL_MIN_PCT = 0.1
+_TOL_MAX_PCT = 10.0
+# Interior people choices are multiples of this step; endpoints preserve the
+# percentage bounds. Ranges narrower than this use whole-person steps.
+_PEOPLE_SNAP = 100
 
 
 class PopupsMixin:
@@ -16,13 +26,28 @@ class PopupsMixin:
         ):
             self._tolerance = dpg.add_slider_float(
                 label="Population Tolerance",
-                default_value=2.5, min_value=0.1, max_value=10.0,
-                format="%.1f %%", width=260,
+                default_value=2.5,
+                min_value=_TOL_MIN_PCT, max_value=_TOL_MAX_PCT,
+                format="%.3f %%", width=260,
+                callback=self._on_tolerance_change,
             )
             self._tooltip(
                 self._tolerance,
-                "Every district must stay within this percentage of ideal "
-                "population. Proposals outside the limit are rejected.",
+                "Maximum difference from ideal district population. "
+                "Proposals exceeding this limit are rejected.",
+            )
+            with dpg.group(horizontal=True):
+                self._tolerance_people = dpg.add_slider_int(
+                    label="##tolerance_people",
+                    default_value=0, min_value=0, max_value=1,
+                    format="", no_input=True, width=155, enabled=False,
+                    callback=self._on_tolerance_people_change,
+                )
+                self._tolerance_people_text = dpg.add_text("No map loaded")
+            self._tooltip(
+                self._tolerance_people,
+                "Drag in 100-person steps (1 person for small ranges). "
+                "Endpoints retain the percentage limits.",
             )
             dpg.add_spacer(height=6)
             with dpg.group(horizontal=True):
@@ -49,9 +74,91 @@ class PopupsMixin:
             )
             self._tooltip(
                 self._pop_dev_harbor,
-                "Differences inside this band add no Population Deviation penalty. "
-                "This does not change the hard Population Tolerance.",
+                "No Population Deviation penalty inside this band. "
+                "The hard population limit still applies.",
             )
+
+    def _ideal_population(self):
+        """Ideal district population, or None before a map and count exist."""
+        runner = getattr(self, "runner", None)
+        if runner is None or runner.populations is None:
+            return None
+        k = dpg.get_value(self._num_districts)
+        total = float(runner.populations.sum())
+        if k < 2 or not math.isfinite(total) or total <= 0:
+            return None
+        return total / k
+
+    def _sync_tolerance_people(self, *_args):
+        """Rescale the people slider to the loaded map, mirroring the percentage.
+
+        The percentage is the stored value the run uses; people is a view of it,
+        so a district-count or shapefile change moves people, never tolerance.
+        """
+        ideal = self._ideal_population()
+        if ideal is None:
+            dpg.configure_item(self._tolerance_people, enabled=False,
+                               min_value=0, max_value=1)
+            dpg.set_value(self._tolerance_people, 0)
+            dpg.set_value(self._tolerance_people_text, "No map loaded")
+            return
+        low, high, step, first, count = self._tolerance_people_scale(ideal)
+        people = ideal * dpg.get_value(self._tolerance) / 100.0
+        # Percent edits and map/count changes keep the exact percentage. The
+        # thumb indicates its nearest discrete choice; the readout is the limit.
+        index = min(count, max(1, round(people / step) - first + 1)) if count else 0
+        choices = (0, index, count + 1)
+        index = min(choices, key=lambda i: abs(self._tolerance_people_at(ideal, i) - people))
+        dpg.configure_item(self._tolerance_people, enabled=high - low >= 1,
+                           min_value=0, max_value=count + 1)
+        dpg.set_value(self._tolerance_people, index)
+        self._show_tolerance_people(people)
+
+    @staticmethod
+    def _tolerance_people_scale(ideal):
+        """Describe discrete choices without allocating a population-sized list."""
+        low, high = ideal * _TOL_MIN_PCT / 100.0, ideal * _TOL_MAX_PCT / 100.0
+        step = _PEOPLE_SNAP if high - low >= _PEOPLE_SNAP else 1
+        first = math.floor(low / step) + 1
+        last = math.ceil(high / step) - 1
+        return low, high, step, first, max(0, last - first + 1)
+
+    def _tolerance_people_at(self, ideal, index):
+        low, high, step, first, count = self._tolerance_people_scale(ideal)
+        if index <= 0:
+            return low
+        if index >= count + 1:
+            return high
+        return (first + index - 1) * step
+
+    def _show_tolerance_people(self, people):
+        if math.isclose(people, round(people), rel_tol=0, abs_tol=1e-6):
+            value = f"{round(people):,}"
+        elif people < 1:
+            value = f"{people:.3g}"
+        else:
+            value = f"{people:,.2f}".rstrip("0").rstrip(".")
+        dpg.set_value(self._tolerance_people_text, f"{value} people")
+
+    def _on_tolerance_change(self, *_args):
+        self._sync_tolerance_people()
+
+    def _on_tolerance_people_change(self, *_args):
+        ideal = self._ideal_population()
+        if ideal is None:
+            self._sync_tolerance_people()
+            return
+        low, high, _, _, count = self._tolerance_people_scale(ideal)
+        if high - low < 1:
+            self._sync_tolerance_people()
+            return
+        index = max(0, min(count + 1, int(dpg.get_value(self._tolerance_people))))
+        people = self._tolerance_people_at(ideal, index)
+        pct = (_TOL_MIN_PCT if index == 0 else _TOL_MAX_PCT if index == count + 1
+               else people / ideal * 100.0)
+        dpg.set_value(self._tolerance,
+                      min(_TOL_MAX_PCT, max(_TOL_MIN_PCT, pct)))
+        self._show_tolerance_people(people)
 
     def _build_seed_popup(self):
         with self._dialog(
@@ -627,8 +734,7 @@ class PopupsMixin:
             ],
         ):
             dpg.add_text(
-                "The current run has results that have not been saved.\n"
-                "Discard them and start a new map?",
+                "Discard unsaved results and start a new map?",
                 wrap=380 - 2 * 16,
             )
 
@@ -643,7 +749,6 @@ class PopupsMixin:
             ],
         ):
             dpg.add_text(
-                "The current run has results that have not been saved.\n"
-                "Close anyway?",
+                "Close without saving the current results?",
                 wrap=380 - 2 * 16,
             )

@@ -1,9 +1,9 @@
 """Disk cache for precomputed Polsby-Popper geometry data.
 
-The expensive piece of ``precompute_pp_data`` is the per-edge shapely
-``intersection().length`` loop — many seconds on a ~10k+ precinct shapefile.
-Since PPData is a pure function of the shapefile geometry plus the adjacency
-graph (both stable for a given shapefile), it's a clean caching target.
+``precompute_pp_data`` reuses intersection lengths stored on real graph edges
+and calculates them for graphs without that metadata. Its disk cache avoids
+reassembling the geometry arrays. Reuse requires matching source geometry and
+graph edge endpoints.
 
 Layout: sidecar to the existing graph cache, e.g.
     cache/North_Carolina_Simplified.pkl       <- graph
@@ -19,6 +19,8 @@ import logging
 import pickle
 from pathlib import Path
 from typing import Optional
+
+import numpy as np
 
 from mosaic.io.shapefile import shapefile_fingerprint
 from mosaic.paths import cache_dir as _default_cache_dir
@@ -68,12 +70,14 @@ def load_cached_pp_data(
     shapefile_path: str | Path,
     n_precincts: int,
     n_edges: int,
+    *,
+    edges=None,
 ) -> Optional[PPData]:
     """Load cached PPData iff its fingerprint matches the live shapefile.
 
     Returns None on: missing file, unreadable file, fingerprint mismatch, or
-    size mismatch (precinct/edge count differs from the live graph — defense
-    in depth in case the same shapefile produced a different graph).
+    size mismatch. When live edges are supplied, their endpoints and order must
+    match too: changing island bridges can leave the edge count unchanged.
     """
     cache_path = Path(cache_path)
     if not cache_path.exists():
@@ -86,22 +90,34 @@ def load_cached_pp_data(
         return None
 
     live_fp = shapefile_fingerprint(shapefile_path)
-    if not live_fp or payload.get("fingerprint") != live_fp:
+    if not isinstance(payload, dict) or not live_fp or payload.get("fingerprint") != live_fp:
         log.info(
             f"PP cache stale for {Path(shapefile_path).name} "
             f"(fingerprint mismatch). Recomputing."
         )
         return None
 
-    pp_kwargs = {k: payload[k] for k in ("areas", "ext_perimeters", "edge_u", "edge_v", "edge_len")}
-    pp = PPData(**pp_kwargs)
-
-    if len(pp.areas) != n_precincts or len(pp.edge_len) != n_edges:
-        log.warning(
-            f"PP cache size mismatch (cached {len(pp.areas)} precincts / "
-            f"{len(pp.edge_len)} edges vs live {n_precincts}/{n_edges}). "
-            "Recomputing."
-        )
+    try:
+        pp_kwargs = {k: np.asarray(payload[k])
+                     for k in ("areas", "ext_perimeters", "edge_u", "edge_v", "edge_len")}
+        pp = PPData(**pp_kwargs)
+        for name, expected in (("areas", n_precincts), ("ext_perimeters", n_precincts),
+                               ("edge_u", n_edges), ("edge_v", n_edges), ("edge_len", n_edges)):
+            values = getattr(pp, name)
+            if values.shape != (expected,) or not np.all(np.isfinite(values)):
+                raise ValueError(f"invalid {name}")
+        for name in ("edge_u", "edge_v"):
+            endpoints = getattr(pp, name)
+            if (not np.issubdtype(endpoints.dtype, np.integer)
+                    or np.any(endpoints < 0) or np.any(endpoints >= n_precincts)):
+                raise ValueError(f"invalid {name} indices")
+        if edges is not None:
+            live_edges = np.asarray(edges, dtype=np.int64).reshape(-1, 2)
+            if (not np.array_equal(pp.edge_u, live_edges[:, 0])
+                    or not np.array_equal(pp.edge_v, live_edges[:, 1])):
+                raise ValueError("graph edge endpoints changed")
+    except (KeyError, TypeError, ValueError) as exc:
+        log.info("PP cache invalid at %s: %s. Recomputing.", cache_path, exc)
         return None
 
     return pp

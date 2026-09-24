@@ -5,6 +5,7 @@ from ._common import (
     AnnealingConfig,
     ScoreConfig,
     dpg,
+    log,
     np,
     threading,
     warnings,
@@ -14,8 +15,65 @@ from ._common import (
 class RunnerMixin:
     """Run/pause/reset/revert control and district renumbering."""
 
+    def _queue_session_action(self, action, *args, **kwargs):
+        """Defer callbacks to the frame thread without wrapping their signatures.
+
+        Dear PyGui's native dispatcher uses the callback's positional argument
+        count, so registered methods must keep their explicit parameters.
+        """
+        if threading.get_ident() == self._gui_thread_id:
+            return False
+        self._session_requests.put(lambda: action(*args, **kwargs))
+        return True
+
+    def _session_action_pending(self):
+        return self._pending_session_action is not None
+
+    def _session_workers(self):
+        return (self.algorithm_thread, self._data_thread, self._map_load_thread)
+
+    def _session_workers_busy(self):
+        return (getattr(self, "_saving", False)
+                or any(t is not None and t.is_alive() for t in self._session_workers()))
+
+    def _wait_for_workers(self, action):
+        """Defer a state-changing action until all current writers have exited.
+
+        The frame loop polls thread completion; it never blocks on join. Keeping
+        the stop flag set until termination prevents a restarted run from
+        reviving an old worker against the same shared state.
+        """
+        if self._session_action_pending():
+            return True
+        if self._session_workers_busy():
+            self.state.request_stop()
+            self._pending_session_action = action
+            self.state.update(status_message="Waiting for current work to stop...")
+            return True
+        return False
+
+    def _tick_session_action(self):
+        if not self._session_action_pending():
+            return
+        if self._session_workers_busy():
+            dpg.set_value(self._status_txt, "Waiting for current work to stop...")
+            return
+        action = self._pending_session_action
+        self._pending_session_action = None
+        self._perform_session_action(action)
+
+    def _perform_session_action(self, action):
+        """Report callback failures without ending the GUI frame loop."""
+        try:
+            action()
+        except Exception as exc:
+            log.exception("Session action failed")
+            self.state.update(status_message=f"Could not complete action: {exc}")
+
     def _on_revert_to_best(self):
         """Rewind display to the best-scoring iteration seen so far."""
+        if self._ensemble_active:
+            return
         with self.state._lock:
             if self.state.best_assignment is None:
                 return
@@ -136,17 +194,33 @@ class RunnerMixin:
             self.map_view.render_assignment(best_assign, n_dist, _init)
 
     def _on_run(self):
+        if self._queue_session_action(self._on_run):
+            return
+        if self._ensemble_active:
+            return
         if self.runner is None or self.runner.graph is None:
             self.state.update(status=AlgorithmStatus.ERROR,
-                              error_message="Please load a shapefile first")
+                              error_message="Load a shapefile first.")
             return
 
-        # A prior run's thread (paused runs keep theirs alive, as Relight does)
-        # must be stopped first, or it races the new run over shared state.
-        if self.algorithm_thread is not None and self.algorithm_thread.is_alive():
-            self.state.request_stop()
-            self.algorithm_thread.join(timeout=2.0)
+        if self._wait_for_workers(self._on_run):
+            return
 
+        if not self._capture_run_settings():
+            return
+        self._clear_all_series()
+        self.state.reset_run()
+
+        self.algorithm_thread = threading.Thread(
+            target=self.runner.run_algorithm, daemon=True, name="algo",
+        )
+        self.algorithm_thread.start()
+
+    def _capture_run_settings(self) -> bool:
+        """Validate the starting plan and copy widget settings into shared state.
+
+        Return False if its district count or population balance prevents a run.
+        """
         # Relight reseeds each run from the live map, via the same seed slot the
         # runner already reads for Hot Start (the two are mutually exclusive). No
         # map yet (e.g. right after Reset) -> clear the slot -> random seed.
@@ -169,11 +243,10 @@ class RunnerMixin:
             n_dist_seed = int(hot_start.max()) + 1
             if n_dist_seed != n_dist_slider:
                 self._show_hot_start_error(
-                    f"{what} has {n_dist_seed} districts but the Districts "
-                    f"slider is set to {n_dist_slider}. {fix} or adjust "
-                    f"the slider."
+                    f"{what} has {n_dist_seed} districts; {n_dist_slider} are selected. "
+                    f"{fix} or change the district count."
                 )
-                return
+                return False
             pops = self.runner.populations
             if pops is not None and n_dist_slider > 0:
                 pop_f = pops.astype(np.float64)
@@ -186,12 +259,12 @@ class RunnerMixin:
                     tol = dpg.get_value(self._tolerance) / 100.0
                     if max_dev > tol:
                         self._show_hot_start_error(
-                            f"{what} has a district at {max_dev * 100:.2f}% "
-                            f"population deviation, over the {tol * 100:.2f}% "
-                            f"Population Tolerance. Loosen the tolerance "
+                            f"{what} exceeds population tolerance: "
+                            f"{max_dev * 100:.2f}% deviation, {tol * 100:.2f}% limit. "
+                            f"Raise the limit "
                             f"or {fix}."
                         )
-                        return
+                        return False
 
         cs_on      = dpg.get_value(self._cs_enabled)
         mm_on      = dpg.get_value(self._mm_enabled)
@@ -331,21 +404,23 @@ class RunnerMixin:
             flip_enabled=dpg.get_value(self._flip_enabled),
             flip_midpoint=dpg.get_value(self._flip_midpoint) / 100.0,
         )
-        self._clear_all_series()
-        self.state.reset_run()
-
-        self.algorithm_thread = threading.Thread(
-            target=self.runner.run_algorithm, daemon=True, name="algo",
-        )
-        self.algorithm_thread.start()
+        return True
 
     def _on_pause(self):
+        if self._ensemble_active:
+            return
         if self.state.status == AlgorithmStatus.PAUSED:
             self.state.request_resume()
         else:
             self.state.request_pause()
 
     def _on_reset(self):
+        if self._queue_session_action(self._on_reset):
+            return
+        if self._ensemble_active:
+            return
+        if self._wait_for_workers(self._on_reset):
+            return
         self.state.request_stop()
         with self.state._lock:
             self.state.score_history = []
@@ -419,7 +494,7 @@ class RunnerMixin:
         dpg.set_value(self._score_txt,  "Score: --")
         dpg.set_value(self._best_txt,   "Best:  --   (iter. --)")
         dpg.set_value(self._temp_txt,   "Temperature: --")
-        dpg.set_value(self._acc_txt,    "Worse accepted: --")
+        dpg.set_value(self._acc_txt,    "Entropy: --")
         dpg.set_value(self._succ_txt,   "Accepted steps: --")
         dpg.set_value(self._flip_txt,   "Flip rate: 0.0%")
         self._clear_all_series()
@@ -621,6 +696,8 @@ class RunnerMixin:
         self._maybe_live_renumber()
 
     def _on_open_renumber_options(self) -> None:
+        if self._ensemble_active:
+            return
         # "Infer from alignment" only appears when a reference plan is loaded;
         # if it was selected and the plan is gone, fall back to the diagonal.
         if self._renumber_rule == "infer" and not self._alignment_loaded():

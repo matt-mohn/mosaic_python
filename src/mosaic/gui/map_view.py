@@ -9,7 +9,7 @@ Why PIL instead of DPG draw_polygon:
 
 Render pipeline:
   load()              -- project coords, rasterise each precinct into a
-                         (H, W) int32 pixel_map once per shapefile load.
+                         (H, W) int32 pixel_map for the current viewport.
                          Thread-safe; no DPG calls.
   draw_blank()        -- fill all precincts with neutral grey, upload texture.
   render_assignment() -- numpy LUT lookup to colorise pixel_map in O(W*H),
@@ -41,6 +41,66 @@ _LABEL_FONT_PATH = (
     Path(__file__).resolve().parent.parent / "assets" / "fonts" / "inter"
     / "Inter-SemiBold.ttf"
 )
+
+_FONTS: dict = {}     # font size -> (font, use_anchor)
+_STAMPS: dict = {}    # (text, font size, stroke) -> (rgba stamp, anchor x, anchor y)
+
+
+def _label_font(size: int):
+    """District-label font at `size`, loaded once (not per redraw)."""
+    if size not in _FONTS:
+        font, anchor = None, False
+        for src in ((str(_LABEL_FONT_PATH),) if _LABEL_FONT_PATH.exists() else ()) \
+                + ("arial.ttf",):
+            try:
+                font, anchor = ImageFont.truetype(src, size), True
+                break
+            except OSError:
+                pass
+        _FONTS[size] = (font or ImageFont.load_default(), anchor)
+    return _FONTS[size]
+
+
+def _label_stamp(text: str, size: int, stroke: int):
+    """White, black-outlined label drawn once onto a transparent tile, with
+    the point that lands on the label centre. Redraws blend these tiles
+    instead of re-rasterising text and round-tripping the whole map
+    through PIL."""
+    key = (text, size, stroke)
+    if key not in _STAMPS:
+        font, use_anchor = _label_font(size)
+        pad = 4 * size + 4 * stroke                 # generous; cropped below
+        img = Image.new("RGBA", (pad * 2, pad * 2), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        if use_anchor:
+            draw.text((pad, pad), text, fill=(255, 255, 255, 255), font=font,
+                      anchor="mm", stroke_width=stroke, stroke_fill=(0, 0, 0, 255))
+        else:
+            bbox = draw.textbbox((0, 0), text, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            draw.text((pad - tw // 2, pad - th // 2), text, fill=(255, 255, 255, 255),
+                      font=font, stroke_width=stroke, stroke_fill=(0, 0, 0, 255))
+        arr = np.array(img, dtype=np.uint8)
+        ys, xs = np.nonzero(arr[..., 3])
+        y0, x0 = (int(ys.min()), int(xs.min())) if len(ys) else (pad, pad)
+        y1, x1 = (int(ys.max()) + 1, int(xs.max()) + 1) if len(ys) else (pad, pad)
+        _STAMPS[key] = (arr[y0:y1, x0:x1].copy(), pad - x0, pad - y0)
+    return _STAMPS[key]
+
+
+def _blend_stamp(rgba: np.ndarray, stamp: np.ndarray, x: int, y: int) -> None:
+    """Alpha-blend `stamp` onto opaque `rgba` with its top-left at (x, y),
+    clipped to the image."""
+    h, w = rgba.shape[:2]
+    sh, sw = stamp.shape[:2]
+    x0, y0, x1, y1 = max(0, x), max(0, y), min(w, x + sw), min(h, y + sh)
+    if x0 >= x1 or y0 >= y1:
+        return
+    sub = stamp[y0 - y:y1 - y, x0 - x:x1 - x]
+    a = sub[..., 3:4].astype(np.float32) * (1.0 / 255.0)
+    dst = rgba[y0:y1, x0:x1, :3]
+    dst[:] = (dst * (1.0 - a) + sub[..., :3] * a + 0.5).astype(np.uint8)
+
 
 # District palette used for stable district identities.
 _HEX = [
@@ -199,8 +259,9 @@ def stable_color_mapping(
     k: int,
 ) -> np.ndarray:
     """
-    Map current district indices to stable colour indices that best match the
-    initial assignment.
+    Assign stable colours greedily by precinct overlap with the initial plan.
+
+    Districts with the largest gap between their top two overlaps choose first.
 
     Returns per-precinct array of colour indices in [0, k).
     """
@@ -208,11 +269,9 @@ def stable_color_mapping(
     # s[:, 1] -- the runner-up overlap -- which does not exist on a (1, 1) array.
     if k < 2:
         return np.zeros(len(current), dtype=np.int32)
-    overlap = np.zeros((k, k), dtype=np.int32)
-    for d in range(k):
-        mask = current == d
-        if mask.any():
-            np.add.at(overlap[d], initial[mask], 1)
+    overlap = np.bincount(
+        current.astype(np.int64) * k + initial, minlength=k * k,
+    ).reshape(k, k)
 
     s = np.sort(overlap, axis=1)[:, ::-1]
     conf = s[:, 0].astype(np.int64) - s[:, 1].astype(np.int64)
@@ -265,6 +324,11 @@ class MapView:
         # Cache of precise label positions: (assignment_copy, [(d, cx, cy), ...]).
         # Lets a renumber (text-only change) skip the distance transform.
         self._label_centers_cache = None
+        # Raw masks belong to one immutable pixel grid. Thickness and colors
+        # are applied during composition, so changing either needs no rebuild.
+        self._border_pixel_map = None
+        self._border_counties = None
+        self._border_masks = {}
         # Overlay mode flags (set by GUI callbacks)
         self.county_overlay: bool = False
         self.partisan_overlay: bool = False          # colour each precinct by its own partisan lean
@@ -391,7 +455,7 @@ class MapView:
         self._pixel_map = np.array(img, dtype=np.int32)
         self._n_precincts = len(gdf)
         self._precinct_centroids = centroids
-        self._label_centers_cache = None   # geometry changed; drop stale positions
+        self._clear_raster_caches()
 
         self._loaded = True
         self._view_bounds = view
@@ -556,6 +620,53 @@ class MapView:
         cb[:, 1:]  |= cbv & vcv
         return cb
 
+    def _clear_raster_caches(self):
+        """Release positions and border masks when replacing the pixel grid."""
+        self._label_centers_cache = None
+        self._border_pixel_map = None
+        self._border_counties = None
+        self._border_masks = {}
+
+    def _static_border_mask(self, kind):
+        """Build only requested borders; reuse them for this pixel grid.
+
+        Pixel grids are replaced on load, zoom, and resize, never edited in
+        place. County IDs are compared with a snapshot to detect value edits.
+        District borders depend on the current assignment and are not cached.
+        """
+        pm = self._pixel_map
+        if self._border_pixel_map is not pm:
+            self._border_masks.clear()
+            self._border_pixel_map = pm
+            self._border_counties = None
+        if kind == "county":
+            ca = self._county_array
+            if not np.array_equal(self._border_counties, ca):
+                self._border_masks.pop(kind, None)
+                self._border_counties = ca.copy()
+        if kind not in self._border_masks:
+            if kind == "county":
+                mask = self._county_border_mask(pm)
+            elif kind == "precinct":
+                h = (pm[:-1, :] != pm[1:, :]) & (pm[:-1, :] >= 0) & (pm[1:, :] >= 0)
+                v = (pm[:, :-1] != pm[:, 1:]) & (pm[:, :-1] >= 0) & (pm[:, 1:] >= 0)
+                mask = np.zeros(pm.shape, dtype=bool)
+                mask[:-1, :] |= h
+                mask[1:, :] |= h
+                mask[:, :-1] |= v
+                mask[:, 1:] |= v
+            elif kind == "state":
+                valid = pm >= 0
+                mask = np.zeros(pm.shape, dtype=bool)
+                mask[:-1, :] |= valid[:-1, :] & ~valid[1:, :]
+                mask[1:, :] |= valid[1:, :] & ~valid[:-1, :]
+                mask[:, :-1] |= valid[:, :-1] & ~valid[:, 1:]
+                mask[:, 1:] |= valid[:, 1:] & ~valid[:, :-1]
+            else:
+                raise ValueError(f"Unknown border kind: {kind}")
+            self._border_masks[kind] = mask
+        return self._border_masks[kind]
+
     def draw_blank(self) -> None:
         """Upload neutral-grey map (all precincts same colour). GUI thread."""
         if not self._loaded:
@@ -584,7 +695,7 @@ class MapView:
         self._reock_data = None
         self._populations = None
         self._precinct_centroids = None
-        self._label_centers_cache = None
+        self._clear_raster_caches()
 
     def render_assignment(
         self,
@@ -608,7 +719,8 @@ class MapView:
         """
         Build the colourised RGBA frame without uploading. Returns None if the
         view isn't loaded or the assignment doesn't match.
-        Overlays are applied in order: splits view, county borders, district borders.
+        Draw fills, county borders, precinct borders, district borders, the state
+        outline, and labels in that order.
         """
         if not self._loaded:
             return None
@@ -625,6 +737,7 @@ class MapView:
 
         pm = self._pixel_map
         n = self._n_precincts
+        shared_colors = None
 
         # ── Base colorization ─────────────────────────────────────────────────
         if self.partisan_overlay and self._dem_votes is not None:
@@ -642,13 +755,13 @@ class MapView:
         else:
             if initial is not None and len(initial) == len(assignment):
                 ci = stable_color_mapping(assignment, initial, n_districts)
+                shared_colors = ci
             else:
                 ci = assignment
             nc = len(DISTRICT_COLORS)
             lut = np.zeros((n + 1, 4), dtype=np.uint8)
-            for pi in range(n):
-                r, g, b = DISTRICT_COLORS[int(ci[pi]) % nc]
-                lut[pi] = (r, g, b, 255)
+            lut[:n, :3] = np.asarray(DISTRICT_COLORS, dtype=np.uint8)[ci % nc]
+            lut[:n, 3] = 255
             lut[n] = self._bg_color
 
         rgba = self._colorise(lut).copy()
@@ -673,21 +786,15 @@ class MapView:
                 rgba[clean_mask] = self._splits_dim
 
             # County borders always visible in splits view
-            rgba[self._thicken(self._county_border_mask(pm))] = _COUNTY_BORDER_RGBA
+            rgba[self._thicken(self._static_border_mask("county"))] = _COUNTY_BORDER_RGBA
 
         # ── County overlay (border lines only, when not using splits view) ────
         elif self.county_overlay and self._county_array is not None:
-            rgba[self._thicken(self._county_border_mask(pm))] = _COUNTY_BORDER_RGBA
+            rgba[self._thicken(self._static_border_mask("county"))] = _COUNTY_BORDER_RGBA
 
         # ── Precinct boundaries (faint white, alpha-blended) ─────────────────
         if self.precinct_overlay:
-            pb_h = (pm[:-1, :] != pm[1:, :]) & (pm[:-1, :] >= 0) & (pm[1:, :] >= 0)
-            pb_v = (pm[:, :-1] != pm[:, 1:]) & (pm[:, :-1] >= 0) & (pm[:, 1:] >= 0)
-            pb_mask = np.zeros(pm.shape, dtype=bool)
-            pb_mask[:-1, :] |= pb_h
-            pb_mask[1:,  :] |= pb_h
-            pb_mask[:, :-1] |= pb_v
-            pb_mask[:, 1:]  |= pb_v
+            pb_mask = self._static_border_mask("precinct")
             if pb_mask.any():
                 alpha = PRECINCT_EDGE_ALPHA
                 blended = rgba[pb_mask].astype(np.float32)
@@ -709,19 +816,15 @@ class MapView:
 
         # ── State outline (above district borders so it's a clean edge) ──────
         if self.state_outline:
-            valid = pm >= 0
-            so = np.zeros(pm.shape, dtype=bool)
-            so[:-1, :] |= valid[:-1, :] & ~valid[1:,  :]
-            so[1:,  :] |= valid[1:,  :] & ~valid[:-1, :]
-            so[:, :-1] |= valid[:, :-1] & ~valid[:, 1:]
-            so[:, 1:]  |= valid[:, 1:]  & ~valid[:, :-1]
+            so = self._static_border_mask("state")
             rgba[self._thicken(so)] = _BORDER_RGBA
 
         # ── District labels (if enabled) ─────────────────────────────────────
         if self.show_labels and self._precinct_centroids is not None:
             # Compute stable label numbers (matching color assignment)
             if initial is not None and len(initial) == len(assignment):
-                stable_colors = stable_color_mapping(assignment, initial, n_districts)
+                stable_colors = (shared_colors if shared_colors is not None else
+                                 stable_color_mapping(assignment, initial, n_districts))
             else:
                 stable_colors = assignment
 
@@ -731,30 +834,20 @@ class MapView:
             # index, so renumbering moves numbers, not colors).
             lm = self.district_label_map
             use_lm = lm is not None and len(lm) == n_districts
+            present, first = np.unique(assignment, return_index=True)
             dist_to_label = {}
-            for d in range(n_districts):
-                mask = assignment == d
-                if mask.any():
-                    si = int(stable_colors[mask][0])
-                    dist_to_label[d] = int(lm[si]) if use_lm else si + 1
+            for d, i in zip(present.tolist(), first.tolist()):
+                si = int(stable_colors[i])
+                dist_to_label[d] = int(lm[si]) if use_lm else si + 1
 
-            # Label placement has two modes:
-            #   fast_labels=True  -> cheap mean of precinct centroids per
-            #     district.  Can drift outside a concave district but is
-            #     microseconds, so safe to run every frame.
-            #   fast_labels=False -> pole of inaccessibility via per-district
-            #     scipy distance transform.  Guaranteed on-surface even for
-            #     U-shaped districts, but costs ~10-100ms per render.  Used
-            #     when the algorithm is paused/idle and the user is actually
-            #     inspecting the map.
-            # Label POSITIONS (d, cx, cy) depend only on the assignment and the
-            # placement mode, NOT on the displayed numbers. The precise path
-            # runs a per-district distance transform (~10-100ms); cache its
-            # output keyed by assignment so a geographic renumber -- which moves
-            # no district, only the text -- reuses positions instead of paying
-            # the transform again. Only the precise path is cached (the fast
-            # path is microseconds and its assignment changes every frame).
+            # Fast placement uses mean precinct centroids and can fall outside
+            # a concave district. Precise placement uses a distance transform
+            # to choose an interior pixel of each visible district.
+            # Precise positions are reusable for the same raster and assignment:
+            # renumbering changes label text, not position. Raster changes must
+            # invalidate the position cache. Fast positions are recomputed.
             centers = None
+            counts = None
             if not self.fast_labels and self._label_centers_cache is not None:
                 c_assign, c_centers = self._label_centers_cache
                 if (len(c_assign) == len(assignment)
@@ -764,12 +857,11 @@ class MapView:
                 centers = []
                 if self.fast_labels:
                     pc = self._precinct_centroids
-                    for d in range(n_districts):
-                        mask = assignment == d
-                        if not mask.any():
-                            continue
-                        cx, cy = pc[mask].mean(axis=0)
-                        centers.append((d, float(cx), float(cy)))
+                    cnt = counts = np.bincount(assignment, minlength=n_districts)
+                    sx = np.bincount(assignment, weights=pc[:, 0], minlength=n_districts)
+                    sy = np.bincount(assignment, weights=pc[:, 1], minlength=n_districts)
+                    for d in np.flatnonzero(cnt).tolist():
+                        centers.append((d, float(sx[d] / cnt[d]), float(sy[d] / cnt[d])))
                 else:
                     from scipy.ndimage import distance_transform_edt
                     pm = self._pixel_map
@@ -791,14 +883,20 @@ class MapView:
                         y1 = min(d_mask.shape[0], int(rows[-1]) + 2)
                         x0 = max(0, int(cols[0]) - 1)
                         x1 = min(d_mask.shape[1], int(cols[-1]) + 2)
-                        dist = distance_transform_edt(d_mask[y0:y1, x0:x1])
+                        # Zero-pad so the view's edge counts as boundary: when
+                        # zoomed, a district cut off by the edge gets its label
+                        # in the middle of its visible part, not pressed
+                        # against the edge. A district fully in view already
+                        # has a background ring, so its result is unchanged.
+                        dist = distance_transform_edt(np.pad(d_mask[y0:y1, x0:x1], 1))
                         cy, cx = np.unravel_index(int(dist.argmax()), dist.shape)
-                        centers.append((d, float(cx + x0), float(cy + y0)))
+                        centers.append((d, float(cx + x0 - 1), float(cy + y0 - 1)))
                     self._label_centers_cache = (assignment.copy(), centers)
 
             # Sort by approximate area (larger districts first for priority).
             # sorted() returns a new list so we never mutate the cached centers.
-            areas = np.bincount(assignment, minlength=n_districts)
+            areas = (counts if counts is not None else
+                     np.bincount(assignment, minlength=n_districts))
             centers = sorted(centers, key=lambda c: -areas[c[0]])
 
             # Greedy collision avoidance — scale glyph size with border_thickness
@@ -826,46 +924,11 @@ class MapView:
                     placed_boxes.append(box)
                     labels_to_draw.append((int(cx), int(cy), label))
 
-            # Draw labels onto rgba via PIL
-            if labels_to_draw:
-                img = Image.fromarray(rgba, mode="RGBA")
-                draw = ImageDraw.Draw(img)
-                font = None
-                use_anchor = False
-                if _LABEL_FONT_PATH.exists():
-                    try:
-                        font = ImageFont.truetype(str(_LABEL_FONT_PATH), font_h)
-                        use_anchor = True
-                    except OSError:
-                        font = None
-                if font is None:
-                    try:
-                        font = ImageFont.truetype("arial.ttf", font_h)
-                        use_anchor = True
-                    except OSError:
-                        font = ImageFont.load_default()
-                        use_anchor = False
-
-                # Outline scales with border_thickness so it stays visible
-                # against high-DPI glyphs (PIL's built-in stroke_width).
-                stroke_w = max(1, self.border_thickness)
-
-                for px, py, text in labels_to_draw:
-                    if use_anchor:
-                        draw.text((px, py), text,
-                                  fill=(255, 255, 255, 255), font=font,
-                                  anchor="mm",
-                                  stroke_width=stroke_w,
-                                  stroke_fill=(0, 0, 0, 255))
-                    else:
-                        bbox = draw.textbbox((0, 0), text, font=font)
-                        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-                        tx, ty = px - tw // 2, py - th // 2
-                        draw.text((tx, ty), text,
-                                  fill=(255, 255, 255, 255), font=font,
-                                  stroke_width=stroke_w,
-                                  stroke_fill=(0, 0, 0, 255))
-
-                rgba = np.array(img, dtype=np.uint8)
+            # Blend cached label stamps (outline scales with border_thickness
+            # so it stays visible against high-DPI glyphs).
+            stroke_w = max(1, self.border_thickness)
+            for px, py, text in labels_to_draw:
+                stamp, ax, ay = _label_stamp(text, font_h, stroke_w)
+                _blend_stamp(rgba, stamp, px - ax, py - ay)
 
         return rgba

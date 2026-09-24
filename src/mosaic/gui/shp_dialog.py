@@ -51,6 +51,7 @@ class ShapefileDialog:
         self._cancel_cb = cancel_cb
         self.theme = theme
         self._inspection: Optional[ShapefileInspection] = None
+        self._viewport_size = None
 
         # Election row tracking: monotonic index + list of active indices
         self._election_next_id: int = 0
@@ -80,14 +81,14 @@ class ShapefileDialog:
         with dpg.window(
             tag="shp_dialog",
             label="Shapefile Setup",
-            modal=True, no_close=True, show=False,
+            modal=True, no_close=True, no_resize=True, show=False,
             width=_W, height=_H,
             pos=[px, py],
-            no_scrollbar=True,
+            no_scrollbar=False,
         ):
             # ── File / integrity header ───────────────────────────────────────
-            self._file_text = dpg.add_text("No file selected")
-            self._status_text = self.theme.text("", "muted")
+            self._file_text = dpg.add_text("No file selected", wrap=_W - 44)
+            self._status_text = self.theme.text("", "muted", wrap=_W - 44)
             dpg.add_separator()
 
             # ── Required columns ─────────────────────────────────────────────
@@ -213,6 +214,18 @@ class ShapefileDialog:
                     callback=self._on_cancel_click,
                     width=80,
                 )
+
+    def fit_to_viewport(self, width: int, height: int) -> None:
+        """Keep the setup window and its scrollable contents within the app."""
+        size = (width, height)
+        if size == self._viewport_size:
+            return
+        self._viewport_size = size
+        dialog_w = min(_W, max(100, width - 40))
+        dialog_h = min(_H, max(100, height - 40))
+        dpg.configure_item("shp_dialog", width=dialog_w, height=dialog_h,
+                           pos=[max(0, (width - dialog_w) // 2),
+                                max(0, (height - dialog_h) // 2)])
 
     def _set_confirm_err(self, msg: str = "") -> None:
         """Set (or clear) the footer error, hiding the row when there is nothing

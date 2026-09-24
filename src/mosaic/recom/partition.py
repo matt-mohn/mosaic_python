@@ -27,13 +27,20 @@ def _ramp_tolerance(k: int, num_districts: int, start: float, cap: float) -> flo
     return start + (cap - start) * 2 * k / ((num_districts - 2) * (num_districts - k))
 
 
-def _nx_subgraph_to_ig(graph: nx.Graph, nodes: set) -> ig.Graph:
-    """Build an igraph subgraph from a NetworkX graph restricted to given nodes."""
-    node_list = sorted(nodes)
-    idx = {n: i for i, n in enumerate(node_list)}
-    edges = [(idx[u], idx[v]) for u, v in graph.subgraph(nodes).edges()]
-    g = ig.Graph(n=len(node_list), edges=edges)
-    g.vs["name"] = node_list
+def _subgraph_ig(edges: np.ndarray, remaining: np.ndarray) -> ig.Graph:
+    """igraph subgraph induced by the `remaining` mask (bool, per node).
+
+    A vectorized mask keeps edges whose endpoints both remain. Nodes receive
+    local indices in ascending original-node order; edges retain their input
+    order. Edge order can affect seeded tree draws, so callers must supply a
+    stable edge array for repeatable results.
+    """
+    node_list = np.flatnonzero(remaining)            # ascending original-node IDs
+    local = np.full(len(remaining), -1, dtype=np.int64)
+    local[node_list] = np.arange(len(node_list))
+    keep = remaining[edges[:, 0]] & remaining[edges[:, 1]]
+    g = ig.Graph(n=len(node_list), edges=local[edges[keep]].tolist())
+    g.vs["name"] = node_list.tolist()
     return g
 
 
@@ -115,12 +122,14 @@ def _try_partition(
 
     assignment = np.full(n, -1, dtype=np.int32)
     remaining_nodes = set(graph.nodes())
+    remaining = np.ones(n, dtype=bool)
+    edges = np.array(list(graph.edges()), dtype=np.int64).reshape(-1, 2)
 
     for district in range(num_districts - 1):
         # Final cut is two-sided, so both remaining districts land in tolerance.
         is_last_cut = (district == num_districts - 2)
 
-        ig_sub = _nx_subgraph_to_ig(graph, remaining_nodes)
+        ig_sub = _subgraph_ig(edges, remaining)
         tol = _ramp_tolerance(district, num_districts, tolerance_start, tolerance)
 
         carved = find_balanced_cut_ig(
@@ -146,6 +155,7 @@ def _try_partition(
         for node in carved:
             assignment[node] = district
         remaining_nodes -= set(carved)
+        remaining[list(carved)] = False
 
         if on_progress:
             on_progress(district + 1, num_districts)

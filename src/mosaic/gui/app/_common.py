@@ -38,6 +38,8 @@ _ASSETS_DIR   = Path(__file__).resolve().parent.parent.parent / "assets"
 # App-level settings/cache directory — separate from output/ which holds generated files.
 _SETTINGS_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / ".mosaic"
 _RECENT_FILE  = _SETTINGS_DIR / "recent_shapefiles.json"
+_RECENT_PRESETS_FILE = _SETTINGS_DIR / "recent_presets.json"
+_RECENT_MAX   = 10   # entries kept in each Recent menu
 _APP_ICON = _ASSETS_DIR / "mosaic_logo.ico"
 _PDF_PRECINCT_OFF_ALPHA = 0.05   # faint precinct hairlines in PDF even when the overlay is off
 
@@ -204,13 +206,18 @@ class _SeriesBuffer:
     thinned again (_compact_end tracks the boundary).
     """
 
-    __slots__ = ("xs", "ys", "read", "_compact_end")
+    __slots__ = ("xs", "ys", "read", "_compact_end", "_xa", "_ya", "_na")
 
     def __init__(self):
         self.xs: list = []   # iteration indices (survive thinning intact)
         self.ys: list = []   # values
         self.read: int = 0   # items consumed from SharedState list so far
         self._compact_end: int = 0  # xs[:_compact_end] has already been thinned
+        # Lazy numpy mirror of xs/ys for render-time thinning (see arrays()):
+        # grown by the new tail only, dropped when the lists are rewritten.
+        self._xa = np.empty(0, dtype=np.float64)
+        self._ya = np.empty(0, dtype=np.float64)
+        self._na = 0         # mirror covers xs[:_na] / ys[:_na]
 
     def add(self, new_ys: list, *, scale: float = 1.0) -> None:
         """Append plain-value delta (already copied outside the lock)."""
@@ -243,6 +250,28 @@ class _SeriesBuffer:
         self.xs = self.xs[:self._compact_end] + thin_xs + self.xs[cut:]
         self.ys = self.ys[:self._compact_end] + thin_ys + self.ys[cut:]
         self._compact_end += len(thin_xs)
+        self._na = 0         # lists rewritten: rebuild the mirror on next use
+
+    def arrays(self) -> tuple:
+        """Return cached float64 arrays, converting only the appended tail.
+
+        Compaction invalidates the mirror; capacity grows geometrically.
+        Rendering still scans the visible window for extrema and sampling.
+        """
+        n = len(self.ys)
+        if self._na > n:
+            self._na = 0
+        if self._na < n:
+            need = max(n, 2 * len(self._ya)) if n > len(self._ya) else len(self._ya)
+            if need > len(self._ya):
+                xa = np.empty(need, dtype=np.float64)
+                ya = np.empty(need, dtype=np.float64)
+                xa[:self._na], ya[:self._na] = self._xa[:self._na], self._ya[:self._na]
+                self._xa, self._ya = xa, ya
+            self._xa[self._na:n] = self.xs[self._na:n]
+            self._ya[self._na:n] = self.ys[self._na:n]
+            self._na = n
+        return self._xa[:n], self._ya[:n]
 
     def plot_data(self, limit: bool) -> tuple:
         if limit and len(self.ys) > _PLOT_LIMIT:
@@ -257,12 +286,14 @@ class _SeriesBuffer:
         del self.ys[idx:]
         self.read = new_read
         self._compact_end = min(self._compact_end, len(self.xs))
+        self._na = min(self._na, len(self.xs))
 
     def clear(self) -> None:
         self.xs.clear()
         self.ys.clear()
         self.read = 0
         self._compact_end = 0
+        self._na = 0
 
 
 # Score Contributor panel — bar chart metrics in display order (structural → partisan)
@@ -329,7 +360,6 @@ _VP_W         = 1340
 _VP_H         = 1000
 _LEFT_W       = 440    # fixed left-column width
 _TOP_H        = 640    # fixed top section height (left + right columns)
-_SCORE_H      = 250    # pinned bottom score panel height
 _SCORE_COL_W  = (_VP_W - 40) // 3   # ~433px per score column
 _MAP_H        = 390    # map panel height (child_window)
 _MAP_DW       = _VP_W - _LEFT_W - 32   # texture pixel width  (~868)
@@ -344,11 +374,14 @@ _DIALOG_BTN_W = 90     # standard footer button width
 _DIALOG_RM    = 6      # right margin inside the content region for the footer
 _MAP_DH       = _MAP_H - 22            # texture pixel height (~368)
 _PLOT_H       = 155    # single-plot height (score row)
-_HALF_PLOT_H  = 150    # height of the two side-by-side plots
+_MAP_MIN_W    = 400    # the map's width follows the window down to this
+_MIN_CLIENT_W = 1300   # minimum window interior required by the control layout
+_LEFT_GAP     = 15     # gap above Run Parameters / Controls / Status headings
+_HALF_PLOT_H  = 126    # Score / Entropy charts; leaves ~20 px above the scores
 # Do not raise this without also raising _TOP_H. These plots are the last items
 # in the _TOP_H container and DPG clips rather than scrolls, so any overflow eats
-# the x-axis off the bottom of both charts. 150 exactly fills the space that
-# _TOP_H = 640 leaves after the map, the one-row toolbar and the headings.
+# the x-axis off the bottom of both charts. Leave room for the map, toolbar,
+# headings, and spacing when adjusting the chart height.
 _HALF_PLOT_W  = (_MAP_DW - 10) // 2   # width of each half-plot (~429)
 
 
@@ -481,6 +514,8 @@ __all__ = [
     "_ASSETS_DIR",
     "_SETTINGS_DIR",
     "_RECENT_FILE",
+    "_RECENT_PRESETS_FILE",
+    "_RECENT_MAX",
     "_APP_ICON",
     "_PDF_PRECINCT_OFF_ALPHA",
     "dpg",
@@ -533,10 +568,12 @@ __all__ = [
     "_VP_H",
     "_LEFT_W",
     "_TOP_H",
-    "_SCORE_H",
     "_SCORE_COL_W",
     "_MAP_H",
     "_MAP_DW",
+    "_MAP_MIN_W",
+    "_MIN_CLIENT_W",
+    "_LEFT_GAP",
     "_DIALOG_PAD",
     "_DIALOG_GAP",
     "_DIALOG_BTN_W",

@@ -410,13 +410,17 @@ def _param_key(value) -> object:
 
 
 def _get_prep(vap: dict, n_districts: int, midpoint, steepness, solid,
-              coords=None, smart_targets: bool = False) -> _OppPrep:
+              coords=None, smart_targets: bool = False,
+              prepare_targets: bool = True) -> _OppPrep:
     # Key on array identity + params only -- no full-array touch on the hot (hit)
     # path. vap arrays are stable for a run, so identity pins their contents.
     key = (id(vap["total"]), n_districts,
            _param_key(midpoint), _param_key(steepness), _param_key(solid),
-           bool(smart_targets), id(coords) if coords is not None else 0)
-    cached = _PREP_CACHE.get(key)
+           bool(smart_targets), id(coords) if coords is not None else 0,
+           bool(prepare_targets))
+    # Target-free exports are one-shot reads; do not retain their demographic
+    # matrices or let them reuse run-scoring preparation.
+    cached = _PREP_CACHE.get(key) if prepare_targets else None
     if cached is not None:
         return cached
     total_f = np.ascontiguousarray(vap["total"], dtype=np.float64)
@@ -445,9 +449,12 @@ def _get_prep(vap: dict, n_districts: int, midpoint, steepness, solid,
         active[g] = sw > 0.0
         if not active[g]:
             p_empty[g] = np.full(n_districts, _sigmoid((0.0 - mg) / tg))
-    feasible, ceiling = _geo_feasibility(
-        vap, total_f, total_sw, n_districts, midpoint, steepness, solid,
-        coords=coords, smart_targets=smart_targets)
+    if prepare_targets:
+        feasible, ceiling = _geo_feasibility(
+            vap, total_f, total_sw, n_districts, midpoint, steepness, solid,
+            coords=coords, smart_targets=smart_targets)
+    else:
+        feasible, ceiling = {}, {}
     # Stack total + the active groups into one contiguous (n_precinct, 1+k)
     # matrix so the per-proposal path is a single Numba scan, not 1+k bincounts.
     # Statewide-empty groups stay out of W (their P is the constant p_empty).
@@ -468,7 +475,8 @@ def _get_prep(vap: dict, n_districts: int, midpoint, steepness, solid,
                     m_arr=np.array([m[g] for g in active_groups], dtype=np.float64),
                     tau_arr=np.array([tau[g] for g in active_groups],
                                      dtype=np.float64))
-    _PREP_CACHE[key] = prep
+    if prepare_targets:
+        _PREP_CACHE[key] = prep
     return prep
 
 
@@ -558,3 +566,31 @@ def compute_opportunity(
         P[g] = P_act[prep.active_cols[g] - 1]
     return OpportunityResult(T=prep.T, P=P, ref=prep.ref,
                              feasible=prep.feasible, ceiling=prep.ceiling)
+
+
+def district_opportunity_credit(assignment, vap, n_districts, *, midpoint=0.44,
+                                steepness=0.05, solid=0.55, groups=GROUPS):
+    """Per-district normalized credit without plan-wide target preparation.
+
+    Uses the scorer's accumulation, probability curve, and solid-share reference.
+    Geographic feasibility and ceiling estimates do not affect these credits.
+    """
+    assignment = np.asarray(assignment)
+    if (assignment.ndim != 1 or not np.issubdtype(assignment.dtype, np.integer)
+            or n_districts <= 0 or np.any(assignment < 0)
+            or np.any(assignment >= n_districts)):
+        raise ValueError("District assignments are outside the requested district range")
+    for name in ("total", *GROUPS):
+        values = np.asarray(vap[name], dtype=np.float64)
+        if (values.shape != assignment.shape or not np.all(np.isfinite(values))
+                or np.any(values < 0)):
+            raise ValueError(f"Demographic '{name}' must have one finite, "
+                             "nonnegative value per precinct")
+    for group in GROUPS:
+        if (not all(np.isfinite(_param(p, group)) for p in (midpoint, steepness, solid))
+                or _param(steepness, group) <= 0):
+            raise ValueError("Opportunity parameters must be finite, with positive steepness")
+    prep = _get_prep(vap, n_districts, midpoint, steepness, solid,
+                     prepare_targets=False)
+    opp = compute_opportunity(assignment, vap, n_districts, _prepared=prep)
+    return {g: np.clip(opp.P[g] / opp.ref[g], 0.0, 1.0) for g in groups}
