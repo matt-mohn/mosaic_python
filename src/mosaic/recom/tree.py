@@ -263,31 +263,74 @@ try:
         return state, state * np.uint64(2685821657736338717)
 
     @_njit(cache=True)
+    def _nb_shuffle_range(order, a, b, fast, state):
+        """Fisher-Yates shuffle of order[a:b]; returns the advanced fast state."""
+        for i in range(b - 1, a, -1):
+            if fast:
+                state, value = _nb_fast_draw(state)
+                j = a + int(value % np.uint64(i - a + 1))
+            else:
+                j = a + np.random.randint(0, i - a + 1)
+            order[i], order[j] = order[j], order[i]
+        return state
+
+    @_njit(cache=True)
     def _nb_balanced_attempts(eu, ev, n, sub_pops, total_pop, min_pop, max_pop,
-                              one_sided, max_attempts, seed, work, fast=False):
+                              one_sided, max_attempts, seed, work, fast,
+                              cross, inv_bias):
         """Compiled randomized-Kruskal retry loop with a per-region RNG seed.
 
         The compiled mode seeds Numba's RNG from one caller-supplied NumPy draw.
         Fast mode instead uses the local xorshift64* state. Neither mode samples
         spanning trees uniformly.
+
+        A non-empty `cross` (cross-county edge mask) applies county bias B with
+        inv_bias = 1/B. Sorting U[0,1) within-county and B*U[0,1) cross-county
+        weights is equivalent in distribution to: each cross edge joins the
+        early pool with probability 1/B, early pool shuffled, then late pool
+        shuffled -- O(m) instead of an O(m log m) sort.
         """
         if not fast:
             np.random.seed(seed)
         state = np.uint64(seed) + np.uint64(0x9E3779B97F4A7C15)
         (ptr, idx, deg, cur, bfsq, par, vis, stp, insub, res, cand,
          uf_par, uf_rank, mst_eu, mst_ev) = work
-        order = np.empty(len(eu), dtype=np.int32)
+        m = len(eu)
+        biased = len(cross) > 0
+        order = np.empty(m, dtype=np.int32)
         for _ in range(max_attempts):
-            for i in range(len(order)):
-                order[i] = i
-            if fast:
+            if biased:
+                lo = 0
+                hi = m
+                for i in range(m):
+                    early = True
+                    if cross[i]:
+                        if fast:
+                            state, value = _nb_fast_draw(state)
+                            u = float(value >> np.uint64(11)) * (1.0 / 9007199254740992.0)
+                        else:
+                            u = np.random.random()
+                        early = u < inv_bias
+                    if early:
+                        order[lo] = i
+                        lo += 1
+                    else:
+                        hi -= 1
+                        order[hi] = i
+                state = _nb_shuffle_range(order, 0, lo, fast, state)
+                state = _nb_shuffle_range(order, lo, m, fast, state)
+            elif fast:
+                for i in range(m):
+                    order[i] = i
                 # Modulo reduction introduces sampling bias and is confined to
                 # the explicitly selected fast mode.
-                for i in range(len(order) - 1, 0, -1):
+                for i in range(m - 1, 0, -1):
                     state, value = _nb_fast_draw(state)
                     j = int(value % np.uint64(i + 1))
                     order[i], order[j] = order[j], order[i]
             else:
+                for i in range(m):
+                    order[i] = i
                 np.random.shuffle(order)
             k = _nb_kruskal_mst(eu, ev, order, n, uf_par, uf_rank, mst_eu, mst_ev)
             _nb_build_csr(mst_eu[:k], mst_ev[:k], n, ptr, idx, deg, cur)
@@ -571,6 +614,9 @@ def find_balanced_cut_ig(
     return None
 
 
+_NO_CROSS = np.zeros(0, dtype=np.bool_)
+
+
 def _pack_fast_cut(nodes, work, n, v, root, tail, cnt, one_sided,
                    min_pop, max_pop, total_pop, out_state):
     """Own residual snapshots independently of the reused tree workspace."""
@@ -691,13 +737,15 @@ def find_balanced_cut_fast(
          _nb_vis, _nb_stp, _nb_insub, _nb_res, _nb_cand,
          _uf_par, _uf_rank, _mst_eu, _mst_ev) = scratch.tree_buffers()
 
-        # County weighting and timeout checks use the reference loop. Compiled
-        # modes apply only to unbiased, untimed cuts.
-        if scratch.tree_mode != "reference" and cross_county_mask is None and timeout is None:
+        # Timeout checks use the reference loop; compiled modes take untimed cuts.
+        if scratch.tree_mode != "reference" and timeout is None:
+            biased = cross_county_mask is not None
             v, root, tail, cnt = _nb_balanced_attempts(
                 local_eu, local_ev, n, sub_pops, total_pop, min_pop, max_pop,
                 one_sided, max_attempts, np.random.randint(0, 2**31 - 1),
-                scratch.tree_buffers(), scratch.tree_mode == "fast")
+                scratch.tree_buffers(), scratch.tree_mode == "fast",
+                cross_county_mask if biased else _NO_CROSS,
+                1.0 / county_bias if biased else 1.0)
             if v < 0:
                 return None
             return _pack_fast_cut(merged_nodes, scratch.tree_buffers(), n,

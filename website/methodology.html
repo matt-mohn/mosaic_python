@@ -144,7 +144,7 @@
         </details>
 
         <h3 class="mt-8 text-xl font-semibold">Fast tree generation</h3>
-        <p class="mt-2">This option changes how Mosaic randomizes the edge order used to build proposal trees. The default fast mode uses a local xorshift64* random generator for its edge shuffle and root choice. Turning it off uses the reference randomization path. County-edge bias uses the reference path in either setting because it needs weighted edges.</p>
+        <p class="mt-2">This option changes how Mosaic randomizes the edge order used to build proposal trees. The default fast mode uses a local xorshift64* random generator for its edge shuffle and root choice. Turning it off uses the reference randomization path. With County-edge bias on, the reference path sorts uniform edge weights with cross-county weights multiplied by the bias B. The fast path draws the same order distribution without sorting: each cross-county edge joins the early part of the order with probability 1/B, and the early and late parts are each shuffled.</p>
         <p class="mt-3">Both modes apply randomized Kruskal construction, scan for the first population-valid cut in the same node order, and try at most 100 trees. Neither samples spanning trees uniformly. Fast mode uses modulo reduction in its shuffle, which introduces a small sampling bias; it also consumes random values differently, so the same seed does not imply the same proposal sequence across modes.</p>
 
         <h3 class="mt-8 text-xl font-semibold">Three-district recombination</h3>
